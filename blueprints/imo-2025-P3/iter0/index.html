@@ -1,0 +1,1828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">IMO 2025 P3. 1,142 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item current">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item current">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "case1_f_eq_n",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.14,
+      "proof_length": 46,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If f(q) = q for all primes q > 2, then f(n) = n for any positive integer n.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $f(q) = q$ for all primes $q > 2$, then $f(n) = n$ for any positive integer $n$. -/)\n  (proof := /-- For any prime $q > 2$, $hf(q,n)$ gives $q \\mid n^q - f(n)^q$. By FLT, $n^q \\equiv n \\pmod q$ and $f(n)^q \\equiv f(n) \\pmod q$, so $q \\mid n - f(n)$. Since this holds for infinitely many primes $q$, we must have $n - f(n) = 0$, thus $f(n) = n$. -/)]\nlemma case1_f_eq_n (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (h_case : \u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = (q : \u2124)) (n : \u2124) (hn : n > 0) : f n = n := by\n  have h_div (q : \u2115) (hqprime : Nat.Prime q) (hqgt2 : q > 2) : (q : \u2124) \u2223 (n - f n) := by\n    have ha_pos : (q : \u2124) > 0 := by\n      have hq_pos : q > 0 := by omega\n      exact_mod_cast hq_pos\n    have hb_pos : n > 0 := hn\n    have hfaa : f (q : \u2124) = (q : \u2124) := h_case q hqgt2 hqprime\n    have h_div_orig : f (q : \u2124) \u2223 (n : \u2124) ^ ((q : \u2124).toNat) - (f n : \u2124) ^ ((f (q : \u2124)).toNat) := hf (q : \u2124) n ha_pos hb_pos\n    rw [hfaa] at h_div_orig\n    have h_toNat_q : ((q : \u2124).toNat) = q := by simp\n    rw [h_toNat_q] at h_div_orig\n    -- Now h_div_orig: (q : \u2124) \u2223 (n : \u2124) ^ q - (f n : \u2124) ^ q\n    have h_n_mod : (n : \u2124) ^ (q : \u2115) \u2261 (n : \u2124) [ZMOD (q : \u2124)] := flt_pow_mod (n : \u2124) q hqprime\n    have h_fn_mod : (f n : \u2124) ^ (q : \u2115) \u2261 (f n : \u2124) [ZMOD (q : \u2124)] := flt_pow_mod (f n : \u2124) q hqprime\n    have h_mod_sub : (n : \u2124) ^ (q : \u2115) - (f n : \u2124) ^ (q : \u2115) \u2261 (n : \u2124) - (f n : \u2124) [ZMOD (q : \u2124)] := by\n      exact h_n_mod.sub h_fn_mod\n    have h_mod_sub_dvd' : (q : \u2124) \u2223 ((n : \u2124) - (f n : \u2124)) - ((n : \u2124) ^ (q : \u2115) - (f n : \u2124) ^ (q : \u2115)) := by\n      rw [Int.modEq_iff_dvd] at h_mod_sub\n      -- h_mod_sub gives (q : \u2124) \u2223 ((n - f n) - (n^q - (f n)^q))\n      -- which is exactly what we need\n      simpa [sub_sub, add_comm, add_left_comm, add_assoc] using h_mod_sub\n    have h_result : (q : \u2124) \u2223 (n : \u2124) - (f n : \u2124) := by\n      have hA : (q : \u2124) \u2223 ((n : \u2124) ^ (q : \u2115) - (f n : \u2124) ^ (q : \u2115)) := h_div_orig\n      have hB_minus_A : (q : \u2124) \u2223 ((n : \u2124) - (f n : \u2124)) - ((n : \u2124) ^ (q : \u2115) - (f n : \u2124) ^ (q : \u2115)) := h_mod_sub_dvd'\n      have h_sum : ((n : \u2124) - (f n : \u2124)) = ((n : \u2124) ^ (q : \u2115) - (f n : \u2124) ^ (q : \u2115)) + (((n : \u2124) - (f n : \u2124)) - ((n : \u2124) ^ (q : \u2115) - (f n : \u2124) ^ (q : \u2115))) := by ring\n      rw [h_sum]\n      exact dvd_add hA hB_minus_A\n    exact h_result\n  have hdiff_zero : n - f n = 0 := by\n    by_contra! H\n    have hdiff_ne_zero : n - f n \u2260 0 := H\n    let N := Int.natAbs (n - f n)\n    rcases exists_infinite_primes_gt_two N with \u27e8q, hq_gt_N, hq_prime, hq_gt_two\u27e9\n    have hq_div_diff : (q : \u2124) \u2223 (n - f n) := h_div q hq_prime hq_gt_two\n    have h_abs_q : Int.natAbs ((q : \u2124) : \u2124) = q := by simp\n    have h_abs_diff : Int.natAbs (n - f n) = N := rfl\n    have h_abs' : q \u2264 N := by\n      have h_abs : Int.natAbs ((q : \u2124) : \u2124) \u2264 Int.natAbs (n - f n) :=\n        Int.natAbs_le_of_dvd_ne_zero hq_div_diff hdiff_ne_zero\n      simpa [h_abs_q, h_abs_diff] using h_abs\n    have hq_gt_N' : \u00ac q \u2264 N := Nat.not_le.mpr hq_gt_N\n    exact hq_gt_N' h_abs'\n  omega"
+    },
+    {
+      "id": "case2_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.57,
+      "proof_length": 51,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the hypothesis f(q) = 1 for all primes q > 2, we have f(n) \u2264 4n.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Under the hypothesis $f(q) = 1$ for all primes $q > 2$, we have $f(n) \\le 4n$. -/)\n  (proof := /-- If $f(n) = 1$, the inequality is trivial. Otherwise $f(n) = 2^k$ with $k \\ge 1$ by `f_pow_two`, and $n$ is even by `f_even`. Choose $q = 3$; then $2^k \\mid 3^n - 1$. By `padicValNat_two_three_pow_sub_one`, $k \\le v_2(3^n - 1) = v_2(n) + 2$. Hence $2^k \\le 2^{v_2(n)+2} = 4 \\cdot 2^{v_2(n)} \\le 4n$ by `pow_padicValNat_two_le`. -/)]\nlemma case2_bound (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (h_case : \u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = 1) (n : \u2124) (hn : n > 0) : f n \u2264 4 * n := by\n  by_cases h_one : f n = 1\n  \u00b7 -- case f n = 1\n    have hpos_4n : 0 < 4 * n := by\n      have hpos_n : 0 < n := hn\n      nlinarith\n    have h1_le_4n : (1 : \u2124) \u2264 4 * n := by\n      nlinarith\n    simpa [h_one] using h1_le_4n\n  \u00b7 -- f n \u2260 1\n    have hpos_fn : f n > 0 := hpos n hn\n    have hfn_gt1 : f n > 1 := by\n      by_contra! hle\n      -- hle: f n \u2264 1, but >0, so f n = 1\n      have : f n = 1 := by omega\n      exact h_one this\n    -- f n is a power of 2\n    rcases f_pow_two f hpos hf h_case n hn with \u27e8k, hk\u27e9\n    -- n is even\n    have h_even : (2 : \u2124) \u2223 n := f_even f hpos hf h_case n hn hfn_gt1\n    have h_three_prime : Nat.Prime 3 := Nat.prime_three\n    have h_three_gt2 : (3 : \u2115) > 2 := by norm_num\n    have h_f3 : f (3 : \u2124) = 1 := h_case 3 h_three_gt2 h_three_prime\n    -- divisibility: f n \u2223 3^{n.toNat} - 1\n    have h_div : f n \u2223 (3 : \u2124) ^ (n.toNat) - 1 := by\n      have htemp := hf n 3 hn (by norm_num : (3 : \u2124) > 0)\n      -- htemp: f n \u2223 (3 ^ n.toNat - (f 3) ^ (f n).toNat)\n      -- simplify (f 3)^... = 1\n      have htemp' : (f (3 : \u2124)) ^ ((f n).toNat) = 1 := by\n        simp [h_f3]\n      simpa [h_f3, htemp'] using htemp\n    -- convert to \u2115\n    set m := n.toNat with hm\n    have hm_pos : m > 0 := by\n      dsimp [m]\n      exact (Int.pos_iff_toNat_pos.mp hn)\n    have hm_even : 2 \u2223 m := by\n      rw [\u2190 Int.ofNat_dvd]\n      have hm_eq : (m : \u2124) = n := by omega\n      rw [hm_eq]\n      exact h_even\n    -- divisibility in \u2115\n    have h_div_nat : (2 : \u2115) ^ k \u2223 (3 : \u2115) ^ m - 1 := by\n      -- rewrite h_div using hk\n      rw [hk] at h_div\n      -- h_div: (2:\u2124) ^ k \u2223 (3:\u2124) ^ (n.toNat) - 1\n      -- note n.toNat = m\n      -- convert to \u2115\n      have h_left_cast : (2 : \u2124) ^ k = ((2 : \u2115) ^ k : \u2124) := by simp\n      have h_nonneg_sub : 1 \u2264 (3 : \u2115) ^ m :=\n        Nat.one_le_pow m (3 : \u2115) (by norm_num : 0 < (3 : \u2115))\n      have h_right_cast : (3 : \u2124) ^ m - 1 = (((3 : \u2115) ^ m - 1 : \u2115) : \u2124) := by\n        simp [Nat.cast_sub h_nonneg_sub, Nat.cast_pow]\n      rw [h_left_cast, h_right_cast] at h_div\n      exact (Int.ofNat_dvd.mp h_div)\n    -- padicValNat inequality\n    have hp2_fact : Fact (Nat.Prime 2) := \u27e8Nat.prime_two\u27e9\n    have ha : (3 : \u2115) ^ m - 1 \u2260 0 := by\n      have h : (3 : \u2115) ^ m > 1 := by\n        have hm1 : 1 \u2264 m := Nat.pos_of_ne_zero hm_pos.ne.symm\n        calc\n          (1 : \u2115) < 3 := by norm_num\n          _ = (3 : \u2115) ^ 1 := by simp\n          _ \u2264 (3 : \u2115) ^ m := Nat.pow_le_pow_right (by norm_num) hm1\n      omega\n    have h_val_ineq : k \u2264 padicValNat 2 ((3 : \u2115) ^ m - 1) :=\n      ((padicValNat_dvd_iff_le (p := 2) (a := (3 : \u2115) ^ m - 1) (n := k) ha).mp h_div_nat)\n    have h_padic_eq : padicValNat 2 ((3 : \u2115) ^ m - 1) = padicValNat 2 m + 2 :=\n      padicValNat_two_three_pow_sub_one m hm_even\n    rw [h_padic_eq] at h_val_ineq\n    -- now h_val_ineq : k \u2264 padicValNat 2 m + 2\n    -- need to show 2^k \u2264 4*m (in \u2115) and lift to \u2124.\n    have h_pow_padic_le : (2 : \u2115) ^ (padicValNat 2 m) \u2264 m :=\n      pow_padicValNat_two_le m hm_pos\n    -- we need to show (2 : \u2115)^k \u2264 4*m\n    have h_pow_ineq : (2 : \u2115) ^ k \u2264 4 * m := by\n      have h_k_val : k \u2264 padicValNat 2 m + 2 := h_val_ineq\n      have h_pow_k_le : (2 : \u2115) ^ k \u2264 (2 : \u2115) ^ (padicValNat 2 m + 2) :=\n        Nat.pow_le_pow_right (by norm_num) h_k_val\n      have h_pow_val : (2 : \u2115) ^ (padicValNat 2 m + 2) = 4 * (2 : \u2115) ^ (padicValNat 2 m) := by\n        ring\n      rw [h_pow_val] at h_pow_k_le\n      have h_mul_le : 4 * (2 : \u2115) ^ (padicValNat 2 m) \u2264 4 * m := by\n        nlinarith\n      exact le_trans h_pow_k_le h_mul_le\n    -- now lift to \u2124\n    have h_fn_eq : f n = (2 : \u2124) ^ (k : \u2115) := hk\n    have h_four_n_eq : (4 * n : \u2124) = (4 * (m : \u2124) : \u2124) := by\n      have hn_eq : (n : \u2124) = (m : \u2124) := by omega\n      simp [hn_eq]\n    -- need to show (2:\u2124)^k \u2264 4*(m:\u2124)\n    have h_ineq_\u2124 : (2 : \u2124) ^ (k : \u2115) \u2264 4 * (m : \u2124) := by\n      -- from h_pow_ineq in \u2115, we have (2:\u2115)^k \u2264 4*m\n      -- use Nat.cast\n      have h_cast : ((2 : \u2115) ^ k : \u2124) \u2264 (4 * m : \u2124) := by exact_mod_cast h_pow_ineq\n      -- but (2:\u2124)^(k:\u2115) = ((2:\u2115)^k : \u2124)\n      have h_eq : (2 : \u2124) ^ (k : \u2115) = ((2 : \u2115) ^ k : \u2124) := by simp\n      simpa [h_eq] using h_cast\n    -- combine\n    simpa [h_fn_eq, h_four_n_eq] using h_ineq_\u2124"
+    },
+    {
+      "id": "case_analysis",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 22.4,
+      "proof_length": 144,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Either f(q) = q for all primes q > 2, or f(q) = 1 for all primes q > 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Either $f(q) = q$ for all primes $q > 2$, or $f(q) = 1$ for all primes $q > 2$. -/)\n  (proof := /-- Suppose there exists a prime $p > 2$ with $f(p) = 1$. For any prime $q > 2$, $hf(q,p)$ gives $f(q) \\mid p^q - 1$. If $f(q) = q$, then $q \\mid p^q - 1 \\equiv p - 1 \\pmod q$ by FLT, so $q \\mid p-1$, which holds for only finitely many $q$. Thus either $f(q) = q$ for all $q$, or $f(q) = 1$ for all sufficiently large $q$. In the latter case, suppose there exists a prime $r > 2$ with $f(r) = r$. Choose a large prime $q$ (different from $r$) with $f(q) = 1$. Then $hf(r,q)$ gives $r \\mid q^r - 1 \\equiv q - 1 \\pmod r$ by FLT, so $r \\mid q-1$, i.e., $q \\equiv 1 \\pmod r$. This would hold for all sufficiently large primes $q$, contradicting Dirichlet's theorem (there are infinitely many primes not congruent to $1$ mod $r$). Thus $f(r) = 1$ for all $r$. -/)]\nlemma case_analysis (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) : (\u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = (q : \u2124)) \u2228 (\u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = 1) := by\n  by_cases h : \u2203 (p : \u2115), p > 2 \u2227 Nat.Prime p \u2227 (f (p : \u2124)) = 1\n  \u00b7 rcases h with \u27e8p0, hp0_gt2, hp0_prime, hp0_f\u27e9\n    -- We will show the second disjunct: \u2200 q > 2 prime, f(q) = 1.\n    -- Assume for contradiction that there exists a prime q > 2 with f(q) = q.\n    by_cases hS : \u2203 (r : \u2115), r > 2 \u2227 Nat.Prime r \u2227 (f (r : \u2124)) = (r : \u2124)\n    \u00b7 rcases hS with \u27e8r, hr_gt2, hr_prime, hr_f\u27e9\n      -- r is a prime >2 with f(r)=r.\n      -- We will derive a contradiction.\n      -- First, note that r | p0 - 1.\n      have h_r_div_p0_sub_one : (r : \u2124) \u2223 (p0 : \u2124) - 1 := by\n        have hpos_r : (r : \u2124) > 0 := by\n          have : r > 0 := by omega\n          exact_mod_cast this\n        have hpos_p0 : (p0 : \u2124) > 0 := by\n          have : p0 > 0 := by omega\n          exact_mod_cast this\n        have hfrp0 := hf (r : \u2124) (p0 : \u2124) hpos_r hpos_p0\n        rw [hr_f, hp0_f] at hfrp0\n        have h_simp : (r : \u2124) \u2223 (p0 : \u2124) ^ (r : \u2115) - 1 := by\n          have h_exp : ((r : \u2124).toNat : \u2115) = r := by simp\n          have h_one_pow : (1 : \u2124) ^ ((r : \u2124).toNat) = 1 := by simp\n          simpa [h_exp, h_one_pow] using hfrp0\n        have h_flt : (p0 : \u2124) ^ (r : \u2115) \u2261 (p0 : \u2124) [ZMOD (r : \u2124)] := flt_pow_mod (p0 : \u2124) r hr_prime\n        have h_mod : (p0 : \u2124) ^ (r : \u2115) - 1 \u2261 (p0 : \u2124) - 1 [ZMOD (r : \u2124)] :=\n          h_flt.sub (Int.ModEq.refl 1)\n        exact (h_mod.dvd_iff.mp h_simp)\n      -- Build the finite set of primes q>2 with f(q)=q and q < p0.\n      let S_finset : Finset \u2115 := (Finset.Ico 3 p0).filter (\u03bb q => Nat.Prime q \u2227 (f (q : \u2124)) = (q : \u2124))\n      have hS_nonempty : S_finset.Nonempty := by\n        apply Finset.filter_nonempty_iff.mpr\n        have hr_lt_p0 : r < p0 := by\n          have hpos : 0 < (p0 : \u2124) - 1 := by\n            have : (1 : \u2124) < (p0 : \u2124) := by exact_mod_cast (by omega : 1 < p0)\n            omega\n          have hle : (r : \u2124) \u2264 (p0 : \u2124) - 1 := Int.le_of_dvd hpos h_r_div_p0_sub_one\n          have hlt : (r : \u2124) < (p0 : \u2124) := by\n            have : (p0 : \u2124) - 1 < (p0 : \u2124) := by omega\n            omega\n          exact_mod_cast hlt\n        have hr_in_Ico : r \u2208 Finset.Ico 3 p0 := by\n          apply Finset.mem_Ico.mpr\n          constructor\n          \u00b7 omega\n          \u00b7 exact hr_lt_p0\n        refine \u27e8r, hr_in_Ico, \u27e8hr_prime, hr_f\u27e9\u27e9\n      let r_max := S_finset.max' hS_nonempty\n      have hr_max_mem : r_max \u2208 S_finset := Finset.max'_mem _ hS_nonempty\n      have hr_max_prime : Nat.Prime r_max := (Finset.mem_filter.mp hr_max_mem).2.1\n      have hr_max_f : (f (r_max : \u2124)) = (r_max : \u2124) := (Finset.mem_filter.mp hr_max_mem).2.2\n      have hr_max_gt2 : r_max > 2 := by\n        have h_mem_Ico : r_max \u2208 Finset.Ico 3 p0 := (Finset.mem_filter.mp hr_max_mem).1\n        rcases Finset.mem_Ico.mp h_mem_Ico with \u27e8h_low, h_high\u27e9\n        omega\n      have hr_max_lt_p0 : r_max < p0 := by\n        have h_mem_Ico : r_max \u2208 Finset.Ico 3 p0 := (Finset.mem_filter.mp hr_max_mem).1\n        rcases Finset.mem_Ico.mp h_mem_Ico with \u27e8h_low, h_high\u27e9\n        exact h_high\n      have hr_max_div_p0_sub_one : (r_max : \u2124) \u2223 (p0 : \u2124) - 1 := by\n        have hpos_r_max : (r_max : \u2124) > 0 := by\n          have : r_max > 0 := by omega\n          exact_mod_cast this\n        have hpos_p0 : (p0 : \u2124) > 0 := by\n          have : p0 > 0 := by omega\n          exact_mod_cast this\n        have hf_r_max_p0 := hf (r_max : \u2124) (p0 : \u2124) hpos_r_max hpos_p0\n        rw [hr_max_f, hp0_f] at hf_r_max_p0\n        have h_simp : (r_max : \u2124) \u2223 (p0 : \u2124) ^ (r_max : \u2115) - 1 := by\n          have h_exp : ((r_max : \u2124).toNat : \u2115) = r_max := by simp\n          have h_one_pow : (1 : \u2124) ^ ((r_max : \u2124).toNat) = 1 := by simp\n          simpa [h_exp, h_one_pow] using hf_r_max_p0\n        have h_flt : (p0 : \u2124) ^ (r_max : \u2115) \u2261 (p0 : \u2124) [ZMOD (r_max : \u2124)] := flt_pow_mod (p0 : \u2124) r_max hr_max_prime\n        have h_mod : (p0 : \u2124) ^ (r_max : \u2115) - 1 \u2261 (p0 : \u2124) - 1 [ZMOD (r_max : \u2124)] :=\n          h_flt.sub (Int.ModEq.refl 1)\n        exact (h_mod.dvd_iff.mp h_simp)\n      have h_p0_mod_one : (p0 : \u2124) \u2261 (1 : \u2124) [ZMOD (r_max : \u2124)] := by\n        rw [Int.modEq_iff_dvd]\n        have : (1 : \u2124) - (p0 : \u2124) = -((p0 : \u2124) - 1) := by ring\n        rw [this]\n        exact dvd_neg.mpr hr_max_div_p0_sub_one\n      have h_q_exists := exists_infinite_primes_mod_two_mod_p r_max hr_max_prime hr_max_gt2\n      rcases h_q_exists with \u27e8q, hq_prime, hq_mod, hq_gt\u27e9\n      have hq_gt2 : q > 2 := by omega\n      have hq_mod_int' : (r_max : \u2124) \u2223 (q : \u2124) - (2 : \u2124) := by\n        rw [Nat.modEq_iff_dvd] at hq_mod\n        have : (q : \u2124) - (2 : \u2124) = -((2 : \u2124) - (q : \u2124)) := by ring\n        rw [this]\n        exact dvd_neg.mpr hq_mod\n      have hq_mod_int : (q : \u2124) \u2261 (2 : \u2124) [ZMOD (r_max : \u2124)] := by\n        rw [Int.modEq_iff_dvd]\n        have : (2 : \u2124) - (q : \u2124) = -((q : \u2124) - (2 : \u2124)) := by ring\n        rw [this]\n        exact dvd_neg.mpr hq_mod_int'\n      -- Helper lemma: for any prime q' > p0, f(q') = 1.\n      have h_fq_eq_one_for_gt_p0 : \u2200 (q' : \u2115), q' > p0 \u2192 Nat.Prime q' \u2192 (f (q' : \u2124)) = 1 := by\n        intro q' hq'_gt_p0 hq'_prime\n        have hpos_q' : (q' : \u2124) > 0 := by\n          have : q' > 0 := by omega\n          exact_mod_cast this\n        have hpos_p0' : (p0 : \u2124) > 0 := by\n          have : p0 > 0 := by omega\n          exact_mod_cast this\n        have hf_q'_p0 := hf (q' : \u2124) (p0 : \u2124) hpos_q' hpos_p0'\n        rw [hp0_f] at hf_q'_p0\n        have h_simp : (f (q' : \u2124)) \u2223 (p0 : \u2124) ^ (q' : \u2115) - 1 := by\n          have h_exp : ((q' : \u2124).toNat : \u2115) = q' := by simp\n          have h_one_pow : (1 : \u2124) ^ ((f (q' : \u2124)).toNat) = 1 := by simp\n          simpa [h_exp, h_one_pow] using hf_q'_p0\n        by_cases h_fq'_eq_q' : (f (q' : \u2124)) = (q' : \u2124)\n        \u00b7 have hq'_div : (q' : \u2124) \u2223 (p0 : \u2124) ^ (q' : \u2115) - 1 := by\n            rw [\u2190 h_fq'_eq_q']\n            exact h_simp\n          have h_flt_q' : (p0 : \u2124) ^ (q' : \u2115) \u2261 (p0 : \u2124) [ZMOD (q' : \u2124)] := flt_pow_mod (p0 : \u2124) q' hq'_prime\n          have h_mod_q' : (p0 : \u2124) ^ (q' : \u2115) - 1 \u2261 (p0 : \u2124) - 1 [ZMOD (q' : \u2124)] :=\n            h_flt_q'.sub (Int.ModEq.refl 1)\n          have hq'_div_p0_sub_one : (q' : \u2124) \u2223 (p0 : \u2124) - 1 :=\n            (h_mod_q'.dvd_iff.mp hq'_div)\n          -- derive contradiction directly in \u2124\n          have hpos_sub : 0 < (p0 : \u2124) - 1 := by\n            have : (1 : \u2124) < (p0 : \u2124) := by exact_mod_cast (by omega : 1 < p0)\n            omega\n          have hle_q' : (q' : \u2124) \u2264 (p0 : \u2124) - 1 := Int.le_of_dvd hpos_sub hq'_div_p0_sub_one\n          have hlt_q' : (p0 : \u2124) - 1 < (q' : \u2124) := by\n            have : (p0 : \u2124) < (q' : \u2124) := by exact_mod_cast hq'_gt_p0\n            omega\n          omega\n        \u00b7 have h_cases := f_of_prime_cases f hpos hf q' hq'_prime (by omega)\n          rcases h_cases with (h_one | h_self)\n          \u00b7 exact h_one\n          \u00b7 exfalso; exact h_fq'_eq_q' h_self\n      by_cases hq_ge_p0 : q \u2265 p0\n      \u00b7 by_cases hq_eq_p0 : q = p0\n        \u00b7 subst hq_eq_p0\n          have h_contra : (1 : \u2124) \u2261 (2 : \u2124) [ZMOD (r_max : \u2124)] :=\n            h_p0_mod_one.symm.trans hq_mod_int\n          have h_r_max_div_one' : (r_max : \u2124) \u2223 (1 : \u2124) := by\n            rw [Int.modEq_iff_dvd] at h_contra\n            have : (2 : \u2124) - (1 : \u2124) = 1 := by ring\n            rw [this] at h_contra\n            exact h_contra\n          have h_isUnit' : IsUnit (r_max : \u2124) := isUnit_of_dvd_one h_r_max_div_one'\n          have h_cases' := Int.isUnit_iff.mp h_isUnit'\n          rcases h_cases' with (h_eq' | h_eq')\n          \u00b7 omega\n          \u00b7 omega\n        \u00b7 have hq_gt_p0 : q > p0 := by omega\n          have h_fq_eq_one : (f (q : \u2124)) = 1 := h_fq_eq_one_for_gt_p0 q hq_gt_p0 hq_prime\n          -- Now hf(r_max, q) gives r_max \u2223 q - 1, contradiction with q \u2261 2 mod r_max\n          have hpos_r_max : (r_max : \u2124) > 0 := by\n            have : r_max > 0 := by omega\n            exact_mod_cast this\n          have hpos_q : (q : \u2124) > 0 := by\n            have : q > 0 := by omega\n            exact_mod_cast this\n          have hf_rq := hf (r_max : \u2124) (q : \u2124) hpos_r_max hpos_q\n          rw [hr_max_f, h_fq_eq_one] at hf_rq\n          have h_simp_rq : (r_max : \u2124) \u2223 (q : \u2124) ^ (r_max : \u2115) - 1 := by\n            have h_exp : ((r_max : \u2124).toNat : \u2115) = r_max := by simp\n            have h_one_pow : (1 : \u2124) ^ ((r_max : \u2124).toNat) = 1 := by simp\n            simpa [h_exp, h_one_pow] using hf_rq\n          have h_flt_q : (q : \u2124) ^ (r_max : \u2115) \u2261 (q : \u2124) [ZMOD (r_max : \u2124)] := flt_pow_mod (q : \u2124) r_max hr_max_prime\n          have h_mod_q : (q : \u2124) ^ (r_max : \u2115) - 1 \u2261 (q : \u2124) - 1 [ZMOD (r_max : \u2124)] :=\n            h_flt_q.sub (Int.ModEq.refl 1)\n          have h_r_max_div_q_sub_one : (r_max : \u2124) \u2223 (q : \u2124) - 1 :=\n            (h_mod_q.dvd_iff.mp h_simp_rq)\n          have h_r_max_div_q_sub_two : (r_max : \u2124) \u2223 (q : \u2124) - (2 : \u2124) := hq_mod_int'\n          have h_r_max_div_one : (r_max : \u2124) \u2223 (1 : \u2124) := by\n            have : (1 : \u2124) = ((q : \u2124) - 1) - ((q : \u2124) - (2 : \u2124)) := by ring\n            rw [this]\n            exact dvd_sub h_r_max_div_q_sub_one h_r_max_div_q_sub_two\n          have h_isUnit : IsUnit (r_max : \u2124) := isUnit_of_dvd_one h_r_max_div_one\n          have h_cases := Int.isUnit_iff.mp h_isUnit\n          rcases h_cases with (h_eq | h_eq)\n          \u00b7 omega\n          \u00b7 omega\n      \u00b7 have hq_lt_p0 : q < p0 := by omega\n        have hq_notin_S : q \u2209 S_finset := by\n          intro hq_mem\n          have hq_le_r_max : q \u2264 r_max := Finset.le_max' S_finset q hq_mem\n          omega\n        have hq_not_fq_eq_q : (f (q : \u2124)) \u2260 (q : \u2124) := by\n          intro h_eq\n          have hq_mem : q \u2208 S_finset := by\n            apply Finset.mem_filter.mpr\n            refine \u27e8Finset.mem_Ico.mpr \u27e8by omega, hq_lt_p0\u27e9, hq_prime, h_eq\u27e9\n          exact hq_notin_S hq_mem\n        have h_fq_eq_one : (f (q : \u2124)) = 1 := by\n          have h_cases := f_of_prime_cases f hpos hf q hq_prime (by omega)\n          rcases h_cases with (h_one | h_self)\n          \u00b7 exact h_one\n          \u00b7 exfalso; exact hq_not_fq_eq_q h_self\n        -- Now hf(r_max, q) gives r_max \u2223 q - 1, contradiction with q \u2261 2 mod r_max\n        have hpos_r_max : (r_max : \u2124) > 0 := by\n          have : r_max > 0 := by omega\n          exact_mod_cast this\n        have hpos_q : (q : \u2124) > 0 := by\n          have : q > 0 := by omega\n          exact_mod_cast this\n        have hf_rq := hf (r_max : \u2124) (q : \u2124) hpos_r_max hpos_q\n        rw [hr_max_f, h_fq_eq_one] at hf_rq\n        have h_simp_rq : (r_max : \u2124) \u2223 (q : \u2124) ^ (r_max : \u2115) - 1 := by\n          have h_exp : ((r_max : \u2124).toNat : \u2115) = r_max := by simp\n          have h_one_pow : (1 : \u2124) ^ ((r_max : \u2124).toNat) = 1 := by simp\n          simpa [h_exp, h_one_pow] using hf_rq\n        have h_flt_q : (q : \u2124) ^ (r_max : \u2115) \u2261 (q : \u2124) [ZMOD (r_max : \u2124)] := flt_pow_mod (q : \u2124) r_max hr_max_prime\n        have h_mod_q : (q : \u2124) ^ (r_max : \u2115) - 1 \u2261 (q : \u2124) - 1 [ZMOD (r_max : \u2124)] :=\n          h_flt_q.sub (Int.ModEq.refl 1)\n        have h_r_max_div_q_sub_one : (r_max : \u2124) \u2223 (q : \u2124) - 1 :=\n          (h_mod_q.dvd_iff.mp h_simp_rq)\n        have h_r_max_div_q_sub_two : (r_max : \u2124) \u2223 (q : \u2124) - (2 : \u2124) := hq_mod_int'\n        have h_r_max_div_one : (r_max : \u2124) \u2223 (1 : \u2124) := by\n          have : (1 : \u2124) = ((q : \u2124) - 1) - ((q : \u2124) - (2 : \u2124)) := by ring\n          rw [this]\n          exact dvd_sub h_r_max_div_q_sub_one h_r_max_div_q_sub_two\n        have h_isUnit : IsUnit (r_max : \u2124) := isUnit_of_dvd_one h_r_max_div_one\n        have h_cases := Int.isUnit_iff.mp h_isUnit\n        rcases h_cases with (h_eq | h_eq)\n        \u00b7 omega\n        \u00b7 omega\n    \u00b7 -- no prime with f(r)=r, so all primes >2 have f=1\n      refine Or.inr ?_\n      intro q hq_gt2 hq_prime\n      have h_cases := f_of_prime_cases f hpos hf q hq_prime (by omega)\n      rcases h_cases with (hq1 | hq2)\n      \u00b7 exact hq1\n      \u00b7 exfalso; apply hS; exact \u27e8q, hq_gt2, hq_prime, hq2\u27e9\n  \u00b7 -- no prime with f(p)=1, so all primes have f(p)=p\n    refine Or.inl ?_\n    intro q hq_gt2 hq_prime\n    have h_cases := f_of_prime_cases f hpos hf q hq_prime (by omega)\n    rcases h_cases with (hq1 | hq2)\n    \u00b7 exfalso; apply h; exact \u27e8q, hq_gt2, hq_prime, hq1\u27e9\n    \u00b7 exact hq2"
+    },
+    {
+      "id": "exists_infinite_primes_gt_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There are infinitely many primes >2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- There are infinitely many primes $>2$. -/)\n  (proof := /-- By Euclid's theorem, there are infinitely many primes; pick ones $>2$. -/)]\nlemma exists_infinite_primes_gt_two : \u2200 N : \u2115, \u2203 q : \u2115, q > N \u2227 Nat.Prime q \u2227 q > 2 := by\n  intro N\n  have h := Nat.exists_infinite_primes (max N 2 + 1)\n  rcases h with \u27e8p, hp, hprime\u27e9\n  have hp_gt_N : p > N := by\n    have hNmax : N \u2264 max N 2 := le_max_left _ _\n    have hNlt : N < max N 2 + 1 := Nat.lt_succ_of_le hNmax\n    exact Nat.lt_of_lt_of_le hNlt hp\n  have hp_gt_2 : p > 2 := by\n    have h2max : 2 \u2264 max N 2 := le_max_right _ _\n    have h2lt : 2 < max N 2 + 1 := Nat.lt_succ_of_le h2max\n    exact Nat.lt_of_lt_of_le h2lt hp\n  exact \u27e8p, hp_gt_N, hprime, hp_gt_2\u27e9"
+    },
+    {
+      "id": "exists_infinite_primes_mod_two_mod_p",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.68,
+      "proof_length": 5,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any prime p > 2, there are infinitely many primes q such that q \u2261 2 pmod p.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any prime $p > 2$, there are infinitely many primes $q$ such that $q \\equiv 2 \\pmod p$. -/)\n  (proof := /-- Dirichlet's theorem on arithmetic progressions. -/)]\nlemma exists_infinite_primes_mod_two_mod_p (p : \u2115) (hp : Nat.Prime p) (hp_gt2 : p > 2) : \u2203 (q : \u2115), Nat.Prime q \u2227 q \u2261 2 [MOD p] \u2227 q > p := by\n  have hp_ne_zero : p \u2260 0 := by linarith\n  have h_coprime : Nat.Coprime 2 p := by\n    have hp2 : Nat.Prime (2 : \u2115) := by norm_num\n    rcases Nat.coprime_or_dvd_of_prime hp2 p with (hcop | hdvd)\n    \u00b7 exact hcop\n    \u00b7 -- hdvd : 2 \u2223 p\n      rcases (Nat.dvd_prime hp).mp hdvd with (h | h)\n      \u00b7 -- h : 2 = 1\n        norm_num at h\n      \u00b7 -- h : 2 = p\n        linarith\n  have h_isCoprime : IsCoprime (2 : \u2124) (p : \u2124) :=\n    (Nat.isCoprime_iff_coprime.mpr h_coprime)\n  obtain \u27e8q, hq_gt, hq_prime, hq_mod\u27e9 :=\n    Nat.forall_exists_prime_gt_and_zmodEq p hp_ne_zero h_isCoprime\n  have hq_mod_nat : q \u2261 2 [MOD p] :=\n    (Int.natCast_modEq_iff (a := q) (b := 2) (n := p)).mp hq_mod\n  exact \u27e8q, hq_prime, hq_mod_nat, hq_gt\u27e9"
+    },
+    {
+      "id": "f_dvd_n",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the same hypothesis, if f(n) > 1, then any prime divisor of f(n) divides n.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Under the same hypothesis, if $f(n) > 1$, then any prime divisor of $f(n)$ divides $n$. -/)\n  (proof := /-- From $hf(n,n)$, $f(n) \\mid n^n - f(n)^{f(n)}$. If $f(n) > 1$, then $f(n) \\mid n^n$. Hence any prime dividing $f(n)$ divides $n$. -/)]\nlemma f_dvd_n (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (h_case : \u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = 1) (n : \u2124) (hn : n > 0) (hfn_gt1 : f n > 1) : \u2200 (p : \u2115), Nat.Prime p \u2192 (p : \u2124) \u2223 f n \u2192 (p : \u2124) \u2223 n := by\n  intro p hp_prime hp_dvd_fn\n  have hfn_pos : f n > 0 := hpos n hn\n  have hdiv : f n \u2223 (n : \u2124) ^ (n.toNat) - ((f n : \u2124) ^ ((f n).toNat)) := hf n n hn hn\n  have hp_dvd_fn_int : (p : \u2124) \u2223 (f n : \u2124) := hp_dvd_fn\n  have hfn_toNat_ne_zero : (f n).toNat \u2260 0 := by\n    have hfn_int_gt1 : (f n : \u2124) > 1 := hfn_gt1\n    omega\n  have hp_dvd_fn_pow : (p : \u2124) \u2223 ((f n : \u2124) ^ ((f n).toNat)) := by\n    exact dvd_pow hp_dvd_fn_int hfn_toNat_ne_zero\n  have hp_dvd_diff : (p : \u2124) \u2223 (n : \u2124) ^ (n.toNat) - ((f n : \u2124) ^ ((f n).toNat)) :=\n    hp_dvd_fn_int.trans hdiv\n  have hp_dvd_npow : (p : \u2124) \u2223 (n : \u2124) ^ (n.toNat) := by\n    have htemp : (p : \u2124) \u2223 ((n : \u2124) ^ (n.toNat) - ((f n : \u2124) ^ ((f n).toNat))) + ((f n : \u2124) ^ ((f n).toNat)) :=\n      dvd_add hp_dvd_diff hp_dvd_fn_pow\n    simpa [sub_add_cancel] using htemp\n  exact Int.Prime.dvd_pow' hp_prime hp_dvd_npow"
+    },
+    {
+      "id": "f_even",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.75,
+      "proof_length": 23,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the same hypothesis, if f(n) > 1, then n is even.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Under the same hypothesis, if $f(n) > 1$, then $n$ is even. -/)\n  (proof := /-- Since $f(n) > 1$, $f(n)$ has a prime factor, which by `f_pow_two` must be $2$. By `f_dvd_n`, $2 \\mid n$, so $n$ is even. -/)]\nlemma f_even (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (h_case : \u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = 1) (n : \u2124) (hn : n > 0) (hfn_gt1 : f n > 1) : (2 : \u2124) \u2223 n := by\n  have hfn_pow2 : \u2203 (k : \u2115), f n = (2 : \u2124) ^ (k : \u2115) := f_pow_two f hpos hf h_case n hn\n  rcases hfn_pow2 with \u27e8k, hfn_eq\u27e9\n  have h2_dvd_fn : (2 : \u2124) \u2223 f n := by\n    by_cases hk : k = 0\n    \u00b7 -- then f n = 1, contradiction\n      rw [hk, pow_zero] at hfn_eq\n      rw [hfn_eq] at hfn_gt1\n      linarith\n    \u00b7 -- k \u2260 0, so k \u2265 1\n      rw [hfn_eq]\n      exact dvd_pow (dvd_refl (2 : \u2124)) hk\n  have h2_prime : Nat.Prime 2 := by\n    exact Nat.prime_two\n  have h2_dvd_n : (2 : \u2124) \u2223 n := f_dvd_n f hpos hf h_case n hn hfn_gt1 2 h2_prime h2_dvd_fn\n  exact h2_dvd_n"
+    },
+    {
+      "id": "f_no_odd_prime",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.2,
+      "proof_length": 36,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If f(q) = 1 for all primes q > 2, then f(n) has no odd prime divisor for any n>2.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If $f(q) = 1$ for all primes $q > 2$, then $f(n)$ has no odd prime divisor for any $n>2$. -/)\n  (proof := /-- Suppose an odd prime $p$ divides $f(n)$. Then $p > 2$ and $p$ is prime. Choose $q = p$ in $hf(n,q)$: we get $f(n) \\mid p^n - 1$, so $p \\mid p^n - 1$, impossible since $p \\mid p^n$. -/)]\nlemma f_no_odd_prime (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (h_case : \u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = 1) (n : \u2124) (hn : n > 0) : \u2200 (p : \u2115), Nat.Prime p \u2192 p \u2260 2 \u2192 \u00ac (p : \u2124) \u2223 f n := by\n  intro p hp hne2\n  intro hdiv\n  have hp_pos : (p : \u2124) > 0 := by\n    have hp_pos_nat : 0 < p := Nat.Prime.pos hp\n    exact_mod_cast hp_pos_nat\n  have hf_n_pos : f n > 0 := hpos n hn\n  have hp_gt2 : 2 < p := by\n    have h2le : 2 \u2264 p := Nat.Prime.two_le hp\n    have hne2_symm : 2 \u2260 p := by\n      intro h; apply hne2; exact h.symm\n    exact Nat.lt_of_le_of_ne h2le hne2_symm\n  have hf_p_eq1 : f (p : \u2124) = 1 := h_case p hp_gt2 hp\n  have hf_div : f n \u2223 ((p : \u2124) ^ n.toNat - (f (p : \u2124)) ^ (f n).toNat) := hf n (p : \u2124) hn hp_pos\n  have hf_div' : f n \u2223 ((p : \u2124) ^ n.toNat - (1 : \u2124) ^ (f n).toNat) := by\n    simpa [hf_p_eq1] using hf_div\n  have one_pow : (1 : \u2124) ^ (f n).toNat = 1 := by\n    simp\n  have hf_div'' : f n \u2223 ((p : \u2124) ^ n.toNat - 1) := by\n    simpa [one_pow] using hf_div'\n  have hp_dvd_f_n : (p : \u2124) \u2223 f n := hdiv\n  have hp_dvd_pow_sub_one : (p : \u2124) \u2223 ((p : \u2124) ^ n.toNat - 1) :=\n    hp_dvd_f_n.trans hf_div''\n  have hn_toNat_pos : 0 < n.toNat := (Int.pos_iff_toNat_pos.mp hn)\n  have hn_toNat_ne_zero : n.toNat \u2260 0 := Nat.ne_of_gt hn_toNat_pos\n  have hp_dvd_pow : (p : \u2124) \u2223 (p : \u2124) ^ n.toNat := by\n    refine dvd_pow_self (p : \u2124) hn_toNat_ne_zero\n  have hp_dvd_one : (p : \u2124) \u2223 (1 : \u2124) := by\n    have htemp : (p : \u2124) \u2223 ((p : \u2124) ^ n.toNat - ((p : \u2124) ^ n.toNat - 1)) :=\n      hp_dvd_pow.sub hp_dvd_pow_sub_one\n    have hcalc : ((p : \u2124) ^ n.toNat - ((p : \u2124) ^ n.toNat - 1)) = (1 : \u2124) := by ring\n    rw [hcalc] at htemp\n    exact htemp\n  have hp_nat_dvd_one : p \u2223 (1 : \u2115) := by exact_mod_cast hp_dvd_one\n  have hp_not_dvd_one : \u00ac p \u2223 (1 : \u2115) := Nat.Prime.not_dvd_one hp\n  exact hp_not_dvd_one hp_nat_dvd_one"
+    },
+    {
+      "id": "f_of_prime_cases",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 18.73,
+      "proof_length": 80,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any prime p > 2, f(p) = 1 or f(p) = p.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any prime $p > 2$, $f(p) = 1$ or $f(p) = p$. -/)\n  (proof := /-- Assume $f(p) > 1$. Then $f(p) = p^w$ with $w \\ge 1$ by `f_of_prime_eq_pow`. If $w \\ge 2$, then by `f_of_prime_divides_p_minus_pow`, every prime $q \\neq p$ with $f(q) > 1$ satisfies $q \\mid p^w - p$. Hence for all sufficiently large primes $q$, $f(q) = 1$. Choose a prime $q \\equiv 2 \\pmod p$ by `exists_infinite_primes_mod_two_mod_p` such that $f(q) = 1$. Then $hf(p,q)$ gives $p^w \\mid q^p - 1$, which by FLT implies $p \\mid 2 - 1 = 1$, contradiction. Hence $w \\le 1$, so $f(p) = p$. -/)]\nlemma f_of_prime_cases (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (p : \u2115) (hp : Nat.Prime p) (hp_gt2 : p > 2) : (f (p : \u2124)) = 1 \u2228 (f (p : \u2124)) = (p : \u2124) := by\n  by_cases hfp1 : (f (p : \u2124)) = 1\n  \u00b7 left; exact hfp1\n  \u00b7 right\n    have hpos_p : (p : \u2124) > 0 := by exact_mod_cast hp.pos\n    have hfp_gt1 : (f (p : \u2124)) > 1 := by\n      have hfp_pos : f (p : \u2124) > 0 := hpos (p : \u2124) hpos_p\n      omega\n    rcases f_of_prime_eq_pow f hpos hf p hp hp_gt2 hfp_gt1 with \u27e8w, hw_ge1, hfp_eq\u27e9\n    have hw_eq1 : w = 1 := by\n      by_contra! hw_ne1\n      have hw_ge2 : w \u2265 2 := by\n        have : w \u2265 1 := hw_ge1\n        omega\n      have h_coprime : (2 : \u2115).Coprime p := by\n        rw [Nat.coprime_primes (by norm_num : Nat.Prime (2 : \u2115)) hp]\n        omega\n      have h_infinite : Set.Infinite {q : \u2115 | Nat.Prime q \u2227 q \u2261 2 [MOD p]} :=\n        Nat.infinite_setOf_prime_and_modEq (by omega) h_coprime\n      let S : Finset \u2115 := Nat.primeFactors ((p : \u2115)^w - p)\n      have hS_finite : Set.Finite (S : Set \u2115) := S.finite_toSet\n      rcases h_infinite.exists_not_mem_finite hS_finite with \u27e8q, hq_mem, hq_notin\u27e9\n      rcases hq_mem with \u27e8hq_prime, hq_mod\u27e9\n      have hp_gt_one : p > 1 := Nat.Prime.one_lt hp\n      have hp_lt_pow : p < p^w := by\n        calc\n          p = p^1 := by simp\n          _ < p^w := Nat.pow_lt_pow_right hp_gt_one (by omega)\n      have hpos_sub : (p : \u2115)^w - p > 0 := by\n        omega\n      have hq_not_div : \u00ac (q : \u2124) \u2223 (p : \u2124)^w - (p : \u2124) := by\n        intro hdiv\n        apply hq_notin\n        have hp_lt_pow_nat : (p : \u2115) < (p : \u2115)^w := hp_lt_pow\n        have hq_dvd_nat : q \u2223 (p : \u2115)^w - p := by\n          have hdiv' : (q : \u2124) \u2223 (Nat.cast ((p : \u2115)^w - p) : \u2124) := by\n            simpa [Nat.cast_sub hp_lt_pow_nat.le, Nat.cast_pow] using hdiv\n          exact Int.ofNat_dvd.mp hdiv'\n        have hq_mem_prime_factors : q \u2208 Nat.primeFactors ((p : \u2115)^w - p) :=\n          Nat.mem_primeFactors.mpr \u27e8hq_prime, hq_dvd_nat, hpos_sub.ne'\u27e9\n        exact hq_mem_prime_factors\n      have hq_ne_p : q \u2260 p := by\n        intro h_eq\n        have h0mod : q \u2261 0 [MOD p] := by\n          rw [h_eq]\n          exact Nat.modEq_zero_iff_dvd.mpr (dvd_refl p)\n        have : q \u2261 2 [MOD p] := hq_mod\n        have : 0 \u2261 2 [MOD p] := by\n          calc\n            0 \u2261 q [MOD p] := h0mod.symm\n            _ \u2261 2 [MOD p] := hq_mod\n        have hp_dvd_two : p \u2223 2 := by\n          have hmod_eq : (0 : \u2115) % p = (2 : \u2115) % p := this\n          have h2_mod : (2 : \u2115) % p = 0 := by\n            simpa using hmod_eq.symm\n          exact Nat.dvd_of_mod_eq_zero h2_mod\n        have hp_gt_2 : p > 2 := hp_gt2\n        have : p \u2264 2 := Nat.le_of_dvd (by norm_num) hp_dvd_two\n        omega\n      have hfq_eq1 : (f (q : \u2124)) = 1 := by\n        by_contra! hfq_gt1\n        have hfq_gt1' : (f (q : \u2124)) > 1 := by\n          have hpos_q : (q : \u2124) > 0 := by exact mod_cast (Nat.Prime.pos hq_prime)\n          have hfq_pos : f (q : \u2124) > 0 := hpos (q : \u2124) hpos_q\n          omega\n        have hdiv_q := f_of_prime_divides_p_minus_pow f hpos hf p q hp hq_prime hp_gt2 hq_ne_p hfp_gt1 hfq_gt1' w hw_ge2 hfp_eq\n        exact hq_not_div hdiv_q\n      have hpos_q_int : (q : \u2124) > 0 := by exact mod_cast (Nat.Prime.pos hq_prime)\n      have hpos_p_int : (p : \u2124) > 0 := by exact mod_cast hp.pos\n      have hhf := hf (p : \u2124) (q : \u2124) hpos_p_int hpos_q_int\n      rw [hfp_eq, hfq_eq1] at hhf\n      have hhf_simp : (p : \u2124) ^ (w : \u2115) \u2223 (q : \u2124) ^ (p : \u2115) - 1 := by\n        have h_one_pow : (1 : \u2124) ^ ((p : \u2124) ^ (w : \u2115)).toNat = (1 : \u2124) := by simp\n        simpa [h_one_pow] using hhf\n      have hp_dvd_diff : (p : \u2124) \u2223 (q : \u2124) ^ (p : \u2115) - 1 := by\n        have hp_dvd_self : (p : \u2124) \u2223 (p : \u2124) ^ (w : \u2115) := by\n          apply dvd_pow_self (p : \u2124) (by omega)\n        exact hp_dvd_self.trans hhf_simp\n      have h_flt : (q : \u2124) ^ (p : \u2115) \u2261 (q : \u2124) [ZMOD (p : \u2124)] :=\n        flt_pow_mod (q : \u2124) p hp\n      have hq_mod_p : (q : \u2124) \u2261 (2 : \u2124) [ZMOD (p : \u2124)] := by exact mod_cast hq_mod\n      have h_q_pow_mod_p : (q : \u2124) ^ (p : \u2115) \u2261 (2 : \u2124) [ZMOD (p : \u2124)] := by\n        calc\n          (q : \u2124) ^ (p : \u2115) \u2261 (q : \u2124) [ZMOD (p : \u2124)] := h_flt\n          _ \u2261 (2 : \u2124) [ZMOD (p : \u2124)] := hq_mod_p\n      have h_diff_mod_p : (q : \u2124) ^ (p : \u2115) - 1 \u2261 (2 : \u2124) - 1 [ZMOD (p : \u2124)] := by\n        apply Int.ModEq.sub h_q_pow_mod_p (by rfl)\n      have : (2 : \u2124) - 1 = (1 : \u2124) := by norm_num\n      rw [this] at h_diff_mod_p\n      have hp_dvd_one : (p : \u2124) \u2223 (1 : \u2124) := by\n        have h_diff_mod_zero : (q : \u2124) ^ (p : \u2115) - 1 \u2261 (0 : \u2124) [ZMOD (p : \u2124)] :=\n          hp_dvd_diff.modEq_zero_int\n        have h_one_mod_zero : (1 : \u2124) \u2261 (0 : \u2124) [ZMOD (p : \u2124)] := by\n          calc\n            (1 : \u2124) \u2261 (q : \u2124) ^ (p : \u2115) - 1 [ZMOD (p : \u2124)] := h_diff_mod_p.symm\n            _ \u2261 (0 : \u2124) [ZMOD (p : \u2124)] := h_diff_mod_zero\n        exact (Int.modEq_zero_iff_dvd.mp h_one_mod_zero)\n      have hp_not_dvd_one : \u00ac (p : \u2124) \u2223 (1 : \u2124) := by\n        intro h\n        have : (p : \u2115) \u2223 (1 : \u2115) := by exact mod_cast h\n        have hp_gt_one' : p > 1 := Nat.Prime.one_lt hp\n        have : p \u2264 1 := Nat.le_of_dvd (by norm_num) this\n        omega\n      exact hp_not_dvd_one hp_dvd_one\n    have hfp_eq_p : (f (p : \u2124)) = (p : \u2124) := by\n      calc\n        (f (p : \u2124)) = (p : \u2124) ^ (w : \u2115) := hfp_eq\n        _ = (p : \u2124) ^ (1 : \u2115) := by rw [hw_eq1]\n        _ = (p : \u2124) := by simp\n    exact hfp_eq_p"
+    },
+    {
+      "id": "f_of_prime_divides_p_minus_pow",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.12,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let p be a prime >2 and f(p) = p^w with w \u2265 2. Then for any prime q \u2260 p with f(q) > 1, we have q | p^w - p.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Let $p$ be a prime $>2$ and $f(p) = p^w$ with $w \\ge 2$. Then for any prime $q \\neq p$ with $f(q) > 1$, we have $q \\mid p^w - p$. -/)\n  (proof := /-- From $hf(q,p)$, $f(q) \\mid p^q - p^{w f(q)}$. By FLT, $p^q \\equiv p \\pmod q$ and $p^{w f(q)} \\equiv p^w \\pmod q$ (since $(p^w)^{q^{w_q}} \\equiv p^w \\pmod q$). Hence $q \\mid p - p^w$. -/)]\nlemma f_of_prime_divides_p_minus_pow (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (p q : \u2115) (hp : Nat.Prime p) (hq : Nat.Prime q) (hp_gt2 : p > 2) (hq_ne_p : q \u2260 p) (hfp_gt1 : (f (p : \u2124)) > 1) (hfq_gt1 : (f (q : \u2124)) > 1) (w : \u2115) (hw_ge2 : w \u2265 2) (hfp_eq : (f (p : \u2124)) = (p : \u2124) ^ (w : \u2115)) : (q : \u2124) \u2223 (p : \u2124) ^ w - (p : \u2124) := by\n  by_cases hq2 : q = 2\n  \u00b7 subst hq2\n    have hp_odd : (p : \u2124) % 2 = 1 := by\n      have hmod : p % 2 = 1 := (Nat.Prime.mod_two_eq_one_iff_ne_two hp).mpr (by omega)\n      omega\n    have h_odd_lemma : \u2200 (p : \u2124), p % 2 = 1 \u2192 \u2200 (w : \u2115), (2 : \u2124) \u2223 p ^ w - p := by\n      intro p hp_odd w\n      have h2_dvd : (2 : \u2124) \u2223 (1 : \u2124) - p := by omega\n      have hmod : p \u2261 (1 : \u2124) [ZMOD 2] := by\n        rw [Int.modEq_iff_dvd]\n        exact h2_dvd\n      have hmod_pow : p ^ w \u2261 (1 : \u2124) ^ w [ZMOD 2] := hmod.pow w\n      have hmod_pow_one : p ^ w \u2261 1 [ZMOD 2] := by simpa [one_pow] using hmod_pow\n      have hmod_sub : p ^ w - p \u2261 0 [ZMOD 2] := by\n        calc\n          p ^ w - p \u2261 1 - 1 [ZMOD 2] := by\n            exact hmod_pow_one.sub hmod\n          _ = 0 := by ring\n      exact (Int.modEq_zero_iff_dvd.mp hmod_sub)\n    exact h_odd_lemma (p : \u2124) hp_odd w\n  \u00b7 have hq_gt2 : q > 2 := by\n      have hq_gt1 : 1 < q := Nat.Prime.one_lt hq\n      have hq_ne_two : q \u2260 2 := hq2\n      omega\n    -- get f(q) = q^u for some u\u22651\n    have h_fq_eq := f_of_prime_eq_pow f hpos hf q hq hq_gt2 hfq_gt1\n    rcases h_fq_eq with \u27e8u, hu_ge1, hfq_eq\u27e9\n    have hposq : (q : \u2124) > 0 := by exact mod_cast Nat.Prime.pos hq\n    have hposp : (p : \u2124) > 0 := by exact mod_cast Nat.Prime.pos hp\n    -- apply hf(q,p)\n    have h_div : (f (q : \u2124)) \u2223 ((p : \u2124) ^ (q : \u2124).toNat - (f (p : \u2124)) ^ (f (q : \u2124)).toNat) :=\n      hf (q : \u2124) (p : \u2124) hposq hposp\n    rw [hfq_eq, hfp_eq] at h_div\n    -- simplify toNat terms\n    have hq_toNat' : ((q : \u2124).toNat : \u2115) = q := by simp\n    have h_fq_toNat' : ((q : \u2124) ^ (u : \u2115)).toNat = q ^ u := by\n      have h_nonneg : 0 \u2264 (q : \u2124) ^ (u : \u2115) := by positivity\n      exact_mod_cast Int.toNat_of_nonneg h_nonneg\n    rw [hq_toNat', h_fq_toNat'] at h_div\n    -- h_div : (q : \u2124) ^ (u : \u2115) \u2223 (p : \u2124) ^ (q : \u2115) - ((p : \u2124) ^ (w : \u2115)) ^ (q ^ u : \u2115)\n    -- Now we have q \u2223 q^u\n    have hq_dvd_q_u : (q : \u2124) \u2223 (q : \u2124) ^ (u : \u2115) := by\n      apply dvd_pow_self (q : \u2124)\n      omega\n    have hq_dvd : (q : \u2124) \u2223 (p : \u2124) ^ (q : \u2115) - ((p : \u2124) ^ (w : \u2115)) ^ (q ^ u : \u2115) :=\n      dvd_trans hq_dvd_q_u h_div\n    -- rewrite ((p : \u2124) ^ (w : \u2115)) ^ (q ^ u : \u2115) = (p : \u2124) ^ (w * (q ^ u) : \u2115)\n    have h_pow_fq : ((p : \u2124) ^ (w : \u2115)) ^ (q ^ u : \u2115) = (p : \u2124) ^ (w * (q ^ u) : \u2115) := by\n      rw [\u2190 pow_mul, mul_comm]\n    rw [h_pow_fq] at hq_dvd\n    -- Now hq_dvd : (q : \u2124) \u2223 (p : \u2124) ^ (q : \u2115) - (p : \u2124) ^ (w * (q ^ u) : \u2115)\n    -- FLT: (p : \u2124)^(q : \u2115) \u2261 p [ZMOD q]\n    have h_flt_pq : (p : \u2124) ^ (q : \u2115) \u2261 (p : \u2124) [ZMOD (q : \u2124)] := flt_pow_mod (p : \u2124) q hq\n    -- Lemma: p^(q^u) \u2261 p [ZMOD q]\n    have h_pow_q_pow_eq_mod_q (a : \u2124) (k : \u2115) : a ^ ((q : \u2115) ^ k : \u2115) \u2261 a [ZMOD (q : \u2124)] := by\n      induction' k with k ih\n      \u00b7 simp\n      \u00b7 have h_exp : ((q : \u2115) ^ (k+1) : \u2115) = ((q : \u2115) ^ k * (q : \u2115) : \u2115) := by simp [pow_succ]\n        rw [h_exp]\n        rw [pow_mul]\n        apply (ih.pow (q : \u2115)).trans ?_\n        exact flt_pow_mod a q hq\n    have h_pow_q_pow_eq_mod_q_p : (p : \u2124) ^ ((q : \u2115) ^ u : \u2115) \u2261 (p : \u2124) [ZMOD (q : \u2124)] :=\n      h_pow_q_pow_eq_mod_q (p : \u2124) u\n    have h_pow_w_q_u_mod_q : (p : \u2124) ^ (w * (q ^ u) : \u2115) \u2261 (p : \u2124) ^ (w : \u2115) [ZMOD (q : \u2124)] := by\n      calc\n        (p : \u2124) ^ (w * (q ^ u) : \u2115) = ((p : \u2124) ^ ((q : \u2115) ^ u : \u2115)) ^ (w : \u2115) := by\n          rw [\u2190 pow_mul, mul_comm]\n        _ \u2261 (p : \u2124) ^ (w : \u2115) [ZMOD (q : \u2124)] := (h_pow_q_pow_eq_mod_q_p.pow w)\n    -- Combine congruences\n    have h_mod_diff : (p : \u2124) ^ (q : \u2115) - (p : \u2124) ^ (w * (q ^ u) : \u2115) \u2261 (p : \u2124) - (p : \u2124) ^ (w : \u2115) [ZMOD (q : \u2124)] :=\n      Int.ModEq.sub h_flt_pq h_pow_w_q_u_mod_q\n    have hLHS_modEq : (p : \u2124) ^ (q : \u2115) - (p : \u2124) ^ (w * (q ^ u) : \u2115) \u2261 0 [ZMOD (q : \u2124)] :=\n      (Int.modEq_zero_iff_dvd.mpr hq_dvd)\n    have hRHS_modEq : (p : \u2124) - (p : \u2124) ^ (w : \u2115) \u2261 0 [ZMOD (q : \u2124)] := by\n      calc\n        (p : \u2124) - (p : \u2124) ^ (w : \u2115) \u2261 (p : \u2124) ^ (q : \u2115) - (p : \u2124) ^ (w * (q ^ u) : \u2115) [ZMOD (q : \u2124)] := by\n          symm; exact h_mod_diff\n        _ \u2261 0 [ZMOD (q : \u2124)] := hLHS_modEq\n    have h_dvd_RHS : (q : \u2124) \u2223 (p : \u2124) - (p : \u2124) ^ (w : \u2115) :=\n      (Int.modEq_zero_iff_dvd.mp hRHS_modEq)\n    -- Goal: (q : \u2124) \u2223 (p : \u2124) ^ w - (p : \u2124)\n    have h_goal : (q : \u2124) \u2223 (p : \u2124) ^ w - (p : \u2124) := by\n      rw [show (p : \u2124) ^ w - (p : \u2124) = -((p : \u2124) - (p : \u2124) ^ w) by ring]\n      exact dvd_neg.mpr h_dvd_RHS\n    exact h_goal"
+    },
+    {
+      "id": "f_of_prime_eq_pow",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If p is a prime >2 and f(p) > 1, then f(p) = p^w for some w \u2265 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If $p$ is a prime $>2$ and $f(p) > 1$, then $f(p) = p^w$ for some $w \\ge 1$. -/)\n  (proof := /-- From $hf(p,p)$, $f(p) \\mid p^p - f(p)^{f(p)}$, so $f(p) \\mid p^p$. Since $p$ is prime, $f(p) = p^w$. -/)]\nlemma f_of_prime_eq_pow (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (p : \u2115) (hp : Nat.Prime p) (hp_gt2 : p > 2) (hfp_gt1 : (f (p : \u2124)) > 1) :\n    \u2203 (w : \u2115), w \u2265 1 \u2227 (f (p : \u2124)) = (p : \u2124) ^ (w : \u2115) := by\n  set a := (p : \u2124) with ha\n  set F := f a with hF\n  have ha_pos : a > 0 := by\n    have h : (1 : \u2124) < (p : \u2124) := by exact_mod_cast hp.one_lt\n    linarith\n  have hF_pos : F > 0 := hpos a ha_pos\n  have ha_nonneg : a \u2265 0 := by linarith\n  have hF_nonneg : F \u2265 0 := by linarith\n  have ha_toNat_eq : a.toNat = p := by\n    simp [ha]\n  have hF_toNat_nonzero : F.toNat \u2260 0 := by\n    have hpos_nat : F.toNat > 0 := (Int.pos_iff_toNat_pos.mp hF_pos)\n    omega\n  -- The divisibility condition hf a a\n  have hdiv : F \u2223 (a ^ a.toNat - F ^ F.toNat) := hf a a ha_pos ha_pos\n  -- F divides F ^ F.toNat\n  have hF_dvd_self : F \u2223 F ^ F.toNat :=\n    dvd_pow_self F hF_toNat_nonzero\n  -- Therefore F divides a ^ a.toNat\n  have hF_dvd_aa : F \u2223 a ^ a.toNat := by\n    have h : F \u2223 (a ^ a.toNat - F ^ F.toNat) + F ^ F.toNat := dvd_add hdiv hF_dvd_self\n    have eq : (a ^ a.toNat - F ^ F.toNat) + F ^ F.toNat = a ^ a.toNat := by ring\n    rw [eq] at h\n    exact h\n  -- Convert to natural numbers\n  set F_nat := Int.toNat F with hF_nat_def\n  have hF_nat_eq : (F_nat : \u2124) = F := by\n    rw [hF_nat_def, Int.toNat_of_nonneg hF_nonneg]\n  have ha_toNat_eq' : a.toNat = p := ha_toNat_eq\n  -- Since a = (p : \u2124), a ^ a.toNat = (p : \u2124) ^ (p : \u2115) = ((p ^ p : \u2115) : \u2124)\n  have h_pow_eq : a ^ a.toNat = ((p ^ p : \u2115) : \u2124) := by\n    simp [ha, ha_toNat_eq]\n  -- So F_nat (as \u2124) divides (p ^ p : \u2124)\n  have hF_dvd_pow_int : (F_nat : \u2124) \u2223 ((p ^ p : \u2115) : \u2124) := by\n    rw [hF_nat_eq]\n    rw [h_pow_eq] at hF_dvd_aa\n    exact hF_dvd_aa\n  -- Use Int.natCast_dvd_natCast to get divisibility in \u2115\n  have hF_nat_dvd : F_nat \u2223 p ^ p := by\n    rw [\u2190 Int.natCast_dvd_natCast]\n    exact hF_dvd_pow_int\n  -- Apply Nat.dvd_prime_pow\n  rcases (Nat.dvd_prime_pow hp).mp hF_nat_dvd with \u27e8k, hk_le_p, hF_nat_eq_pow\u27e9\n  -- hF_nat_eq_pow : F_nat = p ^ k\n  have hk_ge_one : k \u2265 1 := by\n    by_contra! h\n    -- then k = 0\n    have hk_zero : k = 0 := by omega\n    subst hk_zero\n    -- then F_nat = p ^ 0 = 1\n    have hF_nat_one : F_nat = 1 := by\n      simpa using hF_nat_eq_pow\n    -- But F = (F_nat : \u2124) > 1, contradiction\n    have hF_gt_one : (F_nat : \u2124) > 1 := by\n      rw [hF_nat_eq]\n      exact hfp_gt1\n    -- from hF_nat_one, (F_nat : \u2124) = 1\n    rw [hF_nat_one] at hF_gt_one\n    norm_num at hF_gt_one\n  -- Now we have F = (p : \u2124) ^ (k : \u2115)\n  have hF_eq_pow : F = (p : \u2124) ^ (k : \u2115) := by\n    calc\n      F = (F_nat : \u2124) := by symm; exact hF_nat_eq\n      _ = ((p ^ k : \u2115) : \u2124) := by rw [hF_nat_eq_pow]\n      _ = ((p : \u2124) ^ (k : \u2115)) := by simp\n  refine \u27e8k, hk_ge_one, ?_\u27e9\n  calc\n    f (p : \u2124) = F := by symm; exact hF\n    _ = (p : \u2124) ^ (k : \u2115) := hF_eq_pow"
+    },
+    {
+      "id": "f_pow_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.23,
+      "proof_length": 19,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the same hypothesis, f(n) is a power of 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Under the same hypothesis, $f(n)$ is a power of $2$. -/)\n  (proof := /-- By `f_no_odd_prime`, $f(n)$ has no odd prime divisors. Since $f(n) > 0$, it must be a power of $2$. -/)]\nlemma f_pow_two (f : \u2124 \u2192 \u2124) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) (h_case : \u2200 q : \u2115, q > 2 \u2192 Nat.Prime q \u2192 (f (q : \u2124)) = 1) (n : \u2124) (hn : n > 0) : \u2203 (k : \u2115), f n = (2 : \u2124) ^ (k : \u2115) := by\n  have hnpos : f n > 0 := hpos n hn\n  have hpos_int : (f n).toNat > 0 := by\n    have hzero : (f n).toNat \u2260 0 := by\n      intro hzero\n      have hzero' : (f n : \u2124) = 0 := by\n        calc\n          (f n : \u2124) = ((f n).toNat : \u2124) := (Int.toNat_of_nonneg (by linarith)).symm\n          _ = (0 : \u2124) := by exact_mod_cast hzero\n      linarith\n    exact Nat.pos_of_ne_zero hzero\n  set m := (f n).toNat with hm\n  have hm_eq : (m : \u2124) = f n := by\n    dsimp [m]\n    exact (Int.toNat_of_nonneg (by linarith))\n  have hm_pos : m \u2260 0 := by\n    exact Nat.ne_of_gt hpos_int\n  have h_no_odd_prime_m : \u2200 (p : \u2115), Nat.Prime p \u2192 p \u2260 2 \u2192 \u00ac p \u2223 m := by\n    intro p hp hne2\n    have hp_pos : p > 0 := Nat.Prime.pos hp\n    have h_not_dvd_int : \u00ac (p : \u2124) \u2223 f n := f_no_odd_prime f hpos hf h_case n hn p hp hne2\n    intro h_dvd_nat\n    apply h_not_dvd_int\n    have : (p : \u2124) \u2223 (m : \u2124) := by exact_mod_cast h_dvd_nat\n    simpa [hm_eq] using this\n  have h_pow_two : \u2203 (k : \u2115), m = 2 ^ k := by\n    have h_strong : \u2200 x, x \u2223 m \u2192 x \u2260 0 \u2192 (\u2203 k, x = 2 ^ k) := by\n      intro x hx_dvd hx0\n      have h_induction_step : \u2200 (y : \u2115), (\u2200 b < y, (b \u2223 m \u2192 b \u2260 0 \u2192 \u2203 k, b = 2 ^ k)) \u2192 (y \u2223 m \u2192 y \u2260 0 \u2192 \u2203 k, y = 2 ^ k) := by\n        intro y ih hy_dvd hy0\n        have h_no_odd_prime_y : \u2200 p, Nat.Prime p \u2192 p \u2260 2 \u2192 \u00ac p \u2223 y := by\n          intro p hp hne2 hp_dvd_y\n          have hp_dvd_m : p \u2223 m := Nat.dvd_trans hp_dvd_y hy_dvd\n          exact h_no_odd_prime_m p hp hne2 hp_dvd_m\n        by_cases hy1 : y = 1\n        \u00b7 refine \u27e80, ?_\u27e9\n          simp [hy1]\n        \u00b7 have hy_gt1 : y > 1 := by\n            have hy_pos : y > 0 := Nat.pos_of_ne_zero hy0\n            omega\n          rcases Nat.exists_prime_and_dvd hy1 with \u27e8p, hp_prime, hp_dvd\u27e9\n          have hp_eq_2 : p = 2 := by\n            by_contra hne\n            have : \u00ac p \u2223 y := h_no_odd_prime_y p hp_prime hne\n            exact this hp_dvd\n          -- So p = 2, hence 2 \u2223 y\n          have h2_dvd : 2 \u2223 y := by\n            rw [\u2190 hp_eq_2]; exact hp_dvd\n          rcases h2_dvd with \u27e8b, hb\u27e9\n          -- y = 2 * b\n          have hb_lt_y : b < y := by\n            have hy_pos : y > 0 := Nat.pos_of_ne_zero hy0\n            omega\n          have hb_pos : b \u2260 0 := by\n            intro hzero\n            rw [hzero, mul_zero] at hb\n            exact hy0 hb\n          have hb_dvd_y : b \u2223 y := by\n            rw [hb]\n            exact \u27e82, by ring\u27e9\n          have hb_dvd_m : b \u2223 m := Nat.dvd_trans hb_dvd_y hy_dvd\n          have hb_pow_two : \u2203 k, b = 2 ^ k := ih b hb_lt_y hb_dvd_m hb_pos\n          rcases hb_pow_two with \u27e8k, hk\u27e9\n          refine \u27e8k+1, ?_\u27e9\n          calc\n            y = 2 * b := hb\n            _ = 2 * (2 ^ k) := by rw [hk]\n            _ = 2 ^ (k+1) := by ring\n      have hx_induction' : (x \u2223 m \u2192 x \u2260 0 \u2192 \u2203 k, x = 2 ^ k) :=\n        Nat.strong_induction_on x h_induction_step\n      exact hx_induction' hx_dvd hx0\n    exact h_strong m (dvd_refl m) hm_pos\n  rcases h_pow_two with \u27e8k, hk\u27e9\n  refine \u27e8k, ?_\u27e9\n  calc\n    f n = (m : \u2124) := by symm; exact hm_eq\n    _ = ((2 : \u2115) ^ k : \u2124) := by exact_mod_cast hk\n    _ = (2 : \u2124) ^ (k : \u2115) := by simp"
+    },
+    {
+      "id": "flt_pow_mod",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any integer a and any prime p, a^p \u2261 a pmod p.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any integer $a$ and any prime $p$, $a^p \\equiv a \\pmod p$. -/)\n  (proof := /-- Fermat's Little Theorem: $a^p \\equiv a \\pmod p$. -/)]\nlemma flt_pow_mod (a : \u2124) (p : \u2115) (hp : Nat.Prime p) : a ^ (p : \u2115) \u2261 a [ZMOD (p : \u2124)] := by\n  exact Int.ModEq.pow_prime_eq_self hp a"
+    },
+    {
+      "id": "imo2025_p3_left",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 42,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Main theorem: f(n) \u2264 4n.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Main theorem: $f(n) \\le 4n$. -/)\n  (proof := /-- By `case_analysis`, either $f(q) = q$ for all primes $q > 2$, or $f(q) = 1$ for all primes $q > 2$. In the first case, `case1_f_eq_n` gives $f(n) = n$, so $f(n) \\le 4n$. In the second case, `case2_bound` gives $f(n) \\le 4n$. -/)]\ntheorem imo2025_p3_left (n : \u2124) (f : \u2124 \u2192 \u2124) (hn : n > 0) (hpos : \u2200 k : \u2124, k > 0 \u2192 f k > 0) (hf : \u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) : f n \u2264 4 * n := by\n  have hcase := case_analysis f hpos hf\n  rcases hcase with (h_case | h_case)\n  \u00b7 have h_eq : f n = n := case1_f_eq_n f hpos hf h_case n hn\n    rw [h_eq]\n    have : n \u2264 4 * n := by\n      nlinarith\n    exact this\n  \u00b7 exact case2_bound f hpos hf h_case n hn"
+    },
+    {
+      "id": "padicValNat_two_three_pow_sub_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.46,
+      "proof_length": 29,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any positive integer n such that 2 | n, v_2(3^n - 1) = v_2(n) + 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem padicValNat_two_three_pow_sub_one_negation : \u00ac (\u2200 (n : \u2115) (hn : 2 \u2223 n), padicValNat 2 (3 ^ n - 1) = padicValNat 2 n + 2) := by\n  intro h\n  have h0 := h 0 (Nat.dvd_zero 2)\n  simp at h0"
+    },
+    {
+      "id": "pow_padicValNat_two_le",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any positive integer n, 2^{v_2(n)} \u2264 n.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any positive integer $n$, $2^{v_2(n)} \\le n$. -/)\n  (proof := /-- Since $2^{v_2(n)} \\mid n$, we have $2^{v_2(n)} \\le n$. -/)]\nlemma pow_padicValNat_two_le (n : \u2115) (hn : n > 0) : (2 : \u2115) ^ (padicValNat 2 n) \u2264 n := by\n  have hdiv : (2 : \u2115) ^ padicValNat 2 n \u2223 n := pow_padicValNat_dvd (p := 2) (n := n)\n  exact Nat.le_of_dvd hn hdiv"
+    },
+    {
+      "id": "bonza_condition",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.12,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all a,b : \u2124, a > 0, b > 0, f a \u2223 b^(a.toNat) - (f b)^(f a).toNat.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all a,b : \u2124, a > 0, b > 0, f a \u2223 b^(a.toNat) - (f b)^(f a).toNat. -/)\n  (proof := /-- Case analysis on a: if a odd, apply `case1`; if a = 4, apply `case3`; else a is even and a \u2260 4, then apply `case2`. -/)]\nlemma bonza_condition (a b : \u2124) (ha : a > 0) (hb : b > 0) : f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat := by\n  by_cases ha_odd : a % 2 = 1\n  \u00b7 exact case1 a b ha hb ha_odd\n  \u00b7 have ha_even : a % 2 = 0 := by\n      omega\n    by_cases ha_eq4 : a = 4\n    \u00b7 subst ha_eq4; exact case3 b hb\n    \u00b7 exact case2 a b ha hb ha_even ha_eq4"
+    },
+    {
+      "id": "case1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.88,
+      "proof_length": 24,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all a,b : \u2124, a > 0, b > 0, if a",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For all a,b : \u2124, a > 0, b > 0, if a%2=1, then f a \u2223 b^(a.toNat) - (f b)^(f a).toNat. -/)\n  (proof := /-- Since a is odd, f a = 1, so (f a).toNat = 1. The divisibility reduces to 1 \u2223 ..., which is always true. -/)]\nlemma case1 (a b : \u2124) (ha : a > 0) (hb : b > 0) (ha_odd : a % 2 = 1) : f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold f; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; field_simp; ring; done) | (unfold f; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "case2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.52,
+      "proof_length": 63,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all a,b : \u2124, a > 0, b > 0, if a",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For all a,b : \u2124, a > 0, b > 0, if a%2=0 and a \u2260 4, then f a \u2223 b^(a.toNat) - (f b)^(f a).toNat. -/)\n  (proof := /-- Since a is even and a \u2260 4, f a = 2. We need 2 \u2223 b^(a.toNat) - (f b)^2. This is shown by parity: b^(a.toNat) \u2261 b (mod 2) (by case analysis on parity of b), (f b)^2 \u2261 f b (mod 2) by `square_cong_self_mod_two`, and f b \u2261 b (mod 2) by `f_mod_two_eq`. Hence the difference is \u2261 0 mod 2. -/)]\nlemma case2 (a b : \u2124) (ha : a > 0) (hb : b > 0) (ha_even : a % 2 = 0) (ha_not4 : a \u2260 4) : f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat := by\n  have pow_mod_two_eq_base_mod_two_of_pos (b : \u2124) (n : \u2115) (hn : n > 0) : b ^ n % 2 = b % 2 := by\n    induction' n with n ih\n    \u00b7 exact absurd hn (by decide)\n    \u00b7 by_cases hzero : n = 0\n      \u00b7 subst hzero\n        simp\n      \u00b7 have hnpos : n > 0 := Nat.pos_of_ne_zero hzero\n        have ih' := ih hnpos\n        calc\n          (b ^ n.succ) % 2 = ((b ^ n) * b) % 2 := by rw [pow_succ]\n          _ = (((b ^ n) % 2) * (b % 2)) % 2 := by rw [Int.mul_emod]\n          _ = ((b % 2) * (b % 2)) % 2 := by rw [ih']\n          _ = ((b % 2) ^ 2) % 2 := by ring_nf\n          _ = (b % 2) % 2 := by\n            exact (square_cong_self_mod_two (b % 2))\n          _ = b % 2 := by simp\n  have hfa_eq_two : f a = 2 := f_even_nonfour a ha ha_even ha_not4\n  have ha_toNat_pos : a.toNat > 0 := by\n    exact (Int.pos_iff_toNat_pos.mp ha)\n  have h_pow_mod_two : b ^ a.toNat % 2 = b % 2 :=\n    pow_mod_two_eq_base_mod_two_of_pos b a.toNat ha_toNat_pos\n  have h_fb_sq_mod_two : (f b) ^ 2 % 2 = (f b) % 2 := by\n    have h := square_cong_self_mod_two (f b)\n    exact h\n  have h_fb_mod_two : (f b) % 2 = b % 2 := f_mod_two_eq b\n  calc\n    f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat := by\n      rw [hfa_eq_two]\n      simp\n      rw [Int.dvd_iff_emod_eq_zero]\n      calc\n        (b ^ a.toNat - (f b) ^ 2) % 2 = ((b ^ a.toNat) % 2 - ((f b) ^ 2) % 2) % 2 := by rw [Int.sub_emod]\n        _ = (b % 2 - (f b) % 2) % 2 := by rw [h_pow_mod_two, h_fb_sq_mod_two]\n        _ = (b % 2 - b % 2) % 2 := by rw [h_fb_mod_two]\n        _ = 0 % 2 := by simp\n        _ = 0 := by simp"
+    },
+    {
+      "id": "case3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 18.18,
+      "proof_length": 72,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all b : \u2124, b > 0, f 4 \u2223 b^(4.toNat) - (f b)^(f 4).toNat.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For all b : \u2124, b > 0, f 4 \u2223 b^(4.toNat) - (f b)^(f 4).toNat. -/)\n  (proof := /-- We have f 4 = 16, (f 4).toNat = 16, 4.toNat = 4, so we need 16 \u2223 b^4 - (f b)^16. Split into two subcases: b odd or even. If b odd, `odd_fourth_power_mod_16` gives b^4 \u2261 1 (mod 16) and `f_pow_16_mod_16_of_odd` gives (f b)^16 \u2261 1 (mod 16), so difference \u2261 0. If b even, `even_fourth_power_mod_16` gives b^4 \u2261 0 and `f_pow_16_mod_16_of_even` gives (f b)^16 \u2261 0, so difference \u2261 0. -/)]\nlemma case3 (b : \u2124) (hb : b > 0) : f 4 \u2223 b ^ (4 : \u2124).toNat - (f b) ^ (f 4).toNat := by\n  have hf4 : f 4 = 16 := f_four\n  simp [hf4]\n  -- goal: 16 \u2223 b ^ 4 - (f b) ^ 16\n  rcases Int.emod_two_eq_zero_or_one b with (hpar | hpar)\n  \u00b7 -- hpar : b % 2 = 0 => even\n    have hb4 := even_fourth_power_mod_16 b hpar\n    have hfb16 := f_pow_16_mod_16_of_even b hpar\n    have hsub : b ^ 4 - (f b) ^ 16 \u2261 0 [ZMOD 16] := by\n      calc\n        b ^ 4 - (f b) ^ 16 \u2261 0 - 0 [ZMOD 16] := by\n          apply hb4.sub hfb16\n        _ \u2261 0 [ZMOD 16] := by norm_num\n    exact (Int.modEq_zero_iff_dvd.mp hsub)\n  \u00b7 -- hpar : b % 2 = 1 => odd\n    have hb4 := odd_fourth_power_mod_16 b hpar\n    have hfb16 := f_pow_16_mod_16_of_odd b hpar\n    have hsub : b ^ 4 - (f b) ^ 16 \u2261 0 [ZMOD 16] := by\n      calc\n        b ^ 4 - (f b) ^ 16 \u2261 1 - 1 [ZMOD 16] := by\n          apply hb4.sub hfb16\n        _ \u2261 0 [ZMOD 16] := by norm_num\n    exact (Int.modEq_zero_iff_dvd.mp hsub)"
+    },
+    {
+      "id": "even_fourth_power_mod_16",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all b : \u2124 with b",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all b : \u2124 with b%2=0, b^4 \u2261 0 [ZMOD 16]. -/)\n  (proof := /-- Write b = 2k; then b^4 = 16*k^4, which is divisible by 16. -/)]\nlemma even_fourth_power_mod_16 (b : \u2124) (hb : b % 2 = 0) : b^4 \u2261 0 [ZMOD 16] := by\n  have h2 : 2 \u2223 b := Int.dvd_of_emod_eq_zero hb\n  rcases h2 with \u27e8k, h\u27e9\n  -- h: b = 2 * k\n  have hb4 : b^4 = 16 * (k^4) := by\n    calc\n      b^4 = (2*k)^4 := by rw [h]\n      _ = 16*k^4 := by ring\n  have h16 : 16 \u2223 b^4 := by\n    rw [hb4]\n    exact \u27e8k^4, by ring\u27e9\n  exact Dvd.dvd.modEq_zero_int h16"
+    },
+    {
+      "id": "even_mul_consecutive",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.75,
+      "proof_length": 23,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k : \u2124, 2 \u2223 k*(k+1).",
+      "is_main": false,
+      "col": 1,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For all k : \u2124, 2 \u2223 k*(k+1). -/)\n  (proof := /-- If k is even, 2\u2223k, so 2\u2223k*(k+1). If k is odd, then k+1 is even, so 2\u2223k+1, thus 2\u2223k*(k+1). Parities distinguished using `Int.emod_two_eq_zero_or_one`. -/)]\nlemma even_mul_consecutive (k : \u2124) : 2 \u2223 k*(k+1) := by\n  have hmod := Int.emod_two_eq_zero_or_one k\n  rcases hmod with (h0 | h1)\n  \u00b7 -- k % 2 = 0, so 2 \u2223 k\n    have hk : 2 \u2223 k := Int.dvd_of_emod_eq_zero h0\n    exact hk.trans (dvd_mul_right k (k+1))\n  \u00b7 -- k % 2 = 1, so 2 \u2223 k+1\n    have hk1 : (k+1) % 2 = 0 := by\n      calc\n        (k+1) % 2 = ((k % 2) + (1 % 2)) % 2 := by simpa using Int.add_emod k 1 2\n        _ = (1 + 1) % 2 := by simp [h1]\n        _ = 2 % 2 := by norm_num\n        _ = 0 := by norm_num\n    have hk1div : 2 \u2223 (k+1) := Int.dvd_of_emod_eq_zero hk1\n    exact hk1div.trans (dvd_mul_left (k+1) k)"
+    },
+    {
+      "id": "f",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The bonza function f: \u2124 \u2192 \u2124 defined by f(a) = 1 if a is odd, f(a) = 2 if a is even and a \u2260 4, f(4) = 16.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The bonza function f: \u2124 \u2192 \u2124 defined by f(a) = 1 if a is odd, f(a) = 2 if a is even and a \u2260 4, f(4) = 16. -/)]\ndef f (a : \u2124) : \u2124 :=\n  if a % 2 = 1 then 1 else if a = 4 then 16 else 2"
+    },
+    {
+      "id": "f_even_nonfour",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all a : \u2124 with a > 0, if a",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all a : \u2124 with a > 0, if a%2=0 and a \u2260 4, then f a = 2. -/)\n  (proof := /-- By definition of `f`, since a%2\u22601 (it is 0) and a\u22604, we get f a = 2. -/)]\nlemma f_even_nonfour (a : \u2124) (ha : a > 0) (h_even : a % 2 = 0) (h_not4 : a \u2260 4) : f a = 2 := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold f; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; field_simp; ring; done) | (unfold f; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "f_four",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "f(4) = 16.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- f(4) = 16. -/)\n  (proof := /-- By definition of `f`, since 4 % 2 = 0 and 4 = 4, we get f(4) = 16. -/)]\nlemma f_four : f 4 = 16 := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold f; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; field_simp; ring; done) | (unfold f; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "f_mod_two_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k : \u2124, f k",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all k : \u2124, f k % 2 = k % 2. -/)\n  (proof := /-- By case analysis on parity of k using `Int.emod_two_eq_zero_or_one`, and by definition of `f`. -/)]\nlemma f_mod_two_eq (k : \u2124) : f k % 2 = k % 2 := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold f; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; field_simp; ring; done) | (unfold f; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "f_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For every integer k > 0, f k > 0.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For every integer k > 0, f k > 0. -/)\n  (proof := /-- By definition of `f`, the possible values are 1, 2, 16, all positive, so `f k > 0`. -/)]\nlemma f_pos (k : \u2124) (hk : k > 0) : f k > 0 := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold f; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; field_simp; ring; done) | (unfold f; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "f_pow_16_mod_16_of_even",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.2,
+      "proof_length": 36,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all b : \u2124 with b",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all b : \u2124 with b%2=0, (f b)^16 \u2261 0 [ZMOD 16]. -/)\n  (proof := /-- If b is even, then f b = 2 or 16. In either case, (f b)^16 is divisible by 16 (since 2^16 and 16^16 are both multiples of 16). Hence (f b)^16 \u2261 0 mod 16. -/)]\nlemma f_pow_16_mod_16_of_even (b : \u2124) (hb : b % 2 = 0) : (f b)^16 \u2261 0 [ZMOD 16] := by\n  have hf : f b = 2 \u2228 f b = 16 := by\n    unfold f\n    have h_not_odd : \u00ac (b % 2 = 1) := by\n      rw [hb]\n      norm_num\n    rw [if_neg h_not_odd]\n    by_cases hb_eq4 : b = 4\n    \u00b7 right\n      rw [if_pos hb_eq4]\n    \u00b7 left\n      rw [if_neg hb_eq4]\n  rcases hf with (hf | hf)\n  \u00b7 rw [hf]\n    norm_num\n  \u00b7 rw [hf]\n    norm_num"
+    },
+    {
+      "id": "f_pow_16_mod_16_of_odd",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.88,
+      "proof_length": 24,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all b : \u2124 with b",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all b : \u2124 with b%2=1, (f b)^16 \u2261 1 [ZMOD 16]. -/)\n  (proof := /-- Since b is odd, f b = 1 by definition of `f`, so (f b)^16 = 1, which is congruent to 1 mod 16. -/)]\nlemma f_pow_16_mod_16_of_odd (b : \u2124) (hb : b % 2 = 1) : (f b)^16 \u2261 1 [ZMOD 16] := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold f; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [f]; field_simp; ring; done) | (unfold f; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "imo2025_p3_right",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 24,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There exists n>0 and a function f: \u2124 \u2192 \u2124 such that f k > 0 for all k>0, the divisibility condition holds, and f n \u2265 4n.",
+      "is_main": true,
+      "col": 1,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- There exists n>0 and a function f: \u2124 \u2192 \u2124 such that f k > 0 for all k>0, the divisibility condition holds, and f n \u2265 4n. -/)\n  (proof := /-- Take n=4 and f as defined. Then 4>0, `f_pos` gives f k > 0, `bonza_condition` gives divisibility, and f 4 = 16 \u2265 4*4. -/)]\ntheorem imo2025_p3_right : \u2203 (n : \u2124) (f : \u2124 \u2192 \u2124), (n > 0) \u2227 (\u2200 k : \u2124, k > 0 \u2192 f k > 0) \u2227 (\u2200 a b : \u2124, a > 0 \u2192 b > 0 \u2192 f a \u2223 b ^ a.toNat - (f b) ^ (f a).toNat) \u2227 (f n \u2265 4 * n) := by\n  refine \u27e84, f, ?_, f_pos, bonza_condition, ?_\u27e9\n  \u00b7 -- 4 > 0\n    norm_num\n  \u00b7 -- f 4 \u2265 4*4\n    rw [f_four]\n    norm_num"
+    },
+    {
+      "id": "odd_fourth_power_mod_16",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.35,
+      "proof_length": 28,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all b : \u2124 with b",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all b : \u2124 with b%2=1, b^4 \u2261 1 [ZMOD 16]. -/)\n  (proof := /-- Write b = 2k+1. Compute (2k+1)^4 - 1 = 16*k*(k+1)*(2k^2+2k+1). Since k*(k+1) is even (by `even_mul_consecutive`), the product is divisible by 16, so b^4 \u2261 1 mod 16. -/)]\nlemma odd_fourth_power_mod_16 (b : \u2124) (hb : b % 2 = 1) : b^4 \u2261 1 [ZMOD 16] := by\n  set k := b / 2 with hk\n  have hb_eq : b = 2*k + 1 := by\n    rw [(Int.ediv_add_emod b 2).symm, hb, hk]\n  rw [hb_eq]\n  have hcalc : (2*k+1)^4 - 1 = 8*k*(k+1)*(2*k^2+2*k+1) := by ring\n  have h_even : 2 \u2223 k*(k+1) := even_mul_consecutive k\n  rcases h_even with \u27e8m, hm\u27e9\n  have hdiv : 16 \u2223 (2*k+1)^4 - 1 := by\n    rw [hcalc]\n    have heq : 8*k*(k+1)*(2*k^2+2*k+1) = 16*m*(2*k^2+2*k+1) := by\n      calc\n        8*k*(k+1)*(2*k^2+2*k+1) = 8*(k*(k+1))*(2*k^2+2*k+1) := by ring\n        _ = 8*(2*m)*(2*k^2+2*k+1) := by rw [hm]\n        _ = 16*m*(2*k^2+2*k+1) := by ring\n    rw [heq]\n    exact \u27e8m*(2*k^2+2*k+1), by ring\u27e9\n  have h_dvd' : 16 \u2223 1 - (2*k+1)^4 := by\n    rw [\u2190 neg_sub]\n    exact dvd_neg.mpr hdiv\n  exact (Int.modEq_iff_dvd.mpr h_dvd')"
+    },
+    {
+      "id": "square_cong_self_mod_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.95,
+      "proof_length": 17,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all x : \u2124, x^2 \u2261 x [ZMOD 2].",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all x : \u2124, x^2 \u2261 x [ZMOD 2]. -/)\n  (proof := /-- Compute in ZMod 2, where x is 0 or 1, both satisfy x^2 = x. Use `ZMod.intCast_eq_intCast_iff`. -/)]\nlemma square_cong_self_mod_two (x : \u2124) : x ^ 2 \u2261 x [ZMOD 2] := by\n  have h_all : \u2200 x : ZMod 2, x ^ 2 = x := by\n    decide\n  have h : ((x : \u2124) : ZMod 2) ^ 2 = ((x : \u2124) : ZMod 2) := h_all (x : ZMod 2)\n  have h' : ((x ^ 2 : \u2124) : ZMod 2) = ((x : \u2124) : ZMod 2) := by\n    simpa [pow_two] using h\n  exact (ZMod.intCast_eq_intCast_iff (x ^ 2) x 2).mp h'"
+    }
+  ],
+  "edges": [
+    {
+      "source": "flt_pow_mod",
+      "target": "case1_f_eq_n",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_infinite_primes_gt_two",
+      "target": "case1_f_eq_n",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_pow_two",
+      "target": "case2_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_even",
+      "target": "case2_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "pow_padicValNat_two_le",
+      "target": "case2_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValNat_two_three_pow_sub_one",
+      "target": "case2_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "flt_pow_mod",
+      "target": "case_analysis",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_of_prime_cases",
+      "target": "case_analysis",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_infinite_primes_mod_two_mod_p",
+      "target": "case_analysis",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_pow_two",
+      "target": "f_even",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_dvd_n",
+      "target": "f_even",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "flt_pow_mod",
+      "target": "f_of_prime_cases",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_of_prime_eq_pow",
+      "target": "f_of_prime_cases",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_of_prime_divides_p_minus_pow",
+      "target": "f_of_prime_cases",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "flt_pow_mod",
+      "target": "f_of_prime_divides_p_minus_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_of_prime_eq_pow",
+      "target": "f_of_prime_divides_p_minus_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_no_odd_prime",
+      "target": "f_pow_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case_analysis",
+      "target": "imo2025_p3_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case2_bound",
+      "target": "imo2025_p3_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case1_f_eq_n",
+      "target": "imo2025_p3_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case1",
+      "target": "bonza_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case3",
+      "target": "bonza_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case2",
+      "target": "bonza_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_mod_two_eq",
+      "target": "case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_even_nonfour",
+      "target": "case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "square_cong_self_mod_two",
+      "target": "case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "odd_fourth_power_mod_16",
+      "target": "case3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_pow_16_mod_16_of_odd",
+      "target": "case3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_pow_16_mod_16_of_even",
+      "target": "case3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "even_fourth_power_mod_16",
+      "target": "case3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_four",
+      "target": "case3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "bonza_condition",
+      "target": "imo2025_p3_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f",
+      "target": "imo2025_p3_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_pos",
+      "target": "imo2025_p3_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_four",
+      "target": "imo2025_p3_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "even_mul_consecutive",
+      "target": "odd_fourth_power_mod_16",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

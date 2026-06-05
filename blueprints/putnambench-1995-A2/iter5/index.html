@@ -1,0 +1,1320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">PutnamBench 1995-A2. 259 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item current">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item current">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+<a href="../iter7/" class="nav-item">8</a>
+<a href="../iter8/" class="nav-item">9</a>
+<a href="../iter9/" class="nav-item">10</a>
+<a href="../iter10/" class="nav-item">11</a>
+<a href="../iter11/" class="nav-item">12</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "bound_tendsto_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a>0, Tendsto (fun t => a * sqrt(a/(2*sqrt(t-a)))) atTop (\ud835\udcdd 0)",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- For a>0, Tendsto (fun t => a * sqrt(a/(2*sqrt(t-a)))) atTop (\ud835\udcdd 0) -/) (proof := /-- proof -/)]\nlemma bound_tendsto_zero (a : \u211d) (ha : a > 0) : Tendsto (fun t : \u211d => a * sqrt (a / (2 * sqrt (t - a)))) atTop (\ud835\udcdd 0) := by\n  have h_sqrt_zero : Tendsto (fun t : \u211d => sqrt (a / (2 * sqrt (t - a)))) atTop (\ud835\udcdd 0) := by\n    have h_frac_tendsto_zero : Tendsto (fun t : \u211d => a / (2 * sqrt (t - a))) atTop (\ud835\udcdd 0) := by\n      have hsqrt_t_a_tendsto_atTop : Tendsto (fun t : \u211d => sqrt (t - a)) atTop atTop := by\n        have h_t_sub_a_tendsto_atTop : Tendsto (fun t : \u211d => t - a) atTop atTop := by\n          simpa [sub_eq_add_neg] using (tendsto_atTop_add_const_right atTop (-a) tendsto_id)\n        have h_eq : (fun t : \u211d => sqrt (t - a)) = (fun t : \u211d => (t - a) ^ (1/2 : \u211d)) := by\n          ext t; simp [Real.sqrt_eq_rpow]\n        rw [h_eq]\n        have h_exp_pos : (0 : \u211d) < (1/2 : \u211d) := by norm_num\n        exact (tendsto_rpow_atTop h_exp_pos).comp h_t_sub_a_tendsto_atTop\n      have h_inv_tendsto_zero : Tendsto (fun t : \u211d => (sqrt (t - a))\u207b\u00b9) atTop (\ud835\udcdd 0) :=\n        tendsto_inv_atTop_zero.comp hsqrt_t_a_tendsto_atTop\n      have h_mul : Tendsto (fun t : \u211d => (a/2) * ((sqrt (t - a))\u207b\u00b9)) atTop (\ud835\udcdd 0) := by\n        simpa [mul_zero] using h_inv_tendsto_zero.const_mul (a/2)\n      have h_eq' : (fun t : \u211d => a / (2 * sqrt (t - a))) = (fun t : \u211d => (a/2) * ((sqrt (t - a))\u207b\u00b9)) := by\n        ext t; field_simp\n      rw [h_eq']\n      exact h_mul\n    have h_sqrt_cont : Tendsto Real.sqrt (\ud835\udcdd 0) (\ud835\udcdd (Real.sqrt 0)) := Real.continuous_sqrt.tendsto 0\n    have h_sqrt_zero : Real.sqrt 0 = 0 := by norm_num\n    have h_sqrt_cont' : Tendsto Real.sqrt (\ud835\udcdd 0) (\ud835\udcdd 0) := by simpa [h_sqrt_zero] using h_sqrt_cont\n    exact h_sqrt_cont'.comp h_frac_tendsto_zero\n  have h_mul_a : Tendsto (fun t : \u211d => a * sqrt (a / (2 * sqrt (t - a)))) atTop (\ud835\udcdd (a * 0)) :=\n    h_sqrt_zero.const_mul a\n  simpa [mul_zero] using h_mul_a"
+    },
+    {
+      "id": "continuous_g",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "g a is continuous",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- g a is continuous -/) (proof := /-- proof -/)]\nlemma continuous_g (a : \u211d) : Continuous (g a) := by\n  unfold g\n  refine Continuous.sqrt ?_\n  have h1 : Continuous (fun x : \u211d => sqrt (x + a)) := by\n    refine Continuous.sqrt ?_\n    exact continuous_add_right a\n  have h2 : Continuous (fun x : \u211d => sqrt x) := Real.continuous_sqrt\n  exact (Continuous.sub h1 h2)"
+    },
+    {
+      "id": "divergence_if_neq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If a,b>0 and a \u2260 b, then the improper integral from b to \u221e does not converge to a finite limit.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- If a,b>0 and a \u2260 b, then the improper integral from b to \u221e does not converge to a finite limit. -/) (proof := /-- proof -/)]\nlemma divergence_if_neq (a b : \u211d) (ha : a > 0) (hb : b > 0) (hne : a \u2260 b) : \u00ac \u2203 (L : \u211d), Tendsto (fun t : \u211d => \u222b x in (Set.Icc b t), (sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - b)))) atTop (\ud835\udcdd L) := by\n  sorry_using [integral_Icc_eq_intervalIntegral]"
+    },
+    {
+      "id": "g",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "g a x = sqrt(sqrt(x+a)-sqrt x)",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- g a x = sqrt(sqrt(x+a)-sqrt x) -/)]\nnoncomputable def g (a : \u211d) (x : \u211d) : \u211d := sqrt (sqrt (x + a) - sqrt x)"
+    },
+    {
+      "id": "g_int_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a>0, t \u2265 a, \u222b_Icc (t-a) t g a x \u2264 a * sqrt(a/(2*sqrt(t-a)))",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem g_int_bound_negation : \u00ac (\u2200 (a t : \u211d) (ha : a > 0) (ht : t \u2265 a), \u222b x in (Set.Icc (t - a) t), g a x \u2264 a * sqrt (a / (2 * sqrt (t - a)))) := by\n  refine fun h => ?_\n  have h1 := h 1 1 (by norm_num) (le_refl (1 : \u211d))\n  have hIcc : (Set.Icc ((1 : \u211d) - (1 : \u211d)) (1 : \u211d)) = Set.Icc (0 : \u211d) (1 : \u211d) := by\n    simp\n  have hpos_int : 0 < \u222b x in (Set.Icc (0 : \u211d) (1 : \u211d)), g 1 x := by\n    have hpos_int' : 0 < \u222b x in (0 : \u211d)..(1 : \u211d), g 1 x := by\n      refine intervalIntegral.integral_pos ?_ ?_ ?_ ?_\n      \u00b7 norm_num\n      \u00b7 intro x hx\n        have : Continuous (g 1) := by\n          unfold g\n          refine Continuous.sqrt ?_\n          refine Continuous.sub ?_ ?_\n          \u00b7 exact (Continuous.add continuous_id continuous_const).sqrt\n          \u00b7 exact continuous_id.sqrt\n        exact this.continuousAt.continuousWithinAt\n      \u00b7 intro x hx\n        have hxpos : 0 < x := hx.1\n        have : 0 \u2264 g 1 x := by\n          apply sqrt_nonneg\n        exact this\n      \u00b7 refine \u27e8(1 : \u211d)/2, ?_, ?_\u27e9\n        \u00b7 constructor <;> nlinarith\n        \u00b7 have hpos' : sqrt ((1 : \u211d)/2 + (1 : \u211d)) - sqrt ((1 : \u211d)/2) > 0 := by\n            have hlt : sqrt ((1 : \u211d)/2) < sqrt ((1 : \u211d)/2 + (1 : \u211d)) :=\n              Real.sqrt_lt_sqrt (by nlinarith) (by nlinarith)\n            linarith\n          have : g 1 ((1 : \u211d)/2) = sqrt (sqrt ((1 : \u211d)/2 + (1 : \u211d)) - sqrt ((1 : \u211d)/2)) := rfl\n          rw [this]\n          exact sqrt_pos.mpr hpos'\n    have hconv : \u222b x in (0 : \u211d)..(1 : \u211d), g 1 x = \u222b x in (Set.Icc (0 : \u211d) (1 : \u211d)), g 1 x := by\n      exact (integral_Icc_eq_intervalIntegral 0 1 (by norm_num) (g 1)).symm\n    rw [\u2190 hconv]\n    exact hpos_int'\n  have hRHS_zero : (1 : \u211d) * sqrt ((1 : \u211d) / (2 * sqrt ((1 : \u211d) - (1 : \u211d)))) = 0 := by\n    have : sqrt ((1 : \u211d) - (1 : \u211d)) = 0 := by simp\n    simp [this]\n  rw [hIcc] at h1\n  rw [hRHS_zero] at h1\n  linarith"
+    },
+    {
+      "id": "g_intervalIntegrable",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "g a is interval integrable on any interval",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- g a is interval integrable on any interval -/) (proof := /-- proof -/)]\nlemma g_intervalIntegrable (a b1 b2 : \u211d) (ha : a > 0) : IntervalIntegrable (g a) volume b1 b2 := by\n  have hc : Continuous (g a) := continuous_g a\n  exact hc.intervalIntegrable b1 b2"
+    },
+    {
+      "id": "integral_Icc_eq_intervalIntegral",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a \u2264 b, \u222b_Icc a b f = \u222b_a^b f",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- For a \u2264 b, \u222b_Icc a b f = \u222b_a^b f -/) (proof := /-- proof -/)]\nlemma integral_Icc_eq_intervalIntegral (a b : \u211d) (hab : a \u2264 b) (f : \u211d \u2192 \u211d) : \u222b x in (Set.Icc a b), f x = \u222b x in a..b, f x := by\n  calc\n    \u222b x in (Set.Icc a b), f x = \u222b x in (Set.Ioc a b), f x := by\n      rw [MeasureTheory.integral_Icc_eq_integral_Ioc]\n    _ = \u222b x in a..b, f x := by\n      rw [intervalIntegral.integral_of_le hab]"
+    },
+    {
+      "id": "integral_telescope_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a>0, t \u2265 a, \u222b_Icc a t (g a x - g a (x - a)) = (\u222b_Icc (t-a) t (g a x)) - (\u222b_Icc 0 a (g a x))",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- For a>0, t \u2265 a, \u222b_Icc a t (g a x - g a (x - a)) = (\u222b_Icc (t-a) t (g a x)) - (\u222b_Icc 0 a (g a x)) -/) (proof := /-- proof -/)]\nlemma integral_telescope_eq (a t : \u211d) (ha : a > 0) (ht : t \u2265 a) : \n    \u222b x in (Set.Icc a t), (g a x - g a (x - a)) = (\u222b x in (Set.Icc (t - a) t), g a x) - (\u222b x in (Set.Icc 0 a), g a x) := by\n  have h1 : a \u2264 t := ht\n  have h2 : 0 \u2264 a := by linarith\n  have h3 : 0 \u2264 t - a := sub_nonneg.mpr ht\n  have h4 : t - a \u2264 t := by nlinarith\n  have h5 : 0 \u2264 t := h2.trans h1\n  -- integrability of g a on relevant intervals\n  have h_int01 : IntervalIntegrable (g a) volume 0 a := g_intervalIntegrable a 0 a ha\n  have h_int0t : IntervalIntegrable (g a) volume 0 t := g_intervalIntegrable a 0 t ha\n  have h_intat : IntervalIntegrable (g a) volume a t := g_intervalIntegrable a a t ha\n  have h_int0tm : IntervalIntegrable (g a) volume 0 (t - a) := g_intervalIntegrable a 0 (t - a) ha\n  have h_inttmt : IntervalIntegrable (g a) volume (t - a) t := g_intervalIntegrable a (t - a) t ha\n  -- integrability of g a (x - a) on a..t\n  have hg' : IntervalIntegrable (fun x => g a (x - a)) volume a t := by\n    have htemp : IntervalIntegrable (g a) volume (a - a) (t - a) := g_intervalIntegrable a (a - a) (t - a) ha\n    simpa [sub_add_cancel] using htemp.comp_sub_right a\n  -- rewrite LHS\n  rw [integral_Icc_eq_intervalIntegral a t h1 (fun x => g a x - g a (x - a))]\n  rw [intervalIntegral.integral_sub (g_intervalIntegrable a a t ha) hg']\n  -- LHS is now (\u222b x in a..t, g a x) - (\u222b x in a..t, g a (x - a))\n  -- rewrite second integral using translation\n  have htrans : (\u222b x in a..t, g a (x - a)) = (\u222b x in 0..(t - a), g a x) := by\n    calc\n      (\u222b x in a..t, g a (x - a)) = (\u222b x in (a - a)..(t - a), g a x) := by\n        rw [intervalIntegral.integral_comp_sub_right (d := a)]\n      _ = (\u222b x in 0..(t - a), g a x) := by simp\n  rw [htrans]\n  -- rewrite RHS\n  rw [integral_Icc_eq_intervalIntegral (t - a) t h4 (g a), integral_Icc_eq_intervalIntegral 0 a h2 (g a)]\n  -- Now goal: (\u222b x in a..t, g a x) - (\u222b x in 0..(t-a), g a x) = (\u222b x in (t-a)..t, g a x) - (\u222b x in 0..a, g a x)\n  -- Use additivity\n  have hsum1 : (\u222b x in 0..a, g a x) + (\u222b x in a..t, g a x) = \u222b x in 0..t, g a x := by\n    rw [intervalIntegral.integral_add_adjacent_intervals h_int01 h_intat]\n  have hsum2 : (\u222b x in 0..(t - a), g a x) + (\u222b x in (t - a)..t, g a x) = \u222b x in 0..t, g a x := by\n    rw [intervalIntegral.integral_add_adjacent_intervals h_int0tm h_inttmt]\n  -- From hsum1 we get (\u222b a..t) = (\u222b 0..t) - (\u222b 0..a)\n  -- From hsum2 we get (\u222b (t-a)..t) = (\u222b 0..t) - (\u222b 0..(t-a))\n  -- So LHS = (\u222b 0..t) - (\u222b 0..a) - (\u222b 0..(t-a))\n  -- RHS = (\u222b 0..t) - (\u222b 0..(t-a)) - (\u222b 0..a)\n  -- These are equal by ring.\n  have h1_eq : (\u222b x in a..t, g a x) = (\u222b x in 0..t, g a x) - (\u222b x in 0..a, g a x) := by\n    linarith [hsum1]\n  have h2_eq : (\u222b x in (t - a)..t, g a x) = (\u222b x in 0..t, g a x) - (\u222b x in 0..(t - a), g a x) := by\n    linarith [hsum2]\n  rw [h1_eq, h2_eq]\n  ring"
+    },
+    {
+      "id": "putnam_1995_a2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Putnam 1995 A2",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint (statement := /-- Putnam 1995 A2 -/) (proof := /-- proof -/)]\ntheorem putnam_1995_a2\n(habconv : (\u211d \u00d7 \u211d) \u2192 Prop)\n(habconv_def : habconv = fun \u27e8a,b\u27e9 =>\n\u2203 limit : \u211d, Tendsto (fun t : \u211d => \u222b x in (Set.Icc b t), (sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - b)))) atTop (\ud835\udcdd limit))\n: \u2200 ab : \u211d \u00d7 \u211d, ab.1 > 0 \u2227 ab.2 > 0 \u2192 (habconv ab \u2194 ab \u2208 (({x | let \u27e8a,b\u27e9 := x; a = b}) : Set (\u211d \u00d7 \u211d) )) := by\n  intro hpred hdef\n  rcases hpred with \u27e8a,b\u27e9\n  rcases hdef with \u27e8ha, hb\u27e9\n  have hconv_iff : \u2200 (a b : \u211d), habconv (a,b) \u2194 (\u2203 (L : \u211d), Tendsto (fun (t : \u211d) => \u222b x in (Set.Icc b t), (sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - b)))) atTop (\ud835\udcdd L)) := by\n    intro a' b'\n    constructor\n    \u00b7 intro h\n      rw [habconv_def] at h\n      exact h\n    \u00b7 intro h\n      rw [habconv_def]\n      exact h\n  constructor\n  \u00b7 intro hconv\n    rcases (hconv_iff a b).mp hconv with \u27e8L, hL\u27e9\n    by_contra hne\n    have hdiv := divergence_if_neq a b ha hb hne\n    apply hdiv\n    exact \u27e8L, hL\u27e9\n  \u00b7 intro heq\n    subst heq\n    rcases tendsto_integral_telescoping a ha with \u27e8L, hL\u27e9\n    apply (hconv_iff a a).mpr\n    exact \u27e8L, hL\u27e9"
+    },
+    {
+      "id": "tendsto_integral_telescoping",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a>0, the improper integral from a to \u221e of sqrt(sqrt(x+a)-sqrt(x)) - sqrt(sqrt(x)-sqrt(x-a)) converges.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- For a>0, the improper integral from a to \u221e of sqrt(sqrt(x+a)-sqrt(x)) - sqrt(sqrt(x)-sqrt(x-a)) converges. -/) (proof := /-- proof -/)]\nlemma tendsto_integral_telescoping (a : \u211d) (ha : a > 0) : \u2203 (L : \u211d), Tendsto (fun t : \u211d => \u222b x in (Set.Icc a t), (sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - a)))) atTop (\ud835\udcdd L) := by\n  let C0 := \u222b x in (Set.Icc 0 a), g a x\n  have hC0_nonneg : 0 \u2264 C0 := by\n    apply MeasureTheory.setIntegral_nonneg (measurableSet_Icc) ?_\n    intro x hx\n    have hg_nonneg : 0 \u2264 g a x := Real.sqrt_nonneg _\n    exact hg_nonneg\n  have hF_nonneg : \u2200 t, 0 \u2264 \u222b x in (Set.Icc (t - a) t), g a x := by\n    intro t\n    apply MeasureTheory.setIntegral_nonneg (measurableSet_Icc) ?_\n    intro x hx\n    have hg_nonneg : 0 \u2264 g a x := Real.sqrt_nonneg _\n    exact hg_nonneg\n  let bound (t : \u211d) : \u211d := a * sqrt (a / (2 * sqrt (t - a)))\n  have hbound_nonneg : \u2200 t, 0 \u2264 bound t := by\n    intro t\n    dsimp [bound]\n    apply mul_nonneg (by linarith) (Real.sqrt_nonneg _)\n  have hF_tendsto_zero : Tendsto (fun t : \u211d => \u222b x in (Set.Icc (t - a) t), g a x) atTop (\ud835\udcdd 0) := by\n    let F' (t : \u211d) : \u211d := if h : t \u2265 a then \u222b x in (Set.Icc (t - a) t), g a x else 0\n    have h0leF' : \u2200 t, 0 \u2264 F' t := by\n      intro t\n      dsimp [F']\n      by_cases h : t \u2265 a\n      \u00b7 rw [if_pos h]\n        exact hF_nonneg t\n      \u00b7 rw [if_neg h]\n    have hFlebound : \u2200 t, F' t \u2264 bound t := by\n      intro t\n      dsimp [F', bound]\n      by_cases h : t \u2265 a\n      \u00b7 rw [if_pos h]\n        exact g_int_bound a t ha h\n      \u00b7 rw [if_neg h]\n        exact hbound_nonneg t\n    have hzero_tendsto : Tendsto (fun _ : \u211d => (0 : \u211d)) atTop (\ud835\udcdd 0) :=\n      tendsto_const_nhds\n    have hF'_tendsto : Tendsto F' atTop (\ud835\udcdd 0) :=\n      tendsto_of_tendsto_of_tendsto_of_le_of_le hzero_tendsto (bound_tendsto_zero a ha) h0leF' hFlebound\n    apply (Filter.Tendsto.congr' ?_ hF'_tendsto)\n    apply Filter.eventually_atTop.mpr\n    refine \u27e8a, \u03bb t ht => ?_\u27e9\n    dsimp [F']\n    simp [ht]\n  have h_f'_tendsto : Tendsto (fun t : \u211d => (\u222b x in (Set.Icc (t - a) t), g a x) - C0) atTop (\ud835\udcdd (0 - C0)) :=\n    Filter.Tendsto.sub hF_tendsto_zero (tendsto_const_nhds)\n  have h_zero_minus_C0 : (0 : \u211d) - C0 = -C0 := by ring\n  have h_f'_tendsto' : Tendsto (fun t : \u211d => (\u222b x in (Set.Icc (t - a) t), g a x) - C0) atTop (\ud835\udcdd (-C0)) := by\n    simpa [h_zero_minus_C0] using h_f'_tendsto\n  let f (t : \u211d) := \u222b x in (Set.Icc a t), (sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - a)))\n  have h_eq_eventually : f =\u1da0[atTop] (fun t : \u211d => (\u222b x in (Set.Icc (t - a) t), g a x) - C0) := by\n    apply Filter.eventually_atTop.mpr\n    refine \u27e8a, \u03bb t ht => ?_\u27e9\n    dsimp [f]\n    have h_eq_on : EqOn (fun x => sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - a))) (fun x => g a x - g a (x - a)) (Set.Icc a t) := by\n      intro x hx\n      simp [g]\n    have h_meas : MeasurableSet (Set.Icc a t) := measurableSet_Icc\n    calc\n      \u222b x in (Set.Icc a t), (sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - a)))\n          = \u222b x in (Set.Icc a t), (g a x - g a (x - a)) := by\n            exact MeasureTheory.setIntegral_congr_fun h_meas h_eq_on\n      _ = (\u222b x in (Set.Icc (t - a) t), g a x) - (\u222b x in (Set.Icc 0 a), g a x) := by\n        rw [integral_telescope_eq a t ha ht]\n      _ = (\u222b x in (Set.Icc (t - a) t), g a x) - C0 := rfl\n  have h_f_tendsto : Tendsto f atTop (\ud835\udcdd (-C0)) :=\n    Filter.Tendsto.congr' h_eq_eventually.symm h_f'_tendsto'\n  exact \u27e8-C0, h_f_tendsto\u27e9"
+    }
+  ],
+  "edges": [
+    {
+      "source": "g",
+      "target": "continuous_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integral_Icc_eq_intervalIntegral",
+      "target": "divergence_if_neq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_intervalIntegrable",
+      "target": "g_int_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integral_Icc_eq_intervalIntegral",
+      "target": "g_int_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "continuous_g",
+      "target": "g_intervalIntegrable",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integral_Icc_eq_intervalIntegral",
+      "target": "integral_telescope_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_intervalIntegrable",
+      "target": "integral_telescope_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tendsto_integral_telescoping",
+      "target": "putnam_1995_a2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "divergence_if_neq",
+      "target": "putnam_1995_a2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integral_telescope_eq",
+      "target": "tendsto_integral_telescoping",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_int_bound",
+      "target": "tendsto_integral_telescoping",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "bound_tendsto_zero",
+      "target": "tendsto_integral_telescoping",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

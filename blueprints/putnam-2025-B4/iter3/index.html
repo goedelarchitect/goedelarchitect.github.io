@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 B4. 1,034 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item current">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item current">4</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "A1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The set of index pairs where A is nonzero.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The set of index pairs where A is nonzero. -/)]\ndef A1 (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) : Finset (Fin (m+2) \u00d7 Fin (m+2)) :=\n  Finset.filter (\u03bb p => A p.1 p.2 \u2260 0) (Finset.univ : Finset (Fin (m+2) \u00d7 Fin (m+2)))"
+    },
+    {
+      "id": "aij_le_cij",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any j, i, a_{i,j} \u2264 number of non-zero entries in column j up to row i.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any j, i, a_{i,j} \u2264 number of non-zero entries in column j up to row i. -/)\n  (proof := /-- By induction on j using hc, ha, and hb. -/)]\nlemma aij_le_cij (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115)\n    (ha : \u2200 (i j : Fin (m+2)), (i : \u2115) + (j : \u2115) \u2264 m \u2192 A i j = 0)\n    (hb : \u2200 (i : Fin (m+1)) (j : Fin (m+2)), A (Fin.succ i) j = A (Fin.castSucc i) j \u2228 A (Fin.succ i) j = A (Fin.castSucc i) j + 1)\n    (hc : \u2200 (i : Fin (m+2)) (j : Fin (m+1)), A i (Fin.succ j) = A i (Fin.castSucc j) \u2228 A i (Fin.succ j) = A i (Fin.castSucc j) + 1)\n    (i j : Fin (m+2)) : A i j \u2264 cij m A j i := by\n  -- helper lemmas\n  have cij_mono (a b : Fin (m+2)) (h : a \u2264 b) : cij m A j a \u2264 cij m A j b := by\n    have h_subset : col_nonzero_up_to m A j a \u2286 col_nonzero_up_to m A j b := by\n      intro x hx\n      rcases Finset.mem_filter.mp hx with \u27e8hx_mem, hx_nz\u27e9\n      refine Finset.mem_filter.mpr \u27e8?_, hx_nz\u27e9\n      have hx_le : x \u2264 a := Finset.mem_Iic.mp hx_mem\n      exact Finset.mem_Iic.mpr (le_trans hx_le h)\n    exact Finset.card_le_card h_subset\n  have cij_succ_ge_add_one (k : Fin (m+1)) (hnz : A (Fin.succ k) j \u2260 0) : cij m A j (Fin.succ k) \u2265 cij m A j (Fin.castSucc k) + 1 := by\n    set S := col_nonzero_up_to m A j (Fin.castSucc k) with hS\n    set T := col_nonzero_up_to m A j (Fin.succ k) with hT\n    have hsub : S \u2286 T := by\n      intro x hx\n      rcases Finset.mem_filter.mp hx with \u27e8hx_mem, hx_nz\u27e9\n      refine Finset.mem_filter.mpr \u27e8?_, hx_nz\u27e9\n      apply Finset.mem_Iic.mpr\n      have hx_le : x \u2264 Fin.castSucc k := Finset.mem_Iic.mp hx_mem\n      exact le_trans hx_le (Fin.castSucc_lt_succ (i := k)).le\n    have hmem : Fin.succ k \u2209 S := by\n      intro hmem\n      rcases Finset.mem_filter.mp hmem with \u27e8hmem_Iic, hmem_nz\u27e9\n      have hle : Fin.succ k \u2264 Fin.castSucc k := Finset.mem_Iic.mp hmem_Iic\n      have hlt : Fin.castSucc k < Fin.succ k := Fin.castSucc_lt_succ (i := k)\n      have hle' : (Fin.succ k : \u2115) \u2264 (Fin.castSucc k : \u2115) := by exact_mod_cast hle\n      have hlt' : (Fin.castSucc k : \u2115) < (Fin.succ k : \u2115) := by exact_mod_cast hlt\n      omega\n    have hmemT : Fin.succ k \u2208 T := by\n      refine Finset.mem_filter.mpr \u27e8Finset.mem_Iic.mpr (le_refl _), hnz\u27e9\n    have hcard_insert : (insert (Fin.succ k) S).card = S.card + 1 := by\n      rw [Finset.card_insert_of_not_mem hmem]\n    have hinsert_sub : insert (Fin.succ k) S \u2286 T := by\n      intro x hx\n      rw [Finset.mem_insert] at hx\n      rcases hx with (hx_eq | hx_mem)\n      \u00b7 subst hx_eq\n        exact hmemT\n      \u00b7 exact hsub hx_mem\n    have hcard_le : (insert (Fin.succ k) S).card \u2264 T.card := Finset.card_le_card hinsert_sub\n    have h_goal : S.card + 1 \u2264 T.card := by\n      calc\n        S.card + 1 = (insert (Fin.succ k) S).card := by symm; exact hcard_insert\n        _ \u2264 T.card := hcard_le\n    dsimp [cij, S, T]\n    exact h_goal\n  have h01 : A 0 j \u2264 1 := by\n    by_cases hjm : (j : \u2115) \u2264 m\n    \u00b7 -- then ha gives A 0 j = 0\n      have hA0j : A 0 j = 0 := ha 0 j (by\n        -- need to show (0:\u2115)+(j:\u2115) \u2264 m\n        simpa [add_comm] using hjm)\n      simp [hA0j]\n    \u00b7 -- then (j : \u2115) = m+1\n      have hjm' : (j : \u2115) = m+1 := by\n        have hj_lt : (j : \u2115) < m+2 := j.2\n        omega\n      -- j \u2260 0 because its value is m+1 > 0\n      have hj_ne_zero : j \u2260 0 := by\n        intro hzero\n        have : (j : \u2115) = 0 := by simpa [hzero] using rfl\n        omega\n      rcases Fin.exists_succ_eq_of_ne_zero hj_ne_zero with \u27e8k, hk\u27e9\n      subst hk\n      -- now j = Fin.succ k\n      have hk_val : (k : \u2115) = m := by\n        -- (Fin.succ k).val = k.val + 1 = m+1, so k.val = m\n        have hval_succ : (Fin.succ k : \u2115) = (k : \u2115) + 1 := by simp\n        have hval_succ' : (Fin.succ k : \u2115) = m+1 := hjm'\n        omega\n      -- Now we need to show A 0 (Fin.succ k) \u2264 1.\n      -- By hc, A 0 (Fin.succ k) = A 0 (Fin.castSucc k) or A 0 (Fin.castSucc k) + 1.\n      rcases hc 0 k with (h | h)\n      \u00b7 rw [h]\n        -- need to show A 0 (Fin.castSucc k) \u2264 1\n        -- Since (Fin.castSucc k : \u2115) = k.val = m, and (0:\u2115)+(m) = m \u2264 m, ha gives A 0 (Fin.castSucc k) = 0.\n        have hA0k : A 0 (Fin.castSucc k) = 0 := ha 0 (Fin.castSucc k) (by\n          -- show (0:\u2115) + ((Fin.castSucc k : \u2115)) \u2264 m\n          -- which is (Fin.castSucc k : \u2115) \u2264 m\n          -- but we have hk_val: (k : \u2115) = m, and (Fin.castSucc k : \u2115) = (k : \u2115)\n          -- So we need to show m \u2264 m, trivial.\n          simpa [hk_val] using le_refl m)\n        simp [hA0k]\n      \u00b7 rw [h]\n        -- A 0 (Fin.succ k) = A 0 (Fin.castSucc k) + 1\n        -- Since A 0 (Fin.castSucc k) = 0, this equals 1, so \u22641.\n        have hA0k : A 0 (Fin.castSucc k) = 0 := ha 0 (Fin.castSucc k) (by\n          simpa [hk_val] using le_refl m)\n        simp [hA0k]\n  -- main proof by strong induction on i\n  let P (n : \u2115) : Prop := \u2200 (i' : Fin (m+2)), (i' : \u2115) = n \u2192 A i' j \u2264 cij m A j i'\n  have hP : P (i : \u2115) := by\n    refine Nat.strong_induction_on (i : \u2115) ?_\n    intro n IH\n    intro i' hi'_val\n    -- i' is a Fin (m+2) with value n\n    by_cases hzero : i' = 0\n    \u00b7 subst hzero\n      -- i' = 0\n      have hcij0 : cij m A j 0 = (if A 0 j \u2260 0 then 1 else 0) := by\n        dsimp [cij, col_nonzero_up_to]\n        have hIic0 : (Finset.Iic (0 : Fin (m+2))) = {0} := by\n          ext x; simp\n        rw [hIic0]\n        simp [Finset.filter_singleton]\n        by_cases h : A 0 j = 0\n        \u00b7 simp [h]\n        \u00b7 simp [h]\n      rw [hcij0]\n      by_cases hzeroj : A 0 j = 0\n      \u00b7 rw [hzeroj]; simp\n      \u00b7 have hpos : A 0 j \u2265 1 := Nat.one_le_of_lt (Nat.pos_of_ne_zero hzeroj)\n        have h_eq1 : A 0 j = 1 := by\n          apply le_antisymm h01 hpos\n        rw [h_eq1]\n        simp\n    \u00b7 rcases Fin.exists_succ_eq_of_ne_zero hzero with \u27e8k, hk\u27e9\n      subst hk\n      -- now i' = Fin.succ k\n      have hn_val : (Fin.succ k : \u2115) = n := hi'_val\n      rcases hb k j with (h | h)\n      \u00b7 rw [h]\n        have h_lt_cast : (Fin.castSucc k : \u2115) < n := by\n          have : (Fin.succ k : \u2115) = (Fin.castSucc k : \u2115) + 1 := by simp\n          omega\n        have IH_cast : A (Fin.castSucc k) j \u2264 cij m A j (Fin.castSucc k) :=\n          IH (Fin.castSucc k : \u2115) h_lt_cast (Fin.castSucc k) rfl\n        have h_mono : cij m A j (Fin.castSucc k) \u2264 cij m A j (Fin.succ k) :=\n          cij_mono (Fin.castSucc k) (Fin.succ k) (Fin.castSucc_lt_succ (i := k)).le\n        exact le_trans IH_cast h_mono\n      \u00b7 rw [h]\n        have h_lt_cast : (Fin.castSucc k : \u2115) < n := by\n          have : (Fin.succ k : \u2115) = (Fin.castSucc k : \u2115) + 1 := by simp\n          omega\n        have IH_cast : A (Fin.castSucc k) j \u2264 cij m A j (Fin.castSucc k) :=\n          IH (Fin.castSucc k : \u2115) h_lt_cast (Fin.castSucc k) rfl\n        have hnz : A (Fin.succ k) j \u2260 0 := by\n          rw [h]\n          exact Nat.succ_ne_zero _\n        have h_cij_ge : cij m A j (Fin.succ k) \u2265 cij m A j (Fin.castSucc k) + 1 :=\n          cij_succ_ge_add_one k hnz\n        have h_sum : A (Fin.castSucc k) j + 1 \u2264 cij m A j (Fin.castSucc k) + 1 := by\n          omega\n        exact le_trans h_sum h_cij_ge\n  exact hP i rfl"
+    },
+    {
+      "id": "aij_le_rij",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.39,
+      "proof_length": 8,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any i, j, a_{i,j} \u2264 number of non-zero entries in row i up to column j.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any i, j, a_{i,j} \u2264 number of non-zero entries in row i up to column j. -/)\n  (proof := /-- By induction on j using hc, ha, hb. -/)]\nlemma aij_le_rij (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115)\n    (ha : \u2200 (i j : Fin (m+2)), (i : \u2115) + (j : \u2115) \u2264 m \u2192 A i j = 0)\n    (hb : \u2200 (i : Fin (m+1)) (j : Fin (m+2)), A (Fin.succ i) j = A (Fin.castSucc i) j \u2228 A (Fin.succ i) j = A (Fin.castSucc i) j + 1)\n    (hc : \u2200 (i : Fin (m+2)) (j : Fin (m+1)), A i (Fin.succ j) = A i (Fin.castSucc j) \u2228 A i (Fin.succ j) = A i (Fin.castSucc j) + 1)\n    (i j : Fin (m+2)) : A i j \u2264 rij m A i j := by\n  have hA0le1 : \u2200 (i : Fin (m+2)), A i 0 \u2264 1 := by\n    intro i\n    induction' i using Fin.induction with i IH\n    \u00b7 -- i = 0\n      have hzero : A 0 0 = 0 := ha 0 0 (Nat.zero_le m)\n      omega\n    \u00b7 -- i : Fin (m+1), IH: A (Fin.castSucc i) 0 \u2264 1\n      have hcast_zero : A (Fin.castSucc i) 0 = 0 := ha (Fin.castSucc i) 0 (by\n        have hi_val : (i : \u2115) < m+1 := i.2\n        have hi_le_m : (i : \u2115) \u2264 m := Nat.le_of_lt_succ hi_val\n        simpa using hi_le_m)\n      rcases hb i 0 with (h | h)\n      \u00b7 simpa [h, hcast_zero]\n      \u00b7 simpa [h, hcast_zero]\n  induction j using Fin.induction with\n  | zero =>\n    -- base case j = 0\n    have hA0 : A i 0 \u2264 1 := hA0le1 i\n    unfold rij row_nonzero_up_to\n    by_cases hzero : A i 0 = 0\n    \u00b7 rw [hzero]\n      exact Nat.zero_le _\n    \u00b7 -- then A i 0 = 1\n      have h_one : A i 0 = 1 := by\n        have : A i 0 \u2265 1 := by omega\n        omega\n      rw [h_one]\n      have hmem : (0 : Fin (m+2)) \u2208 Finset.filter (\u03bb k => A i k \u2260 0) (Finset.Iic (0 : Fin (m+2))) := by\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 simp\n        \u00b7 exact hzero\n      have hcard : 1 \u2264 (Finset.filter (\u03bb k => A i k \u2260 0) (Finset.Iic (0 : Fin (m+2)))).card :=\n        Finset.one_le_card.mpr \u27e80, hmem\u27e9\n      exact hcard\n  | succ j IH =>\n    -- j : Fin (m+1)\n    -- IH : A i (Fin.castSucc j) \u2264 rij m A i (Fin.castSucc j)\n    rcases hc i j with (h | h)\n    \u00b7 -- case A i (Fin.succ j) = A i (Fin.castSucc j)\n      rw [h]\n      -- need A i (Fin.castSucc j) \u2264 rij m A i (Fin.succ j)\n      have hsubset : row_nonzero_up_to m A i (Fin.castSucc j) \u2286 row_nonzero_up_to m A i (Fin.succ j) := by\n        intro x hx\n        rcases Finset.mem_filter.mp hx with \u27e8hx_mem, hx_ne\u27e9\n        have hle : Fin.castSucc j \u2264 Fin.succ j := le_of_lt (Fin.castSucc_lt_succ (i := j))\n        have hx_mem' : x \u2208 Finset.Iic (Fin.succ j) :=\n          (Finset.Iic_subset_Iic.mpr hle) hx_mem\n        exact Finset.mem_filter.mpr \u27e8hx_mem', hx_ne\u27e9\n      have hcard : (row_nonzero_up_to m A i (Fin.castSucc j)).card \u2264 (row_nonzero_up_to m A i (Fin.succ j)).card :=\n        Finset.card_le_card hsubset\n      unfold rij at *\n      exact le_trans IH hcard\n    \u00b7 -- case A i (Fin.succ j) = A i (Fin.castSucc j) + 1\n      rw [h]\n      have hpos' : A i (Fin.succ j) \u2260 0 := by\n        rw [h]\n        omega\n      have hsubset : row_nonzero_up_to m A i (Fin.castSucc j) \u2286 row_nonzero_up_to m A i (Fin.succ j) := by\n        intro x hx\n        rcases Finset.mem_filter.mp hx with \u27e8hx_mem, hx_ne\u27e9\n        have hle : Fin.castSucc j \u2264 Fin.succ j := le_of_lt (Fin.castSucc_lt_succ (i := j))\n        have hx_mem' : x \u2208 Finset.Iic (Fin.succ j) :=\n          (Finset.Iic_subset_Iic.mpr hle) hx_mem\n        exact Finset.mem_filter.mpr \u27e8hx_mem', hx_ne\u27e9\n      have hmem_succ : Fin.succ j \u2208 row_nonzero_up_to m A i (Fin.succ j) := by\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 exact Finset.mem_Iic.mpr (le_refl _)\n        \u00b7 exact hpos'\n      have h_not_mem : Fin.succ j \u2209 row_nonzero_up_to m A i (Fin.castSucc j) := by\n        intro hmem\n        rcases Finset.mem_filter.mp hmem with \u27e8hmem_Iic, h_ne\u27e9\n        have hle : Fin.succ j \u2264 Fin.castSucc j := Finset.mem_Iic.mp hmem_Iic\n        have hlt : Fin.castSucc j < Fin.succ j := Fin.castSucc_lt_succ (i := j)\n        exact not_le_of_lt hlt hle\n      have hcard_ineq : (row_nonzero_up_to m A i (Fin.castSucc j)).card + 1 \u2264 (row_nonzero_up_to m A i (Fin.succ j)).card := by\n        calc\n          (row_nonzero_up_to m A i (Fin.castSucc j)).card + 1 = (insert (Fin.succ j) (row_nonzero_up_to m A i (Fin.castSucc j))).card := by\n            rw [Finset.card_insert_of_not_mem h_not_mem]\n          _ \u2264 (row_nonzero_up_to m A i (Fin.succ j)).card := Finset.card_le_card (by\n            intro x hx\n            rcases Finset.mem_insert.mp hx with (hx | hx)\n            \u00b7 subst hx; exact hmem_succ\n            \u00b7 exact hsubset hx)\n      have hineq : A i (Fin.castSucc j) + 1 \u2264 (row_nonzero_up_to m A i (Fin.castSucc j)).card + 1 := by\n        have : A i (Fin.castSucc j) \u2264 (row_nonzero_up_to m A i (Fin.castSucc j)).card := by\n          simpa [rij] using IH\n        omega\n      unfold rij at *\n      exact le_trans hineq hcard_ineq"
+    },
+    {
+      "id": "c",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The number of nonzero entries in column j.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The number of nonzero entries in column j. -/)]\ndef c (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (j : Fin (m+2)) : \u2115 := (col_nonzero m A j).card"
+    },
+    {
+      "id": "cij",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The number of nonzero entries in column j up to row i.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The number of nonzero entries in column j up to row i. -/)]\ndef cij (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (j i : Fin (m+2)) : \u2115 := (col_nonzero_up_to m A j i).card"
+    },
+    {
+      "id": "col_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Column bound: S \u2264 (m+2)*N - \u2211_{(i,j)\u2208A1} (i:\u2115).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Column bound: S \u2264 (m+2)*N - \u2211_{(i,j)\u2208A1} (i:\u2115). -/)\n  (proof := /-- Symmetric to row_bound using aij_le_cij, sum_cij_eq, col_inner_bound. -/)]\nlemma col_bound (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (ha : \u2200 (i j : Fin (m+2)), (i : \u2115) + (j : \u2115) \u2264 m \u2192 A i j = 0) (hb : \u2200 (i : Fin (m+1)) (j : Fin (m+2)), A (Fin.succ i) j = A (Fin.castSucc i) j \u2228 A (Fin.succ i) j = A (Fin.castSucc i) j + 1) (hc : \u2200 (i : Fin (m+2)) (j : Fin (m+1)), A i (Fin.succ j) = A i (Fin.castSucc j) \u2228 A i (Fin.succ j) = A i (Fin.castSucc j) + 1) (S N : \u2115) (hS : S = \u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j) (hN : N = #{p : Fin (m+2) \u00d7 Fin (m+2) | A p.1 p.2 \u2260 0}) : S \u2264 (m+2) * N - Finset.sum (A1 m A) (\u03bb p => (p.1 : \u2115)) := by\n  apply Nat.le_sub_of_add_le\n  -- goal: S + Finset.sum (A1 m A) (\u03bb p => (p.1 : \u2115)) \u2264 (m+2) * N\n  rw [hS]\n  have hN_card : N = (A1 m A).card := by\n    rw [hN]\n    simp [A1]\n  rw [hN_card]\n  -- now RHS = (m+2) * (A1 m A).card\n  have hsum_A1 : Finset.sum (A1 m A) (\u03bb p => (p.1 : \u2115)) = \u2211 j : Fin (m+2), \u2211 i \u2208 col_nonzero m A j, (i : \u2115) := by\n    calc\n      Finset.sum (A1 m A) (\u03bb p => (p.1 : \u2115)) = \u2211 p : Fin (m+2) \u00d7 Fin (m+2), (if A p.1 p.2 \u2260 0 then (p.1 : \u2115) else 0) := by\n        simp [A1, Finset.sum_filter]\n      _ = \u2211 i : Fin (m+2), \u2211 j : Fin (m+2), (if A i j \u2260 0 then (i : \u2115) else 0) := by\n        simpa using Finset.sum_product (Finset.univ : Finset (Fin (m+2))) (Finset.univ : Finset (Fin (m+2))) (\u03bb p : Fin (m+2) \u00d7 Fin (m+2) => (if A p.1 p.2 \u2260 0 then (p.1 : \u2115) else 0))\n      _ = \u2211 j : Fin (m+2), \u2211 i : Fin (m+2), (if A i j \u2260 0 then (i : \u2115) else 0) := by\n        rw [Finset.sum_comm]\n      _ = \u2211 j : Fin (m+2), \u2211 i \u2208 col_nonzero m A j, (i : \u2115) := by\n        refine Finset.sum_congr rfl (\u03bb j hj => ?_)\n        simp [col_nonzero, Finset.sum_filter]\n  rw [hsum_A1]\n  -- now LHS = (\u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j) + (\u2211 j : Fin (m+2), \u2211 i \u2208 col_nonzero m A j, (i : \u2115))\n  -- we want to show \u2264 (m+2) * (A1 m A).card\n  have hsum_combine : (\u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j) + (\u2211 j : Fin (m+2), \u2211 i \u2208 col_nonzero m A j, (i : \u2115)) =\n      \u2211 j : Fin (m+2), ((\u2211 i : Fin (m+2), A i j) + (\u2211 i \u2208 col_nonzero m A j, (i : \u2115))) := by\n    calc\n      (\u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j) + (\u2211 j : Fin (m+2), \u2211 i \u2208 col_nonzero m A j, (i : \u2115))\n          = (\u2211 j : Fin (m+2), \u2211 i : Fin (m+2), A i j) + (\u2211 j : Fin (m+2), \u2211 i \u2208 col_nonzero m A j, (i : \u2115)) := by\n            rw [Finset.sum_comm]\n      _ = \u2211 j : Fin (m+2), ((\u2211 i : Fin (m+2), A i j) + (\u2211 i \u2208 col_nonzero m A j, (i : \u2115))) := by\n        simp [Finset.sum_add_distrib]\n  rw [hsum_combine]\n  -- helper lemmas\n  have cij_eq_card_filter (j i : Fin (m+2)) : cij m A j i = ((col_nonzero m A j).filter (\u03bb k => k \u2264 i)).card := by\n    dsimp [cij, col_nonzero_up_to, col_nonzero]\n    apply congrArg Finset.card\n    ext k\n    simp [and_comm]\n  have sum_card_filter_le_eq (j : Fin (m+2)) : (\u2211 i : Fin (m+2), ((col_nonzero m A j).filter (\u03bb k => k \u2264 i)).card) =\n      \u2211 x \u2208 col_nonzero m A j, ((Finset.Ici x).card : \u2115) := by\n    -- rewrite each card as sum of 1\n    have h1 : \u2200 i, ((col_nonzero m A j).filter (\u03bb k => k \u2264 i)).card = \n        \u2211 k \u2208 col_nonzero m A j, (if k \u2264 i then (1 : \u2115) else 0) := by\n      intro i\n      rw [Finset.card_eq_sum_ones, Finset.sum_filter]\n    -- rewrite sum of sums using h1\n    have hsum : (\u2211 i : Fin (m+2), ((col_nonzero m A j).filter (\u03bb k => k \u2264 i)).card) =\n        (\u2211 i : Fin (m+2), \u2211 k \u2208 col_nonzero m A j, (if k \u2264 i then (1 : \u2115) else 0)) := by\n      refine Finset.sum_congr rfl (\u03bb i hi => ?_)\n      rw [h1 i]\n    rw [hsum]\n    -- swap sums\n    rw [Finset.sum_comm]\n    -- now we need to show \u2211 k \u2208 col_nonzero m A j, \u2211 i : Fin (m+2), (if k \u2264 i then (1 : \u2115) else 0) = \u2211 x \u2208 col_nonzero m A j, ((Finset.Ici x).card : \u2115)\n    refine Finset.sum_congr rfl (\u03bb x hx => ?_)\n    -- compute inner sum\n    have hxcard : \u2211 i : Fin (m+2), (if x \u2264 i then (1 : \u2115) else 0) = (Finset.Ici x).card := by\n      calc\n        \u2211 i : Fin (m+2), (if x \u2264 i then (1 : \u2115) else 0) = #{x_1 | x \u2264 x_1} := by\n          simp\n        _ = (Finset.Ici x).card := by\n          have : ({x_1 | x \u2264 x_1} : Finset (Fin (m+2))) = Finset.Ici x := by\n            ext i; simp\n          rw [this]\n    rw [hxcard]\n  have sum_cij_add_sum_i_eq (j : Fin (m+2)) : (\u2211 i : Fin (m+2), cij m A j i) + (\u2211 i \u2208 col_nonzero m A j, (i : \u2115)) = (m+2) * (c m A j) := by\n    have hcard_Ici : \u2200 x : Fin (m+2), (Finset.Ici x).card = (m+2 : \u2115) - (x : \u2115) := by\n      intro x\n      exact Fin.card_Ici x\n    have hsum_cij : (\u2211 i : Fin (m+2), cij m A j i) = \u2211 x \u2208 col_nonzero m A j, ((Finset.Ici x).card : \u2115) := by\n      calc\n        (\u2211 i : Fin (m+2), cij m A j i) = (\u2211 i : Fin (m+2), ((col_nonzero m A j).filter (\u03bb k => k \u2264 i)).card) := by\n          refine Finset.sum_congr rfl (\u03bb i hi => ?_)\n          rw [cij_eq_card_filter j i]\n        _ = \u2211 x \u2208 col_nonzero m A j, ((Finset.Ici x).card : \u2115) := sum_card_filter_le_eq j\n    rw [hsum_cij]\n    -- combine sums\n    rw [\u2190 Finset.sum_add_distrib]\n    calc\n      \u2211 x \u2208 col_nonzero m A j, (((Finset.Ici x).card : \u2115) + (x : \u2115)) = \u2211 x \u2208 col_nonzero m A j, (m+2 : \u2115) := by\n        refine Finset.sum_congr rfl (\u03bb x hx => ?_)\n        rw [hcard_Ici x]\n        have hx_le : (x : \u2115) \u2264 m+2 := by\n          have : (x : \u2115) < m+2 := Fin.is_lt x\n          exact Nat.le_of_lt this\n        rw [Nat.sub_add_cancel hx_le]\n      _ = (m+2 : \u2115) * (col_nonzero m A j).card := by\n        simp [mul_comm]\n      _ = (m+2) * (c m A j) := by\n        rfl\n  have card_A1_eq_sum_c : (A1 m A).card = \u2211 j : Fin (m+2), (col_nonzero m A j).card := by\n    let e : (Fin (m+2) \u00d7 Fin (m+2)) \u2243 \u03a3 j : Fin (m+2), Fin (m+2) :=\n      (Equiv.prodComm (Fin (m+2)) (Fin (m+2))).trans (Equiv.sigmaEquivProd (Fin (m+2)) (Fin (m+2))).symm\n    let sigmaSet : Finset (\u03a3 j : Fin (m+2), Fin (m+2)) :=\n      Finset.sigma (Finset.univ : Finset (Fin (m+2))) (\u03bb j => col_nonzero m A j)\n    have hmem : \u2200 p : Fin (m+2) \u00d7 Fin (m+2), p \u2208 A1 m A \u2194 (e p) \u2208 sigmaSet := by\n      intro p\n      simp [e, A1, col_nonzero, sigmaSet, Equiv.prodComm, Equiv.sigmaEquivProd, Finset.mem_sigma, Finset.mem_univ]\n    have hcard_eq : (A1 m A).card = sigmaSet.card :=\n      Finset.card_equiv e hmem\n    have hcard_sigma : sigmaSet.card = \u2211 j : Fin (m+2), (col_nonzero m A j).card := by\n      simp [sigmaSet]\n    rw [hcard_eq, hcard_sigma]\n  have hcol (j : Fin (m+2)) : (\u2211 i : Fin (m+2), A i j) + (\u2211 i \u2208 col_nonzero m A j, (i : \u2115)) \u2264 (m+2) * (c m A j) := by\n    have hsum : (\u2211 i : Fin (m+2), A i j) \u2264 (\u2211 i : Fin (m+2), cij m A j i) := by\n      refine Finset.sum_le_sum (\u03bb i hi => ?_)\n      exact aij_le_cij m A ha hb hc i j\n    calc\n      (\u2211 i : Fin (m+2), A i j) + (\u2211 i \u2208 col_nonzero m A j, (i : \u2115)) \u2264 (\u2211 i : Fin (m+2), cij m A j i) + (\u2211 i \u2208 col_nonzero m A j, (i : \u2115)) :=\n        Nat.add_le_add_right hsum (\u2211 i \u2208 col_nonzero m A j, (i : \u2115))\n      _ = (m+2) * (c m A j) := sum_cij_add_sum_i_eq j\n  -- apply column-wise inequality\n  calc\n    \u2211 j : Fin (m+2), ((\u2211 i : Fin (m+2), A i j) + (\u2211 i \u2208 col_nonzero m A j, (i : \u2115))) \u2264 \u2211 j : Fin (m+2), ((m+2) * (c m A j)) :=\n      Finset.sum_le_sum (\u03bb j hj => hcol j)\n    _ = (m+2) * (\u2211 j : Fin (m+2), c m A j) := by\n      simp [Finset.mul_sum]\n    _ = (m+2) * ((A1 m A).card) := by\n      simp [c, card_A1_eq_sum_c]"
+    },
+    {
+      "id": "col_nonzero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The nonzero rows in column j.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The nonzero rows in column j. -/)]\ndef col_nonzero (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (j : Fin (m+2)) : Finset (Fin (m+2)) :=\n  Finset.filter (\u03bb i => A i j \u2260 0) Finset.univ"
+    },
+    {
+      "id": "col_nonzero_up_to",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The nonzero rows in column j up to row i (inclusive).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The nonzero rows in column j up to row i (inclusive). -/)]\ndef col_nonzero_up_to (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (j i : Fin (m+2)) : Finset (Fin (m+2)) :=\n  Finset.filter (\u03bb k => A k j \u2260 0) (Finset.Iic i)"
+    },
+    {
+      "id": "diag_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.57,
+      "proof_length": 30,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Diagonal bound: a_{i,j} \u2264 (i:\u2115)+(j:\u2115)-m.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Diagonal bound: a_{i,j} \u2264 (i:\u2115)+(j:\u2115)-m. -/)\n  (proof := /-- By induction on i+j. If (i:\u2115)+(j:\u2115) \u2264 m then A i j = 0 by ha, and RHS is 0. Otherwise, use hb and hc to reduce to smaller index. -/)]\nlemma diag_bound (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (ha : \u2200 (i j : Fin (m+2)), (i : \u2115) + (j : \u2115) \u2264 m \u2192 A i j = 0) (hb : \u2200 (i : Fin (m+1)) (j : Fin (m+2)), A (Fin.succ i) j = A (Fin.castSucc i) j \u2228 A (Fin.succ i) j = A (Fin.castSucc i) j + 1) (hc : \u2200 (i : Fin (m+2)) (j :Fin (m+1)), A i (Fin.succ j) = A i (Fin.castSucc j) \u2228 A i (Fin.succ j) = A i (Fin.castSucc j) + 1) (i j : Fin (m+2)) : A i j \u2264 (i : \u2115) + (j : \u2115) - m := by\n  let P : \u2115 \u2192 Prop := \u03bb s => \u2200 (i' j' : Fin (m+2)), s = (i' : \u2115) + (j' : \u2115) \u2192 A i' j' \u2264 (i' : \u2115) + (j' : \u2115) - m\n  have hP : P ((i : \u2115) + (j : \u2115)) := by\n    refine Nat.strong_induction_on ((i : \u2115) + (j : \u2115)) ?_\n    intro s ih\n    intro i' j' hsum_eq\n    by_cases hle : s \u2264 m\n    \u00b7 -- then (i':\u2115)+(j':\u2115) \u2264 m\n      have hsumle : (i' : \u2115) + (j' : \u2115) \u2264 m := by\n        omega\n      have hzero : A i' j' = 0 := ha i' j' hsumle\n      rw [hzero]\n      rw [Nat.sub_eq_zero_of_le hsumle]\n    \u00b7 -- s > m\n      have hsumgt : m < (i' : \u2115) + (j' : \u2115) := by\n        omega\n      by_cases hi0 : i' = 0\n      \u00b7 subst hi0\n        by_cases hj0 : j' = 0\n        \u00b7 subst hj0\n          exfalso\n          exact Nat.not_lt_zero m (by simpa using hsumgt)\n        \u00b7 -- i' = 0, j' \u2260 0\n          rcases Fin.exists_succ_eq_of_ne_zero hj0 with \u27e8k, hk\u27e9\n          have hc_val := hc (0 : Fin (m+2)) k\n          rw [hk] at hc_val\n          let j'' : Fin (m+2) := Fin.castSucc k\n          have h_s_j' : s = (j' : \u2115) := by\n            simpa using hsum_eq\n          have hkj : (j' : \u2115) = (j'' : \u2115) + 1 := by\n            calc\n              (j' : \u2115) = (Fin.succ k : \u2115) := by rw [hk]\n              _ = (k : \u2115) + 1 := by simp\n              _ = (j'' : \u2115) + 1 := by simp [j'']\n          have hsum_j'' : ((0 : Fin (m+2)) : \u2115) + (j'' : \u2115) = s - 1 := by\n            calc\n              ((0 : Fin (m+2)) : \u2115) + (j'' : \u2115) = (j'' : \u2115) := by simp\n              _ = ((j'' : \u2115) + 1) - 1 := by omega\n              _ = (j' : \u2115) - 1 := by rw [hkj]\n              _ = s - 1 := by rw [h_s_j']\n          have h_ih : A (0 : Fin (m+2)) j'' \u2264 ((0 : Fin (m+2)) : \u2115) + (j'' : \u2115) - m :=\n            ih (s - 1) (by\n              have : s - 1 < s := by\n                omega\n              exact this)\n              (0 : Fin (m+2)) j'' (by\n                symm; exact hsum_j'')\n          rcases hc_val with (h_eq | h_eq)\n          \u00b7 rw [h_eq]\n            have : ((0 : Fin (m+2)) : \u2115) + (j'' : \u2115) - m \u2264 ((0 : Fin (m+2)) : \u2115) + (j' : \u2115) - m := by\n              omega\n            exact le_trans h_ih this\n          \u00b7 rw [h_eq]\n            have h_add : A (0 : Fin (m+2)) j'' + 1 \u2264 ((0 : Fin (m+2)) : \u2115) + (j' : \u2115) - m := by\n              omega\n            exact h_add\n      \u00b7 -- i' \u2260 0\n        rcases Fin.exists_succ_eq_of_ne_zero hi0 with \u27e8k, hk\u27e9\n        have hb_val := hb k j'\n        rw [hk] at hb_val\n        let i'' : Fin (m+2) := Fin.castSucc k\n        have hki : (i' : \u2115) = (i'' : \u2115) + 1 := by\n          calc\n            (i' : \u2115) = (Fin.succ k : \u2115) := by rw [hk]\n            _ = (k : \u2115) + 1 := by simp\n            _ = (i'' : \u2115) + 1 := by simp [i'']\n        have hsum_i'' : (i'' : \u2115) + (j' : \u2115) = s - 1 := by\n          calc\n            (i'' : \u2115) + (j' : \u2115) = ((i'' : \u2115) + 1) + (j' : \u2115) - 1 := by omega\n            _ = (i' : \u2115) + (j' : \u2115) - 1 := by rw [hki]\n            _ = s - 1 := by rw [hsum_eq]\n        have h_ih : A i'' j' \u2264 (i'' : \u2115) + (j' : \u2115) - m :=\n          ih (s - 1) (by\n            have : s - 1 < s := by omega\n            exact this)\n            i'' j' (by\n              symm; exact hsum_i'')\n        rcases hb_val with (h_eq | h_eq)\n        \u00b7 rw [h_eq]\n          have : (i'' : \u2115) + (j' : \u2115) - m \u2264 (i' : \u2115) + (j' : \u2115) - m := by\n            omega\n          exact le_trans h_ih this\n        \u00b7 rw [h_eq]\n          have h_add : A i'' j' + 1 \u2264 (i' : \u2115) + (j' : \u2115) - m := by\n            omega\n          exact h_add\n  exact hP i j rfl"
+    },
+    {
+      "id": "diag_sum_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "S \u2264 \u2211_{(i,j)\u2208A1} ((i:\u2115)+(j:\u2115)-m).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- S \u2264 \u2211_{(i,j)\u2208A1} ((i:\u2115)+(j:\u2115)-m). -/)\n  (proof := /-- Sum diag_bound over A1, using hS and the definition of A1. -/)]\nlemma diag_sum_bound (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (ha : \u2200 (i j : Fin (m+2)), (i : \u2115) + (j : \u2115) \u2264 m \u2192 A i j = 0) (hb : \u2200 (i : Fin (m+1)) (j : Fin (m+2)), A (Fin.succ i) j = A (Fin.castSucc i) j \u2228 A (Fin.succ i) j = A (Fin.castSucc i) j + 1) (hc : \u2200 (i : Fin (m+2)) (j : Fin (m+1)), A i (Fin.succ j) = A i (Fin.castSucc j) \u2228 A i (Fin.succ j) = A i (Fin.castSucc j) + 1) (S N : \u2115) (hS : S = \u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j) (hN : N = #{p : Fin (m+2) \u00d7 Fin (m+2) | A p.1 p.2 \u2260 0}) : S \u2264 Finset.sum (A1 m A) (\u03bb p => ((p.1 : \u2115) + (p.2 : \u2115) - m)) := by\n  rw [hS]\n  have h_total_sum_eq : \u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j = Finset.sum (A1 m A) (\u03bb p => A p.1 p.2) := by\n    calc\n      \u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j = \u2211 x \u2208 (Finset.univ : Finset (Fin (m+2))), \u2211 y \u2208 (Finset.univ : Finset (Fin (m+2))), A x y := by\n        simp\n      _ = \u2211 p \u2208 (Finset.univ : Finset (Fin (m+2))) \u00d7\u02e2 (Finset.univ : Finset (Fin (m+2))), A p.1 p.2 := by\n        rw [Finset.sum_product]\n      _ = \u2211 p : Fin (m+2) \u00d7 Fin (m+2), A p.1 p.2 := by\n        simp\n      _ = Finset.sum (A1 m A) (\u03bb p => A p.1 p.2) := by\n        apply (Finset.sum_subset ?_ ?_).symm\n        \u00b7 intro p hp\n          simp\n        \u00b7 intro p hp hnp\n          have hzero : A p.1 p.2 = 0 := by\n            simp [A1] at hnp\n            exact hnp\n          simp [hzero]\n  rw [h_total_sum_eq]\n  apply Finset.sum_le_sum\n  intro p hp\n  have hbound := diag_bound m A ha hb hc p.1 p.2\n  exact hbound"
+    },
+    {
+      "id": "putnam_2025_b4",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 8,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The main theorem: 3*S \u2264 (m+4)*N.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The main theorem: 3*S \u2264 (m+4)*N. -/)\n  (proof := /-- Add row_bound, col_bound, diag_sum_bound, and simplify using arithmetic. -/)]\ntheorem putnam_2025_b4\n    (m : \u2115)\n    (A : Matrix (Fin (m + 2)) (Fin (m + 2)) \u2115)\n    (ha : \u2200 (i j : Fin (m + 2)), (i : \u2115) + (j : \u2115) \u2264 m \u2192 A i j = 0)\n    (hb : \u2200 (i : Fin (m + 1)) (j : Fin (m + 2)),\n      A (Fin.succ i) j = A (Fin.castSucc i) j \u2228\n      A (Fin.succ i) j = A (Fin.castSucc i) j + 1)\n    (hc : \u2200 (i : Fin (m + 2)) (j : Fin (m + 1)),\n      A i (Fin.succ j) = A i (Fin.castSucc j) \u2228\n      A i (Fin.succ j) = A i (Fin.castSucc j) + 1)\n    (S : \u2115)\n    (hS : S = \u2211 i : Fin (m + 2), \u2211 j : Fin (m + 2), A i j)\n    (N : \u2115)\n    (hN : N = #{p : Fin (m + 2) \u00d7 Fin (m + 2) | A p.1 p.2 \u2260 0}) :\n    3 * S \u2264 (m + 4) * N := by\n  let A1set := A1 m A\n  have hN_card : A1set.card = N := by\n    simpa [A1] using hN.symm\n  have h_row : S \u2264 (m + 2) * N - (Finset.sum A1set (\u03bb p => (p.2 : \u2115))) :=\n    row_bound m A ha hb hc S N hS hN\n  have h_col : S \u2264 (m + 2) * N - (Finset.sum A1set (\u03bb p => (p.1 : \u2115))) :=\n    col_bound m A ha hb hc S N hS hN\n  have h_diag : S \u2264 Finset.sum A1set (\u03bb p => ((p.1 : \u2115) + (p.2 : \u2115) - m)) :=\n    diag_sum_bound m A ha hb hc S N hS hN\n  set C := Finset.sum A1set (\u03bb p => (p.2 : \u2115)) with hC\n  set R := Finset.sum A1set (\u03bb p => (p.1 : \u2115)) with hR\n  set D := Finset.sum A1set (\u03bb p => ((p.1 : \u2115) + (p.2 : \u2115) - m)) with hD\n  have hC_le : C \u2264 (m + 2) * N := by\n    calc\n      C = Finset.sum A1set (\u03bb p => (p.2 : \u2115)) := rfl\n      _ \u2264 Finset.sum A1set (\u03bb _ => (m+1 : \u2115)) := by\n        refine Finset.sum_le_sum (\u03bb p hp => ?_)\n        have hval : (p.2 : \u2115) \u2264 m+1 := by\n          have h' : (p.2 : \u2115) \u2264 m+1 := by\n            have := p.2.is_lt\n            omega\n          exact h'\n        exact hval\n      _ = (A1set.card : \u2115) * (m+1) := by\n        simp [Finset.sum_const_nat]\n      _ = N * (m+1) := by\n        simp [hN_card]\n      _ \u2264 (m+2)*N := by\n        have hm : m+1 \u2264 m+2 := by omega\n        simpa [Nat.mul_comm] using Nat.mul_le_mul_right N hm\n  have hR_le : R \u2264 (m + 2) * N := by\n    calc\n      R = Finset.sum A1set (\u03bb p => (p.1 : \u2115)) := rfl\n      _ \u2264 Finset.sum A1set (\u03bb _ => (m+1 : \u2115)) := by\n        refine Finset.sum_le_sum (\u03bb p hp => ?_)\n        have hval : (p.1 : \u2115) \u2264 m+1 := by\n          have h' : (p.1 : \u2115) \u2264 m+1 := by\n            have := p.1.is_lt\n            omega\n          exact h'\n        exact hval\n      _ = (A1set.card : \u2115) * (m+1) := by\n        simp [Finset.sum_const_nat]\n      _ = N * (m+1) := by\n        simp [hN_card]\n      _ \u2264 (m+2)*N := by\n        have hm : m+1 \u2264 m+2 := by omega\n        simpa [Nat.mul_comm] using Nat.mul_le_mul_right N hm\n  have h_rowsum : S + C \u2264 (m + 2) * N :=\n    Nat.add_le_of_le_sub hC_le h_row\n  have h_colsum : S + R \u2264 (m + 2) * N :=\n    Nat.add_le_of_le_sub hR_le h_col\n  have h_sum2 : 2 * S + (R + C) \u2264 2 * (m + 2) * N := by\n    have h_add : (S + C) + (S + R) \u2264 (m + 2) * N + (m + 2) * N :=\n      add_le_add h_rowsum h_colsum\n    have h_left : (S + C) + (S + R) = 2 * S + (R + C) := by omega\n    have h_right : (m + 2) * N + (m + 2) * N = 2 * (m + 2) * N := by ring\n    rw [h_left, h_right] at h_add\n    exact h_add\n  have hS_eq : (\u2211 p \u2208 A1set, ((p.1 : \u2115) + (p.2 : \u2115))) = D + m * N := by\n    calc\n      (\u2211 p \u2208 A1set, ((p.1 : \u2115) + (p.2 : \u2115))) = (\u2211 p \u2208 A1set, (((p.1 : \u2115) + (p.2 : \u2115) - m) + m)) := by\n        refine Finset.sum_congr rfl (\u03bb p hp => ?_)\n        have hp_nonzero : A p.1 p.2 \u2260 0 := by\n          simpa [A1, A1set] using hp\n        have hsum_gt_m : (p.1 : \u2115) + (p.2 : \u2115) > m := by\n          contrapose! hp_nonzero\n          apply ha p.1 p.2\n          omega\n        have hsum_ge_m : m \u2264 (p.1 : \u2115) + (p.2 : \u2115) := Nat.le_of_lt hsum_gt_m\n        calc\n          (p.1 : \u2115) + (p.2 : \u2115) = (((p.1 : \u2115) + (p.2 : \u2115) - m) + m) := by\n            omega\n          _ = (((p.1 : \u2115) + (p.2 : \u2115) - m) + m) := rfl\n      _ = D + (\u2211 p \u2208 A1set, m) := by\n        simp [D, hD, Finset.sum_add_distrib]\n      _ = D + (A1set.card * m) := by simp [Finset.sum_const_nat]\n      _ = D + (N * m) := by simp [hN_card]\n      _ = D + m * N := by ring\n  have h_eq : R + C = D + m * N := by\n    calc\n      R + C = (\u2211 p \u2208 A1set, (p.1 : \u2115)) + (\u2211 p \u2208 A1set, (p.2 : \u2115)) := rfl\n      _ = (\u2211 p \u2208 A1set, ((p.1 : \u2115) + (p.2 : \u2115))) := by\n        simp [Finset.sum_add_distrib]\n      _ = D + m * N := hS_eq\n  have h_sum3 : 2 * S + D + m * N \u2264 2 * (m + 2) * N := by\n    rw [h_eq] at h_sum2\n    omega\n  have h_factor : 2 * (m + 2) * N = (m + 4) * N + m * N := by ring\n  have h_ineq : 2 * S + D \u2264 (m + 4) * N := by\n    have h_temp : (2 * S + D) + m * N \u2264 ((m + 4) * N) + m * N := by\n      -- h_sum3 gives 2*S + D + m*N \u2264 2*(m+2)*N\n      -- rewrite RHS using h_factor\n      rw [h_factor] at h_sum3\n      -- h_sum3: 2*S + D + m*N \u2264 (m+4)*N + m*N\n      -- but 2*S + D + m*N = (2*S + D) + m*N\n      simpa [add_assoc] using h_sum3\n    exact (Nat.add_le_add_iff_right (m := 2*S + D) (k := (m+4)*N) (n := m*N)).mp h_temp\n  calc\n    3 * S = S + 2 * S := by ring\n    _ \u2264 D + 2 * S := by\n      simpa [add_comm, add_left_comm, add_assoc] using add_le_add_right h_diag (2 * S)\n    _ = 2 * S + D := by ring\n    _ \u2264 (m + 4) * N := h_ineq"
+    },
+    {
+      "id": "r",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The number of nonzero entries in row i.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The number of nonzero entries in row i. -/)]\ndef r (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (i : Fin (m+2)) : \u2115 := (row_nonzero m A i).card"
+    },
+    {
+      "id": "rij",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The number of nonzero entries in row i up to column j.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The number of nonzero entries in row i up to column j. -/)]\ndef rij (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (i j : Fin (m+2)) : \u2115 := (row_nonzero_up_to m A i j).card"
+    },
+    {
+      "id": "row_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Row bound: S \u2264 (m+2)*N - \u2211_{(i,j)\u2208A1} (j:\u2115).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Row bound: S \u2264 (m+2)*N - \u2211_{(i,j)\u2208A1} (j:\u2115). -/)\n  (proof := /-- Using aij_le_rij, sum_rij_eq, row_inner_bound, and definitions. -/)]\nlemma row_bound (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (ha : \u2200 (i j : Fin (m+2)), (i : \u2115) + (j : \u2115) \u2264 m \u2192 A i j = 0) (hb : \u2200 (i : Fin (m+1)) (j : Fin (m+2)), A (Fin.succ i) j = A (Fin.castSucc i) j \u2228 A (Fin.succ i) j = A (Fin.castSucc i) j + 1) (hc : \u2200 (i : Fin (m+2)) (j : Fin (m+1)), A i (Fin.succ j) = A i (Fin.castSucc j) \u2228 A i (Fin.succ j) = A i (Fin.castSucc j) + 1) (S N : \u2115) (hS : S = \u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j) (hN : N = #{p : Fin (m+2) \u00d7 Fin (m+2) | A p.1 p.2 \u2260 0}) : S \u2264 (m+2) * N - Finset.sum (A1 m A) (\u03bb p => (p.2 : \u2115)) := by\n  have filter_A1_fst_eq_i (i : Fin (m+2)) : Finset.filter (\u03bb a : Fin (m+2) \u00d7 Fin (m+2) => a.1 = i) (A1 m A) = Finset.image (\u03bb j : Fin (m+2) => (i, j)) (row_nonzero m A i) := by\n    ext \u27e8x, y\u27e9\n    constructor\n    \u00b7 intro h\n      simp [A1, row_nonzero] at h\n      rcases h with \u27e8hxy, hx\u27e9\n      subst hx\n      apply Finset.mem_image.mpr\n      refine \u27e8y, ?_, rfl\u27e9\n      simpa [row_nonzero] using hxy\n    \u00b7 intro h\n      rcases Finset.mem_image.1 h with \u27e8y', hy', hxy\u27e9\n      have hx : x = i := (Prod.mk.inj hxy).1.symm\n      have hy_eq : y' = y := (Prod.mk.inj hxy).2\n      rw [hx]\n      rw [hy_eq] at hy'\n      have hy_nonzero : A i y \u2260 0 := by\n        simpa [row_nonzero] using hy'\n      simp [A1, row_nonzero, hy_nonzero]\n  have card_A1_eq_sum_r : (A1 m A).card = \u2211 i : Fin (m+2), r m A i := by\n    have h_maps_to : Set.MapsTo (Prod.fst : (Fin (m+2) \u00d7 Fin (m+2)) \u2192 Fin (m+2)) (A1 m A : Set (Fin (m+2) \u00d7 Fin (m+2))) ((Finset.univ : Finset (Fin (m+2))) : Set (Fin (m+2))) := by\n      intro x hx\n      simp [hx]\n    rw [Finset.card_eq_sum_card_fiberwise h_maps_to]\n    apply Finset.sum_congr rfl\n    intro i hi\n    rw [filter_A1_fst_eq_i i]\n    have hinj : Function.Injective (\u03bb j : Fin (m+2) => (i, j)) := by\n      intro a b h\n      apply Prod.mk.inj h |>.right\n    rw [Finset.card_image_of_injective _ hinj]\n    rfl\n  have A1_image_sigma_eq_sigma : (A1 m A).image (\u03bb (p : Fin (m+2) \u00d7 Fin (m+2)) => (Sigma.mk p.1 p.2 : \u03a3 _ : Fin (m+2), Fin (m+2))) = (Finset.univ : Finset (Fin (m+2))).sigma (\u03bb i : Fin (m+2) => row_nonzero m A i) := by\n    ext x\n    constructor\n    \u00b7 intro h\n      rcases Finset.mem_image.1 h with \u27e8p, hp, hx\u27e9\n      have hpA : A p.1 p.2 \u2260 0 := by\n        simp [A1] at hp\n        exact hp\n      cases' x with i j\n      cases hx\n      simp [Finset.mem_sigma, row_nonzero, hpA]\n    \u00b7 intro h\n      rcases Finset.mem_sigma.1 h with \u27e8hi, hj\u27e9\n      have hA : A x.1 x.2 \u2260 0 := by\n        simpa [row_nonzero] using hj\n      have hp : (x.1, x.2) \u2208 A1 m A := by\n        simp [A1, hA]\n      apply Finset.mem_image.mpr\n      refine \u27e8(x.1, x.2), hp, ?_\u27e9\n      simp\n  have inj_on_sigma_mk (s : Finset (Fin (m+2) \u00d7 Fin (m+2))) : Set.InjOn (\u03bb (p : Fin (m+2) \u00d7 Fin (m+2)) => (Sigma.mk p.1 p.2 : \u03a3 _ : Fin (m+2), Fin (m+2))) (s : Set (Fin (m+2) \u00d7 Fin (m+2))) := by\n    intro x hx y hy h\n    apply Prod.ext\n    \u00b7 exact (Sigma.mk.inj h).1\n    \u00b7 have h2 := (Sigma.mk.inj h).2\n      exact eq_of_heq h2\n  have sum_A1_col_eq_sum_row_nonzero : Finset.sum (A1 m A) (\u03bb p => (p.2 : \u2115)) = \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, (j : \u2115) := by\n    calc\n      Finset.sum (A1 m A) (\u03bb p => (p.2 : \u2115))\n          = Finset.sum ((A1 m A).image (\u03bb (p : Fin (m+2) \u00d7 Fin (m+2)) => (Sigma.mk p.1 p.2 : \u03a3 _ : Fin (m+2), Fin (m+2)))) (\u03bb x : \u03a3 _ : Fin (m+2), Fin (m+2) => (x.2 : \u2115)) := by\n        rw [Finset.sum_image (inj_on_sigma_mk (A1 m A))]\n      _ = Finset.sum ((Finset.univ : Finset (Fin (m+2))).sigma (\u03bb i : Fin (m+2) => row_nonzero m A i)) (\u03bb x : \u03a3 _ : Fin (m+2), Fin (m+2) => (x.2 : \u2115)) := by\n        rw [A1_image_sigma_eq_sigma]\n      _ = \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, (j : \u2115) := by\n        simp [Finset.sum_sigma]\n  have hN_card : N = (A1 m A).card := by\n    simpa [A1] using hN\n  -- Step 1: S \u2264 \u2211 i, \u2211 j \u2208 row_nonzero i, rij i j\n  have hS_le_sum_rij : S \u2264 \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, rij m A i j := by\n    rw [hS]\n    have h_eq_sum (i : Fin (m+2)) : \u2211 j : Fin (m+2), A i j = \u2211 j \u2208 row_nonzero m A i, A i j := by\n      simp [row_nonzero, Finset.sum_filter]\n      apply Finset.sum_congr rfl\n      intro x hx\n      by_cases h : A i x = 0\n      \u00b7 simp [h]\n      \u00b7 simp [h]\n    calc\n      \u2211 i : Fin (m+2), \u2211 j : Fin (m+2), A i j = \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, A i j := by\n        simp [h_eq_sum]\n      _ \u2264 \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, rij m A i j := by\n        refine Finset.sum_le_sum (\u03bb i hi => ?_)\n        apply Finset.sum_le_sum\n        intro j hj\n        exact aij_le_rij m A ha hb hc i j\n  -- Step 2: \u2211 i, \u2211 j \u2208 row_nonzero i, rij i j = \u2211 i, (r i)*(r i + 1)/2\n  have h_sum_rij_eq : \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, rij m A i j = \u2211 i : Fin (m+2), ((r m A i)*(r m A i + 1)/2) := by\n    simp [sum_rij_eq m A]\n  -- Step 3: \u2211 i, (r i)*(r i + 1)/2 \u2264 \u2211 i, ((m+2)*r i - \u2211 j \u2208 row_nonzero i, (j : \u2115))\n  have h_inner_bound : \u2211 i : Fin (m+2), ((r m A i)*(r m A i + 1)/2) \u2264 \u2211 i : Fin (m+2), ((m+2 : \u2115)*(r m A i) - \u2211 j \u2208 row_nonzero m A i, (j : \u2115)) := by\n    refine Finset.sum_le_sum (\u03bb i hi => ?_)\n    exact row_inner_bound m A i\n  -- Step 4: relate RHS to target\n  have h_sum_le (i : Fin (m+2)) : (\u2211 j \u2208 row_nonzero m A i, (j : \u2115)) \u2264 (m+2 : \u2115)*(r m A i) := by\n    have h_bound (j : Fin (m+2)) : (j : \u2115) \u2264 (m+2 : \u2115) := by\n      have h := j.2\n      omega\n    calc\n      (\u2211 j \u2208 row_nonzero m A i, (j : \u2115)) \u2264 (\u2211 j \u2208 row_nonzero m A i, (m+2 : \u2115)) :=\n        Finset.sum_le_sum (\u03bb j hj => h_bound j)\n      _ = ((row_nonzero m A i).card : \u2115) * (m+2 : \u2115) := by simp\n      _ = (r m A i) * (m+2 : \u2115) := rfl\n      _ = (m+2 : \u2115)*(r m A i) := mul_comm _ _\n  have sum_sub_distrib_of_ge {\u03b9 : Type} [Fintype \u03b9] (a b : \u03b9 \u2192 \u2115) (h : \u2200 i, b i \u2264 a i) : \u2211 i : \u03b9, (a i - b i) = (\u2211 i : \u03b9, a i) - (\u2211 i : \u03b9, b i) := by\n    classical\n    have h_total : (\u2211 i : \u03b9, b i) \u2264 (\u2211 i : \u03b9, a i) := Finset.sum_le_sum (\u03bb i hi => h i)\n    refine Finset.induction_on Finset.univ ?_ ?_\n    \u00b7 simp\n    \u00b7 intro i s his IH\n      have hi : b i \u2264 a i := h i\n      have hsum_s : (\u2211 j \u2208 s, b j) \u2264 (\u2211 j \u2208 s, a j) := Finset.sum_le_sum (\u03bb j hj => h j)\n      rw [Finset.sum_insert his, Finset.sum_insert his, Finset.sum_insert his]\n      rw [IH]\n      omega\n  have h_simplify : \u2211 i : Fin (m+2), ((m+2 : \u2115)*(r m A i) - \u2211 j \u2208 row_nonzero m A i, (j : \u2115)) = (m+2 : \u2115) * \u2211 i : Fin (m+2), r m A i - \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, (j : \u2115) := by\n    have h_temp := sum_sub_distrib_of_ge (a := \u03bb i : Fin (m+2) => (m+2 : \u2115)*(r m A i)) (b := \u03bb i => \u2211 j \u2208 row_nonzero m A i, (j : \u2115)) (h := h_sum_le)\n    calc\n      \u2211 i : Fin (m+2), ((m+2 : \u2115)*(r m A i) - \u2211 j \u2208 row_nonzero m A i, (j : \u2115)) = (\u2211 i : Fin (m+2), ((m+2 : \u2115)*(r m A i))) - (\u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, (j : \u2115)) := h_temp\n      _ = ((m+2 : \u2115) * \u2211 i : Fin (m+2), r m A i) - \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, (j : \u2115) := by\n        simp [Finset.mul_sum]\n  -- Final chain\n  calc\n    S \u2264 \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, rij m A i j := hS_le_sum_rij\n    _ = \u2211 i : Fin (m+2), ((r m A i)*(r m A i + 1)/2) := h_sum_rij_eq\n    _ \u2264 \u2211 i : Fin (m+2), ((m+2 : \u2115)*(r m A i) - \u2211 j \u2208 row_nonzero m A i, (j : \u2115)) := h_inner_bound\n    _ = (m+2 : \u2115) * \u2211 i : Fin (m+2), r m A i - \u2211 i : Fin (m+2), \u2211 j \u2208 row_nonzero m A i, (j : \u2115) := h_simplify\n    _ = (m+2 : \u2115) * ((A1 m A).card : \u2115) - Finset.sum (A1 m A) (\u03bb p => (p.2 : \u2115)) := by\n      rw [card_A1_eq_sum_r, sum_A1_col_eq_sum_row_nonzero]\n    _ = (m+2 : \u2115) * N - Finset.sum (A1 m A) (\u03bb p => (p.2 : \u2115)) := by\n      rw [hN_card]\n    _ = (m+2) * N - Finset.sum (A1 m A) (\u03bb p => (p.2 : \u2115)) := by\n      simp"
+    },
+    {
+      "id": "row_inner_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.23,
+      "proof_length": 19,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a fixed row i, r(i)*(r(i)+1)/2 \u2264 (m+2)*r(i) - \u2211_{j in row_nonzero i} (j:\u2115).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For a fixed row i, r(i)*(r(i)+1)/2 \u2264 (m+2)*r(i) - \u2211_{j in row_nonzero i} (j:\u2115). -/)\n  (proof := /-- Use inequality j_k \u2264 (m+2) - r(i) + k - 1 where j_k are the nonzero column indices sorted. -/)]\nlemma row_inner_bound (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (i : Fin (m+2)) : (r m A i)*(r m A i + 1)/2 \u2264 (m+2)*(r m A i) - Finset.sum (row_nonzero m A i) (\u03bb j => (j : \u2115)) := by\n  have helper_lemma (A B C : \u2115) (h : 2*A + B \u2264 2*C) : A + B/2 \u2264 C := by\n    have h' : 2*(A + B/2) \u2264 2*A + B := by\n      have : 2*(B/2) \u2264 B := Nat.mul_div_le B 2\n      nlinarith\n    have h'' : 2*(A + B/2) \u2264 2*C := le_trans h' h\n    omega\n  have sum_le_max_sum_mul_two (M r : \u2115) (S : Finset \u2115) (hS : \u2200 x \u2208 S, x \u2264 M) (hcard : S.card = r) : 2 * (S.sum (\u03bb x => x)) + r * (r - 1) \u2264 2 * M * r := by\n    induction' r with r ih generalizing S\n    \u00b7 have hS_empty : S = \u2205 := Finset.card_eq_zero.mp hcard\n      simp [hS_empty]\n    \u00b7 have hcard' : S.card = r.succ := hcard\n      by_cases hne : S.Nonempty\n      \u00b7 let a := S.min' hne\n        have ha : a \u2208 S := Finset.min'_mem S hne\n        have ha_le_M : a \u2264 M := hS a ha\n        have hcard_erase : (S.erase a).card = r := by\n          rw [Finset.card_erase_of_mem ha, hcard]\n          simp\n        have hS_erase : \u2200 x \u2208 S.erase a, x \u2264 M := by\n          intro x hx; apply hS x; exact Finset.mem_of_mem_erase hx\n        have IH := ih (S.erase a) hS_erase hcard_erase\n        -- IH: 2*((S.erase a).sum (\u03bb x => x)) + r*(r-1) \u2264 2*M*r\n        have ha_le_M_sub_r : a \u2264 M - r := by\n          have hsub : S \u2286 Finset.Icc a M := by\n            intro x hx\n            have hx_le_M := hS x hx\n            have ha_le_x : a \u2264 x := Finset.min'_le S x hx\n            exact Finset.mem_Icc.mpr \u27e8ha_le_x, hx_le_M\u27e9\n          have hcard_sub : S.card \u2264 (Finset.Icc a M).card := Finset.card_le_card hsub\n          have card_Icc : (Finset.Icc a M).card = M + 1 - a := Nat.card_Icc a M\n          rw [hcard', card_Icc] at hcard_sub\n          omega\n        have hcard_sub2 : r.succ \u2264 M+1 - a := by\n          have hsub : S \u2286 Finset.Icc a M := by\n            intro x hx\n            have hx_le_M := hS x hx\n            have ha_le_x : a \u2264 x := Finset.min'_le S x hx\n            exact Finset.mem_Icc.mpr \u27e8ha_le_x, hx_le_M\u27e9\n          have hcard_sub : S.card \u2264 (Finset.Icc a M).card := Finset.card_le_card hsub\n          have card_Icc : (Finset.Icc a M).card = M + 1 - a := Nat.card_Icc a M\n          rw [hcard', card_Icc] at hcard_sub\n          exact hcard_sub\n        have hr_le_M : r \u2264 M := by\n          have htemp : r.succ \u2264 M+1 := by\n            have htemp' : M+1 - a \u2264 M+1 := Nat.sub_le _ _\n            exact le_trans hcard_sub2 htemp'\n          omega\n        have ha_add_r_le_M : a + r \u2264 M := by\n          omega\n        -- Now the main inequality\n        have hcalc : 2 * (S.sum (\u03bb x => x)) + r.succ * (r.succ - 1) \u2264 2 * M * r.succ := by\n          have hsum_eq : S.sum (\u03bb x => x) = (S.erase a).sum (\u03bb x => x) + a := by\n            rw [\u2190 Finset.sum_erase_add S (\u03bb x => x) ha, add_comm]\n          calc\n            2 * (S.sum (\u03bb x => x)) + r.succ * (r.succ - 1)\n                = 2 * ((S.erase a).sum (\u03bb x => x) + a) + r.succ * (r.succ - 1) := by rw [hsum_eq]\n            _ = (2*((S.erase a).sum (\u03bb x => x)) + 2*a) + (r.succ * (r.succ - 1)) := by ring\n            _ = (2*((S.erase a).sum (\u03bb x => x)) + r.succ * (r.succ - 1)) + 2*a := by ring\n            _ = (2*((S.erase a).sum (\u03bb x => x)) + r.succ * r) + 2*a := by\n              have h_eq : r.succ * (r.succ - 1) = r.succ * r := by\n                have hsub' : r.succ - 1 = r := by omega\n                rw [hsub']\n              rw [h_eq]\n            _ = (2*((S.erase a).sum (\u03bb x => x)) + (r*(r-1) + 2*r)) + 2*a := by\n              have h_eq2 : r.succ * r = r*(r-1) + 2*r := by\n                cases r\n                \u00b7 simp\n                \u00b7 rename_i r'\n                  simp [Nat.succ_eq_add_one, add_comm, add_left_comm, mul_add, add_mul, mul_comm, mul_left_comm]\n              rw [h_eq2]\n            _ = ((2*((S.erase a).sum (\u03bb x => x)) + r*(r-1)) + 2*r) + 2*a := by ring\n            _ \u2264 (2*M*r + 2*r) + 2*a := by\n              nlinarith\n            _ = 2*a + (2*M*r + 2*r) := by ring\n            _ \u2264 2*M*r.succ := by\n              nlinarith\n        exact hcalc\n      \u00b7 exfalso; rw [Finset.not_nonempty_iff_eq_empty.mp hne] at hcard'; simp at hcard'\n  set S := row_nonzero m A i with hS\n  set rval := (S.card) with hrval\n  have hcard : S.card = rval := rfl\n  -- embed S into \u2115\n  let f : Fin (m+2) \u2192 \u2115 := fun j => (j : \u2115)\n  have hf_inj : Function.Injective f := by\n    intro a b h\n    apply Fin.ext\n    exact h\n  let e : Fin (m+2) \u21aa \u2115 := \u27e8f, hf_inj\u27e9\n  set S' : Finset \u2115 := S.map e with hS'\n  have hcard_S' : S'.card = rval := by\n    rw [hS', Finset.card_map, hrval]\n  have hS'_bound : \u2200 x \u2208 S', x \u2264 m+1 := by\n    intro x hx\n    rw [Finset.mem_map] at hx\n    rcases hx with \u27e8j, hj, rfl\u27e9\n    have hx_bound : (j : \u2115) \u2264 m+1 := by\n      have : (j : \u2115) < m+2 := j.2\n      omega\n    simpa [e, f] using hx_bound\n  have hsum_eq : S'.sum id = Finset.sum S (\u03bb j => (j : \u2115)) := by\n    dsimp [S', e, f]\n    simp [Finset.sum_map]\n  have hsum_eq2 : \u2211 x \u2208 S', x = S'.sum id := by simp\n  have h := sum_le_max_sum_mul_two (m+1) rval S' hS'_bound hcard_S'\n  -- h: 2*(S'.sum id) + rval*(rval-1) \u2264 2*(m+1)*rval\n  rw [hsum_eq2] at h\n  rw [hsum_eq] at h\n  -- h: 2*(Finset.sum S (\u03bb j => (j : \u2115))) + rval*(rval-1) \u2264 2*(m+1)*rval\n  have h_mul : 2*(Finset.sum S (\u03bb j => (j : \u2115))) + rval*(rval+1) \u2264 2*(m+2)*rval := by\n    have h_eq : rval*(rval+1) = rval*(rval-1) + 2*rval := by\n      cases rval\n      \u00b7 simp\n      \u00b7 rename_i rval'\n        simp [Nat.succ_eq_add_one, add_comm, add_left_comm, mul_add, add_mul, mul_comm, mul_left_comm]\n    rw [h_eq]\n    nlinarith\n  have h_mul' : 2*(Finset.sum S (\u03bb j => (j : \u2115))) + rval*(rval+1) \u2264 2*((m+2)*rval) := by\n    simpa [mul_assoc] using h_mul\n  have h_target : Finset.sum S (\u03bb j => (j : \u2115)) + (rval*(rval+1)/2) \u2264 (m+2)*rval :=\n    helper_lemma (Finset.sum S (\u03bb j => (j : \u2115))) (rval*(rval+1)) ((m+2)*rval) h_mul'\n  -- Now rewrite using rval = r m A i\n  have hrval_eq : rval = r m A i := by\n    dsimp [rval, r, S, hS]\n  rw [hrval_eq] at h_target\n  -- goal: (r m A i)*(r m A i + 1)/2 \u2264 (m+2)*(r m A i) - Finset.sum (row_nonzero m A i) (\u03bb j => (j : \u2115))\n  -- which is equivalent to h_target rearranged\n  omega"
+    },
+    {
+      "id": "row_nonzero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The nonzero columns in row i.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The nonzero columns in row i. -/)]\ndef row_nonzero (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (i : Fin (m+2)) : Finset (Fin (m+2)) :=\n  Finset.filter (\u03bb j => A i j \u2260 0) Finset.univ"
+    },
+    {
+      "id": "row_nonzero_up_to",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The nonzero columns in row i up to column j (inclusive).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The nonzero columns in row i up to column j (inclusive). -/)]\ndef row_nonzero_up_to (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (i j : Fin (m+2)) : Finset (Fin (m+2)) :=\n  Finset.filter (\u03bb k => A i k \u2260 0) (Finset.Iic j)"
+    },
+    {
+      "id": "sum_rij_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a fixed row i, the sum over its nonzero columns of rij i j equals r(i)*(r(i)+1)/2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For a fixed row i, the sum over its nonzero columns of rij i j equals r(i)*(r(i)+1)/2. -/)\n  (proof := /-- Because as j runs over nonzero columns in increasing order, rij i j takes values 1,2,...,r(i). -/)]\nlemma sum_rij_eq (m : \u2115) (A : Matrix (Fin (m+2)) (Fin (m+2)) \u2115) (i : Fin (m+2)) : Finset.sum (row_nonzero m A i) (\u03bb j => rij m A i j) = (r m A i)*(r m A i + 1)/2 := by\n  have row_nonzero_up_to_eq_inter (j : Fin (m+2)) : row_nonzero_up_to m A i j = (row_nonzero m A i) \u2229 (Finset.Iic j) := by\n    ext k; simp [row_nonzero_up_to, row_nonzero, Finset.mem_inter, Finset.mem_filter, Finset.mem_Iic, Finset.mem_univ, and_comm]\n  have aux (k : \u2115) : 1 + (k*(k+1)/2 + k) = (k+1)*(k+2)/2 := by\n    have h2 : 2 \u2223 k*(k+1) := Nat.two_dvd_mul_add_one k\n    have hpos2 : 0 < 2 := by decide\n    have hdiv2 : (2*(k+1))/2 = k+1 := by\n      rw [mul_comm, Nat.mul_div_cancel (k+1) hpos2]\n    calc\n      1 + (k*(k+1)/2 + k) = (k*(k+1)/2) + (k+1) := by omega\n      _ = (k*(k+1)/2) + (2*(k+1))/2 := by rw [hdiv2]\n      _ = (k*(k+1) + 2*(k+1))/2 := by rw [Nat.add_div_of_dvd_right h2]\n      _ = ((k+1)*(k+2))/2 := by ring_nf\n  have sum_inter_Iic (S : Finset (Fin (m+2))) : Finset.sum S (\u03bb j => ((S \u2229 (Finset.Iic j)).card)) = (S.card)*(S.card+1)/2 := by\n    refine Finset.strongInductionOn S ?_\n    intro S ih\n    by_cases hne : S.Nonempty\n    \u00b7 let a := S.min' hne\n      have ha_mem : a \u2208 S := Finset.min'_mem S hne\n      have hmin : \u2200 x \u2208 S, a \u2264 x := \u03bb x hx => Finset.min'_le S x hx\n      set T := S.erase a with hT\n      have hcard_lt : T \u2282 S := Finset.erase_ssubset ha_mem\n      have hcard_sum_T : Finset.sum T (\u03bb j => ((T \u2229 (Finset.Iic j)).card)) = (T.card)*(T.card+1)/2 := ih T hcard_lt\n      have hcard_relation : T.card + 1 = S.card := by\n        rw [\u2190 Finset.card_erase_add_one ha_mem, hT]\n      have ha_S_inter : (S \u2229 (Finset.Iic a)).card = 1 := by\n        have h_eq : S \u2229 (Finset.Iic a) = {a} := by\n          ext x; constructor\n          \u00b7 intro hx\n            rcases Finset.mem_inter.mp hx with \u27e8hxS, hxIic\u27e9\n            have hax : a \u2264 x := hmin x hxS\n            have hxa : x \u2264 a := (Finset.mem_Iic.mp hxIic)\n            have heq : x = a := le_antisymm hxa hax\n            simp [heq]\n          \u00b7 intro hx\n            simp at hx\n            subst hx\n            exact Finset.mem_inter.mpr \u27e8ha_mem, Finset.mem_Iic.mpr (le_refl _)\u27e9\n        simp [h_eq]\n      have h_not_mem : a \u2209 T := by\n        simp [hT]\n      have ha_mem_Iic (j : Fin (m+2)) (hj : j \u2208 T) : a \u2208 Finset.Iic j := by\n        have hmemS : j \u2208 S := by\n          rw [hT] at hj\n          exact Finset.mem_of_mem_erase hj\n        have ha_le_j : a \u2264 j := hmin j hmemS\n        exact Finset.mem_Iic.mpr ha_le_j\n      have h_inter_T (j : Fin (m+2)) (hj : j \u2208 T) : (S \u2229 (Finset.Iic j)).card = (T \u2229 (Finset.Iic j)).card + 1 := by\n        have h_eq : S \u2229 (Finset.Iic j) = insert a (T \u2229 (Finset.Iic j)) := by\n          ext x; constructor\n          \u00b7 intro hx\n            rcases Finset.mem_inter.mp hx with \u27e8hxS, hxIic\u27e9\n            by_cases hxa : x = a\n            \u00b7 subst x; exact Finset.mem_insert_self a (T \u2229 (Finset.Iic j))\n            \u00b7 have hxT : x \u2208 T := by\n                rw [hT, Finset.mem_erase]\n                exact \u27e8hxa, hxS\u27e9\n              have hx_inter : x \u2208 T \u2229 (Finset.Iic j) := Finset.mem_inter.mpr \u27e8hxT, hxIic\u27e9\n              exact Finset.mem_insert_of_mem hx_inter\n          \u00b7 intro hx\n            rcases Finset.mem_insert.mp hx with (hx | hx)\n            \u00b7 subst x; exact Finset.mem_inter.mpr \u27e8ha_mem, ha_mem_Iic j hj\u27e9\n            \u00b7 rcases Finset.mem_inter.mp hx with \u27e8hxT, hxIic\u27e9\n              have hxS : x \u2208 S := Finset.mem_of_mem_erase hxT\n              exact Finset.mem_inter.mpr \u27e8hxS, hxIic\u27e9\n        have h_not_mem_inter : a \u2209 (T \u2229 (Finset.Iic j)) := by\n          intro h\n          rcases Finset.mem_inter.mp h with \u27e8haT, haIic\u27e9\n          exact h_not_mem haT\n        rw [h_eq, Finset.card_insert_of_not_mem h_not_mem_inter]\n      have hsum_insert : Finset.sum S (\u03bb j => ((S \u2229 (Finset.Iic j)).card)) = \n        ((S \u2229 (Finset.Iic a)).card) + Finset.sum T (\u03bb j => ((S \u2229 (Finset.Iic j)).card)) := by\n        rw [\u2190 Finset.insert_erase ha_mem, Finset.sum_insert h_not_mem]\n      rw [hsum_insert, ha_S_inter]\n      calc\n        (1 : \u2115) + Finset.sum T (\u03bb j => ((S \u2229 (Finset.Iic j)).card)) = \n        (1 : \u2115) + Finset.sum T (\u03bb j => ((T \u2229 (Finset.Iic j)).card + 1)) := by\n          refine congrArg (fun s => 1 + s) (Finset.sum_congr rfl (\u03bb j hj => ?_))\n          rw [h_inter_T j hj]\n        _ = (1 : \u2115) + ((Finset.sum T (\u03bb j => ((T \u2229 (Finset.Iic j)).card))) + Finset.sum T (\u03bb _ => 1)) := by\n          rw [Finset.sum_add_distrib]\n        _ = (1 : \u2115) + ((Finset.sum T (\u03bb j => ((T \u2229 (Finset.Iic j)).card))) + T.card) := by\n          rw [Finset.card_eq_sum_ones]\n        _ = (1 : \u2115) + ((T.card*(T.card+1)/2) + T.card) := by rw [hcard_sum_T]\n        _ = S.card * (S.card + 1) / 2 := by\n          rw [\u2190 hcard_relation]\n          have htemp : T.card + 1 + 1 = T.card + 2 := by omega\n          rw [htemp]\n          exact aux (T.card)\n    \u00b7 have he : S = \u2205 := Finset.not_nonempty_iff_eq_empty.mp hne\n      subst he; simp\n  have h_eq_inter : \u2200 j, rij m A i j = ((row_nonzero m A i) \u2229 (Finset.Iic j)).card := by\n    intro j\n    calc\n      rij m A i j = (row_nonzero_up_to m A i j).card := rfl\n      _ = ((row_nonzero m A i) \u2229 (Finset.Iic j)).card := by rw [row_nonzero_up_to_eq_inter j]\n  calc\n    Finset.sum (row_nonzero m A i) (\u03bb j => rij m A i j) = Finset.sum (row_nonzero m A i) (\u03bb j => ((row_nonzero m A i) \u2229 (Finset.Iic j)).card) := by\n      refine Finset.sum_congr rfl (\u03bb j hj => ?_)\n      rw [h_eq_inter j]\n    _ = ((row_nonzero m A i).card) * ((row_nonzero m A i).card + 1) / 2 := by rw [sum_inter_Iic]\n    _ = (r m A i)*(r m A i + 1)/2 := by rfl"
+    }
+  ],
+  "edges": [
+    {
+      "source": "col_nonzero_up_to",
+      "target": "aij_le_cij",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "row_nonzero_up_to",
+      "target": "aij_le_rij",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "aij_le_cij",
+      "target": "col_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "cij",
+      "target": "col_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "col_nonzero",
+      "target": "col_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "col_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "diag_bound",
+      "target": "diag_sum_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "diag_sum_bound",
+      "target": "putnam_2025_b4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "col_bound",
+      "target": "putnam_2025_b4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "row_bound",
+      "target": "putnam_2025_b4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A1",
+      "target": "putnam_2025_b4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "row_inner_bound",
+      "target": "row_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "r",
+      "target": "row_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_rij_eq",
+      "target": "row_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "aij_le_rij",
+      "target": "row_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "row_nonzero",
+      "target": "row_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "rij",
+      "target": "row_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "row_nonzero_up_to",
+      "target": "sum_rij_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,1565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 B2. 800 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item current">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item current">3</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "B_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.23,
+      "proof_length": 19,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "int_0^1 f(x) dx > 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- $\\int_0^1 f(x) dx > 0$. -/)\n  (proof := /-- $f$ is nonnegative, strictly increasing, and continuous, so it is positive on some subinterval, which makes the integral positive. -/)]\nlemma B_pos (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x)\n    (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) : 0 < \u222b x in (0:\u211d)..1, f x := by\n  have h0_le_1 : (0 : \u211d) \u2264 1 := by norm_num\n  rw [intervalIntegral.integral_of_le h0_le_1, MeasureTheory.integral_Icc_eq_integral_Ioc.symm]\n  have h_int : IntegrableOn f (Icc (0 : \u211d) 1) := integrable_f f hf_cont\n  have hmeas : MeasurableSet (Icc (0 : \u211d) 1) := measurableSet_Icc\n  have h_nonneg_ae : 0 \u2264\u1d50[volume.restrict (Icc (0 : \u211d) 1)] f := by\n    filter_upwards [self_mem_ae_restrict hmeas] with x hx\n    exact hf_nonneg x hx\n  rw [setIntegral_pos_iff_support_of_nonneg_ae h_nonneg_ae h_int]\n  -- need to show 0 < volume (support f \u2229 Icc (0:\u211d) 1)\n  let x0 : \u211d := 1/2\n  have hx0_mem_Icc : x0 \u2208 Icc (0 : \u211d) 1 := by\n    constructor <;> norm_num\n  have hx0_interior : x0 \u2208 interior (Icc (0 : \u211d) 1) := by\n    rw [interior_Icc]\n    constructor <;> norm_num\n  have hmem_nhds : Icc (0 : \u211d) 1 \u2208 nhds x0 := by\n    apply Filter.mem_of_superset (isOpen_interior.mem_nhds hx0_interior)\n    exact interior_subset\n  have hf_cont_at : ContinuousAt f x0 :=\n    (hf_cont.continuousWithinAt hx0_mem_Icc).continuousAt hmem_nhds\n  have hfx0_pos : f x0 > 0 := by\n    have h0_mem_Icc : (0 : \u211d) \u2208 Icc (0 : \u211d) 1 := by constructor <;> norm_num\n    have h0_lt_x0 : (0 : \u211d) < x0 := by norm_num\n    have h_lt := hf_mono h0_mem_Icc hx0_mem_Icc h0_lt_x0\n    have h0_nonneg := hf_nonneg 0 h0_mem_Icc\n    linarith\n  have hx : f x0 \u2208 Set.Ioi (f x0 / 2) := by\n    dsimp [Set.Ioi]\n    nlinarith\n  have h_open : Set.Ioi (f x0 / 2) \u2208 nhds (f x0) :=\n    isOpen_Ioi.mem_nhds hx\n  have h_preimage := hf_cont_at.preimage_mem_nhds h_open\n  have h_eventually : \u2200\u1da0 y in nhds x0, f y > f x0 / 2 := by\n    simpa using h_preimage\n  have h_mem : {y | f y > f x0 / 2} \u2208 nhds x0 := h_eventually\n  rw [Metric.mem_nhds_iff] at h_mem\n  rcases h_mem with \u27e8\u03b5, h\u03b5_pos, hball\u27e9\n  set \u03b5' := min \u03b5 (1/2) with h\u03b5'_def\n  have h\u03b5'_pos : \u03b5' > 0 := by\n    exact lt_min h\u03b5_pos (by norm_num)\n  have h\u03b5'_le_half : \u03b5' \u2264 1/2 := by\n    unfold \u03b5'\n    exact min_le_right _ _\n  have hball' : Metric.ball x0 \u03b5' \u2286 {y | f y > f x0 / 2} := by\n    intro y hy\n    apply hball\n    have : Metric.ball x0 \u03b5' \u2286 Metric.ball x0 \u03b5 := Metric.ball_subset_ball (min_le_left _ _)\n    exact this hy\n  have hball_subset_Icc : Metric.ball x0 \u03b5' \u2286 Icc (0 : \u211d) 1 := by\n    rw [Real.ball_eq_Ioo]\n    intro y hy\n    rcases hy with \u27e8h_left, h_right\u27e9\n    have hx0_minus_eps_nonneg : x0 - \u03b5' \u2265 0 := by\n      unfold x0\n      nlinarith\n    have h_left' : 0 \u2264 y := by\n      linarith\n    have hx0_plus_eps_le_one : x0 + \u03b5' \u2264 1 := by\n      unfold x0\n      nlinarith\n    have h_right' : y \u2264 1 := by\n      linarith\n    exact \u27e8h_left', h_right'\u27e9\n  have hball_subset_support : Metric.ball x0 \u03b5' \u2286 Function.support f := by\n    intro y hy\n    have hpos : f y > f x0 / 2 := hball' hy\n    have hpos' : f y > 0 := by linarith\n    exact Function.mem_support.mpr (ne_of_gt hpos')\n  have hball_subset_inter : Metric.ball x0 \u03b5' \u2286 (Function.support f) \u2229 (Icc (0 : \u211d) 1) := by\n    intro y hy\n    exact \u27e8hball_subset_support hy, hball_subset_Icc hy\u27e9\n  have hvol_ball_pos : 0 < volume (Metric.ball x0 \u03b5') := Metric.measure_ball_pos (\u03bc := volume) x0 h\u03b5'_pos\n  have hvol_inter_pos : 0 < volume ((Function.support f) \u2229 (Icc (0 : \u211d) 1)) := by\n    refine lt_of_lt_of_le hvol_ball_pos (measure_mono hball_subset_inter)\n  exact hvol_inter_pos"
+    },
+    {
+      "id": "D_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "int_0^1 f(x)^2 dx > 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- $\\int_0^1 f(x)^2 dx > 0$. -/)\n  (proof := /-- Since $f$ is positive on a subinterval, $f^2$ is positive there as well, so its integral is positive. -/)]\nlemma D_pos (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x)\n    (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) : 0 < \u222b x in (0:\u211d)..1, (f x)^2 := by\n  have h01 : (0:\u211d) < 1 := by norm_num\n  have h0_mem : (0:\u211d) \u2208 Icc (0:\u211d) 1 := Set.mem_Icc.mpr \u27e8by norm_num, by norm_num\u27e9\n  have h1_mem : (1:\u211d) \u2208 Icc (0:\u211d) 1 := Set.mem_Icc.mpr \u27e8by norm_num, by norm_num\u27e9\n  have h_f0_lt_f1 : f (0:\u211d) < f (1:\u211d) := hf_mono h0_mem h1_mem h01\n  have h_nonneg_f0 : 0 \u2264 f (0:\u211d) := hf_nonneg 0 h0_mem\n  have h_pos_f1 : 0 < f (1:\u211d) := by\n    linarith\n  have hf_cont_sq : ContinuousOn (\u03bb x => (f x)^2) (Icc (0:\u211d) 1) :=\n    hf_cont.pow 2\n  have hle : \u2200 x \u2208 Ioc (0:\u211d) 1, 0 \u2264 (f x)^2 := by\n    intro x hx\n    exact sq_nonneg (f x)\n  have hlt : \u2203 c \u2208 Icc (0:\u211d) 1, 0 < (f c)^2 := by\n    refine \u27e81, h1_mem, ?_\u27e9\n    exact pow_pos h_pos_f1 2\n  exact intervalIntegral.integral_pos h01 hf_cont_sq hle hlt"
+    },
+    {
+      "id": "algebraic_identity",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 1,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "(C B - D A) - (A D - B C) = 2 (B C - A D).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- $(C B - D A) - (A D - B C) = 2 (B C - A D)$. -/)\n  (proof := /-- `ring` -/)]\nlemma algebraic_identity (A B C D : \u211d) : (C * B - D * A) - (A * D - B * C) = 2 * (B * C - A * D) := by\n  ring"
+    },
+    {
+      "id": "diff_formula",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For A = int_0^1 x f(x) dx, B = int_0^1 f(x) dx, C = int_0^1 x f(x)^2 dx, D = int_0^1 f(x)^2 dx, we have B C - A D = frac12 int_0^1 int_0^1 f(x) f(y) (x-y)(f(x)-f(y)) dx dy.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For $A = \\int_0^1 x f(x) dx$, $B = \\int_0^1 f(x) dx$, $C = \\int_0^1 x f(x)^2 dx$, $D = \\int_0^1 f(x)^2 dx$,\n  we have $B C - A D = \\frac12 \\int_0^1 \\int_0^1 f(x) f(y) (x-y)(f(x)-f(y)) \\,dx\\,dy$. -/)\n  (proof := /-- Using `expand_product` and `algebraic_identity`. -/)]\nlemma diff_formula (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) :\n    ((\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) - (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2)) =\n    (1/2 : \u211d) * \u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * f y * (x - y) * (f x - f y) := by\n  have hI : \u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * f y * (x - y) * (f x - f y) = 2 * ((\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) - (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2)) := by\n    calc\n      _ = ((\u222b x in (0:\u211d)..1, x * (f x)^2) * (\u222b x in (0:\u211d)..1, f x) - (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b x in (0:\u211d)..1, x * f x)) -\n          ((\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2) - (\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2)) := by\n        exact expand_product f hf_cont\n      _ = 2 * ((\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) - (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2)) := by\n        have h_alg := algebraic_identity (\u222b x in (0:\u211d)..1, x * f x) (\u222b x in (0:\u211d)..1, f x) (\u222b x in (0:\u211d)..1, x * (f x)^2) (\u222b x in (0:\u211d)..1, (f x)^2)\n        rw [h_alg]\n  calc\n    ((\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) - (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2)) = (1/2 : \u211d) * (2 * ((\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) - (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2))) := by ring\n    _ = (1/2 : \u211d) * \u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * f y * (x - y) * (f x - f y) := by rw [\u2190 hI]"
+    },
+    {
+      "id": "double_integral_f_sq_y",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "iint_{[0,1]^2} f(x) (f y)^2 (x-y) dx dy = (int_0^1 x f(x)) (int_0^1 f(y)^2) - (int_0^1 f) (int_0^1 y f(y)^2)",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $\\iint_{[0,1]^2} f(x) (f y)^2 (x-y) \\, dx \\, dy = (\\int_0^1 x f(x)) (\\int_0^1 f(y)^2) - (\\int_0^1 f) (\\int_0^1 y f(y)^2)$ -/)\n  (proof := /-- Use `inner_integral_f_sq_y` and integrability. -/)]\nlemma double_integral_f_sq_y (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) :\n    (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y)) = (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2) - (\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) := by\n  -- Helper: interval integrability of (f y)^2 and y*(f y)^2\n  have h_int_f2 : IntervalIntegrable (fun y : \u211d => (f y)^2) volume (0:\u211d) 1 := by\n    rw [intervalIntegrable_iff]\n    refine (integrable_f2 f hf_cont).mono_set ?_\n    intro y hy\n    rw [Set.mem_uIoc] at hy\n    rcases hy with (\u27e8hy1, hy2\u27e9 | h)\n    \u00b7 exact \u27e8by linarith, hy2\u27e9\n    \u00b7 exfalso; linarith\n  have h_int_xf2 : IntervalIntegrable (fun y : \u211d => y * (f y)^2) volume (0:\u211d) 1 := by\n    rw [intervalIntegrable_iff]\n    refine (integrable_xf2 f hf_cont).mono_set ?_\n    intro y hy\n    rw [Set.mem_uIoc] at hy\n    rcases hy with (\u27e8hy1, hy2\u27e9 | h)\n    \u00b7 exact \u27e8by linarith, hy2\u27e9\n    \u00b7 exfalso; linarith\n  -- Inner integral identity\n  have h_inner_integral (x : \u211d) : (\u222b y in (0:\u211d)..1, (f y)^2 * (x - y)) = x * (\u222b y in (0:\u211d)..1, (f y)^2) - (\u222b y in (0:\u211d)..1, y * (f y)^2) := by\n    calc\n      (\u222b y in (0:\u211d)..1, (f y)^2 * (x - y)) = (\u222b y in (0:\u211d)..1, (x * (f y)^2 - y * (f y)^2)) := by\n        refine intervalIntegral.integral_congr (fun y hy => ?_)\n        ring\n      _ = (\u222b y in (0:\u211d)..1, x * (f y)^2) - (\u222b y in (0:\u211d)..1, y * (f y)^2) := by\n        rw [intervalIntegral.integral_sub]\n        \u00b7 exact h_int_f2.const_mul x\n        \u00b7 exact h_int_xf2\n      _ = x * (\u222b y in (0:\u211d)..1, (f y)^2) - (\u222b y in (0:\u211d)..1, y * (f y)^2) := by\n        rw [intervalIntegral.integral_const_mul]\n  -- Interval integrability of f and x*f\n  have h_int_f_icc : IntegrableOn f (Icc (0:\u211d) 1) := hf_cont.integrableOn_Icc\n  have h_int_xf_icc : IntegrableOn (fun x : \u211d => x * f x) (Icc (0:\u211d) 1) := by\n    have h_cont : ContinuousOn (fun x : \u211d => x * f x) (Icc (0:\u211d) 1) :=\n      (continuous_id.continuousOn).mul hf_cont\n    exact h_cont.integrableOn_Icc\n  have h_int_f : IntervalIntegrable f volume (0:\u211d) 1 := by\n    rw [intervalIntegrable_iff]\n    refine h_int_f_icc.mono_set ?_\n    intro y hy\n    rw [Set.mem_uIoc] at hy\n    rcases hy with (\u27e8hy1, hy2\u27e9 | h)\n    \u00b7 exact \u27e8by linarith, hy2\u27e9\n    \u00b7 exfalso; linarith\n  have h_int_xf : IntervalIntegrable (fun x : \u211d => x * f x) volume (0:\u211d) 1 := by\n    rw [intervalIntegrable_iff]\n    refine h_int_xf_icc.mono_set ?_\n    intro y hy\n    rw [Set.mem_uIoc] at hy\n    rcases hy with (\u27e8hy1, hy2\u27e9 | h)\n    \u00b7 exact \u27e8by linarith, hy2\u27e9\n    \u00b7 exfalso; linarith\n  calc\n    (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y))\n        = (\u222b x in (0:\u211d)..1, f x * (\u222b y in (0:\u211d)..1, (f y)^2 * (x - y))) := by\n          refine intervalIntegral.integral_congr (fun x hx => ?_)\n          have h_eq : (fun y : \u211d => f x * (f y)^2 * (x - y)) = (fun y : \u211d => f x * ((f y)^2 * (x - y))) := by\n            ext y; ring\n          rw [h_eq, intervalIntegral.integral_const_mul]\n    _ = (\u222b x in (0:\u211d)..1, f x * (x * (\u222b y in (0:\u211d)..1, (f y)^2) - (\u222b y in (0:\u211d)..1, y * (f y)^2))) := by\n      refine intervalIntegral.integral_congr (fun x hx => ?_)\n      rw [h_inner_integral x]\n    _ = (\u222b x in (0:\u211d)..1, (x * f x) * (\u222b y in (0:\u211d)..1, (f y)^2) - f x * (\u222b y in (0:\u211d)..1, y * (f y)^2)) := by\n      refine intervalIntegral.integral_congr (fun x hx => ?_)\n      ring\n    _ = (\u222b x in (0:\u211d)..1, (x * f x) * (\u222b y in (0:\u211d)..1, (f y)^2)) - (\u222b x in (0:\u211d)..1, f x * (\u222b y in (0:\u211d)..1, y * (f y)^2)) := by\n      rw [intervalIntegral.integral_sub]\n      \u00b7 exact h_int_xf.mul_const (\u222b y in (0:\u211d)..1, (f y)^2)\n      \u00b7 exact h_int_f.mul_const (\u222b y in (0:\u211d)..1, y * (f y)^2)\n    _ = (\u222b x in (0:\u211d)..1, x * f x) * (\u222b y in (0:\u211d)..1, (f y)^2) - (\u222b x in (0:\u211d)..1, f x) * (\u222b y in (0:\u211d)..1, y * (f y)^2) := by\n      have h1 : (\u222b x in (0:\u211d)..1, (x * f x) * (\u222b y in (0:\u211d)..1, (f y)^2)) = (\u222b x in (0:\u211d)..1, x * f x) * (\u222b y in (0:\u211d)..1, (f y)^2) := by\n        rw [intervalIntegral.integral_mul_const]\n      have h2 : (\u222b x in (0:\u211d)..1, f x * (\u222b y in (0:\u211d)..1, y * (f y)^2)) = (\u222b x in (0:\u211d)..1, f x) * (\u222b y in (0:\u211d)..1, y * (f y)^2) := by\n        rw [intervalIntegral.integral_mul_const]\n      rw [h1, h2]\n    _ = (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2) - (\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) := by\n      simp"
+    },
+    {
+      "id": "double_integral_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the same hypotheses, the double integral is strictly positive.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Under the same hypotheses, the double integral is strictly positive. -/)\n  (proof := /-- Use `setIntegral_pos_iff_support_of_nonneg_ae` with `g_nonneg`, `integrable_g`, `pos_measure_support`. -/)]\nlemma double_integral_pos (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1))\n    (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x) (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) :\n    0 < \u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * f y * (x - y) * (f x - f y) := by\n  let s := Icc (0 : \u211d) 1\n  let g := fun (z : \u211d \u00d7 \u211d) => f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2)\n  have hg_nonneg : \u2200 z \u2208 s \u00d7\u02e2 s, 0 \u2264 g z := by\n    intro z hz\n    rcases hz with \u27e8hx, hy\u27e9\n    exact g_nonneg f hf_mono hf_nonneg z.1 z.2 hx hy\n  have hmeas_s : MeasurableSet s := measurableSet_Icc\n  have hmeas_ss : MeasurableSet (s \u00d7\u02e2 s) := hmeas_s.prod hmeas_s\n  have hg_nonneg_ae : 0 \u2264\u1d50[(volume.prod volume).restrict (s \u00d7\u02e2 s)] g := by\n    refine MeasureTheory.ae_restrict_of_forall_mem hmeas_ss hg_nonneg\n  have hfi : IntegrableOn g (s \u00d7\u02e2 s) (volume.prod volume) := by\n    simpa [s] using integrable_g f hf_cont\n  have hpos_support : 0 < (volume.prod volume) (Function.support g \u2229 (s \u00d7\u02e2 s)) := by\n    have h := pos_measure_support f hf_cont hf_mono hf_nonneg\n    rw [MeasureTheory.Measure.volume_eq_prod] at h\n    simpa [g, s] using h\n  have hpos_set : 0 < \u222b z in s \u00d7\u02e2 s, g z \u2202(volume.prod volume) :=\n    ((MeasureTheory.setIntegral_pos_iff_support_of_nonneg_ae hg_nonneg_ae hfi).mpr hpos_support)\n  have h_prod_eq_iterated : \u222b z in s \u00d7\u02e2 s, g z \u2202(volume.prod volume) = \u222b x in s, \u222b y in s, g (x, y) \u2202volume \u2202volume :=\n    MeasureTheory.setIntegral_prod g hfi\n  have h01 : (0 : \u211d) \u2264 1 := by norm_num\n  have integral_Icc_eq_intervalIntegral : \u2200 (h : \u211d \u2192 \u211d), \u222b x in Icc (0 : \u211d) 1, h x = \u222b x in (0 : \u211d)..1, h x := by\n    intro h\n    calc\n      \u222b x in Icc (0 : \u211d) 1, h x = \u222b x in Ioc (0 : \u211d) 1, h x := by\n        rw [integral_Icc_eq_integral_Ioc]\n      _ = \u222b x in (0 : \u211d)..1, h x := by\n        rw [intervalIntegral.intervalIntegral_eq_integral_uIoc, if_pos h01, one_smul]\n        simp [h01]\n  have h_inner : (fun x => \u222b y in s, g (x, y)) = (fun x => \u222b y in (0 : \u211d)..1, g (x, y)) := by\n    ext x\n    exact integral_Icc_eq_intervalIntegral (\u03bb y => g (x, y))\n  have h_total : \u222b x in s, \u222b y in s, g (x, y) = \u222b x in (0 : \u211d)..1, \u222b y in (0 : \u211d)..1, g (x, y) := by\n    calc\n      \u222b x in s, \u222b y in s, g (x, y) = \u222b x in (0 : \u211d)..1, \u222b y in s, g (x, y) := by\n        rw [integral_Icc_eq_intervalIntegral (\u03bb x => \u222b y in s, g (x, y))]\n      _ = \u222b x in (0 : \u211d)..1, \u222b y in (0 : \u211d)..1, g (x, y) := by\n        rw [h_inner]\n  have hpos_iterated : 0 < \u222b x in (0 : \u211d)..1, \u222b y in (0 : \u211d)..1, g (x, y) := by\n    calc\n      0 < \u222b z in s \u00d7\u02e2 s, g z \u2202(volume.prod volume) := hpos_set\n      _ = \u222b x in s, \u222b y in s, g (x, y) \u2202volume \u2202volume := h_prod_eq_iterated\n      _ = \u222b x in (0 : \u211d)..1, \u222b y in (0 : \u211d)..1, g (x, y) := h_total\n  exact hpos_iterated"
+    },
+    {
+      "id": "double_integral_sq_f_y",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "iint_{[0,1]^2} (f x)^2 f(y) (x-y) dx dy = (int_0^1 x f(x)^2) (int_0^1 f) - (int_0^1 f(x)^2) (int_0^1 y f(y))",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $\\iint_{[0,1]^2} (f x)^2 f(y) (x-y) \\, dx \\, dy = (\\int_0^1 x f(x)^2) (\\int_0^1 f) - (\\int_0^1 f(x)^2) (\\int_0^1 y f(y))$ -/)\n  (proof := /-- Use `inner_integral_sq_f_y` and integrability. -/)]\nlemma double_integral_sq_f_y (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) :\n    (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y)) = (\u222b x in (0:\u211d)..1, x * (f x)^2) * (\u222b x in (0:\u211d)..1, f x) - (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b x in (0:\u211d)..1, x * f x) := by\n  have h_inner_eq : \u2200 x, (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y)) = (f x)^2 * (x * (\u222b y in (0:\u211d)..1, f y) - (\u222b y in (0:\u211d)..1, y * f y)) :=\n    fun x => inner_integral_sq_f_y f hf_cont x\n  have hIcc_eq : uIcc (0:\u211d) 1 = Icc (0:\u211d) 1 := by\n    simp [uIcc, min_eq_left (by norm_num : (0:\u211d) \u2264 1), max_eq_right (by norm_num : (0:\u211d) \u2264 1)]\n  have h_int_xf2_on_uicc : IntegrableOn (fun x : \u211d => x * (f x)^2) (uIcc (0:\u211d) 1) volume := by\n    rw [hIcc_eq]\n    exact integrable_xf2 f hf_cont\n  have h_int_f2_on_uicc : IntegrableOn (fun x : \u211d => (f x)^2) (uIcc (0:\u211d) 1) volume := by\n    rw [hIcc_eq]\n    exact integrable_f2 f hf_cont\n  have h_int_xf2 : IntervalIntegrable (fun x : \u211d => x * (f x)^2) volume (0:\u211d) 1 :=\n    h_int_xf2_on_uicc.intervalIntegrable\n  have h_int_f2 : IntervalIntegrable (fun x : \u211d => (f x)^2) volume (0:\u211d) 1 :=\n    h_int_f2_on_uicc.intervalIntegrable\n  calc\n    (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y))\n        = (\u222b x in (0:\u211d)..1, (f x)^2 * (x * (\u222b y in (0:\u211d)..1, f y) - (\u222b y in (0:\u211d)..1, y * f y))) :=\n      intervalIntegral.integral_congr (fun x hx => h_inner_eq x)\n    _ = (\u222b x in (0:\u211d)..1, ((f x)^2 * x * (\u222b y in (0:\u211d)..1, f y) - (f x)^2 * (\u222b y in (0:\u211d)..1, y * f y))) := by\n      refine intervalIntegral.integral_congr (fun x hx => ?_)\n      ring\n    _ = (\u222b x in (0:\u211d)..1, ((f x)^2 * x * (\u222b y in (0:\u211d)..1, f y))) - (\u222b x in (0:\u211d)..1, ((f x)^2 * (\u222b y in (0:\u211d)..1, y * f y))) := by\n      have hsub : (\u222b x in (0:\u211d)..1, ((f x)^2 * x * (\u222b y in (0:\u211d)..1, f y) - (f x)^2 * (\u222b y in (0:\u211d)..1, y * f y))) =\n          (\u222b x in (0:\u211d)..1, ((f x)^2 * x * (\u222b y in (0:\u211d)..1, f y))) - (\u222b x in (0:\u211d)..1, ((f x)^2 * (\u222b y in (0:\u211d)..1, y * f y))) := by\n        apply intervalIntegral.integral_sub\n        \u00b7 simpa [mul_comm, mul_left_comm, mul_assoc] using h_int_xf2.const_mul (\u222b y in (0:\u211d)..1, f y)\n        \u00b7 simpa [mul_comm, mul_left_comm, mul_assoc] using h_int_f2.const_mul (\u222b y in (0:\u211d)..1, y * f y)\n      rw [hsub]\n    _ = (\u222b x in (0:\u211d)..1, x * (f x)^2) * (\u222b x in (0:\u211d)..1, f x) - (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b x in (0:\u211d)..1, x * f x) := by\n      have h1 : (\u222b x in (0:\u211d)..1, (f x)^2 * x * (\u222b y in (0:\u211d)..1, f y)) = (\u222b x in (0:\u211d)..1, x * (f x)^2) * (\u222b x in (0:\u211d)..1, f x) := by\n        calc\n          (\u222b x in (0:\u211d)..1, (f x)^2 * x * (\u222b y in (0:\u211d)..1, f y))\n              = (\u222b x in (0:\u211d)..1, (f x)^2 * x) * (\u222b y in (0:\u211d)..1, f y) := by\n                rw [intervalIntegral.integral_mul_const]\n          _ = (\u222b x in (0:\u211d)..1, x * (f x)^2) * (\u222b x in (0:\u211d)..1, f x) := by\n            have h_eq : (\u222b x in (0:\u211d)..1, (f x)^2 * x) = (\u222b x in (0:\u211d)..1, x * (f x)^2) := by\n              refine intervalIntegral.integral_congr (fun x hx => ?_)\n              ring\n            rw [h_eq]\n      have h2 : (\u222b x in (0:\u211d)..1, (f x)^2 * (\u222b y in (0:\u211d)..1, y * f y)) = (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b x in (0:\u211d)..1, x * f x) := by\n        calc\n          (\u222b x in (0:\u211d)..1, (f x)^2 * (\u222b y in (0:\u211d)..1, y * f y))\n              = (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b y in (0:\u211d)..1, y * f y) := by\n                rw [intervalIntegral.integral_mul_const]\n          _ = (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b x in (0:\u211d)..1, x * f x) := by\n            have hA_eq : (\u222b y in (0:\u211d)..1, y * f y) = (\u222b x in (0:\u211d)..1, x * f x) := by\n              refine intervalIntegral.integral_congr (fun x hx => ?_)\n              rfl\n            rw [hA_eq]\n      rw [h1, h2]"
+    },
+    {
+      "id": "expand_product",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "iint f(x)f(y)(x-y)(f(x)-f(y)) = (C B - D A) - (A D - B C).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- $\\iint f(x)f(y)(x-y)(f(x)-f(y)) = (C B - D A) - (A D - B C)$. -/)\n  (proof := /-- Expand the integrand and apply the two double integral lemmas. -/)]\nlemma expand_product (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) :\n    (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * f y * (x - y) * (f x - f y)) =\n    ((\u222b x in (0:\u211d)..1, x * (f x)^2) * (\u222b x in (0:\u211d)..1, f x) - (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b x in (0:\u211d)..1, x * f x)) -\n    ((\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2) - (\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2)) := by\n  have h1 := double_integral_sq_f_y f hf_cont\n  have h2 := double_integral_f_sq_y f hf_cont\n  -- define shorthand for the single integrals\n  let A := (\u222b x in (0:\u211d)..1, x * (f x)^2)\n  let B := (\u222b x in (0:\u211d)..1, f x)\n  let C := (\u222b x in (0:\u211d)..1, (f x)^2)\n  let D := (\u222b x in (0:\u211d)..1, x * f x)\n  have h_int_f : IntervalIntegrable f volume (0:\u211d) 1 :=\n    hf_cont.intervalIntegrable_of_Icc (by norm_num)\n  have h_int_xf : IntervalIntegrable (\u03bb y => y * f y) volume (0:\u211d) 1 := by\n    refine (ContinuousOn.intervalIntegrable_of_Icc (by norm_num) ?_)\n    refine (ContinuousOn.mul continuousOn_id hf_cont)\n  have h_int_f_sq : IntervalIntegrable (\u03bb y => (f y)^2) volume (0:\u211d) 1 :=\n    (hf_cont.pow 2).intervalIntegrable_of_Icc (by norm_num)\n  have h_int_yf_sq : IntervalIntegrable (\u03bb y => y * (f y)^2) volume (0:\u211d) 1 := by\n    refine (ContinuousOn.intervalIntegrable_of_Icc (by norm_num) ?_)\n    refine (ContinuousOn.mul continuousOn_id (hf_cont.pow 2))\n  have h_int_linear (x : \u211d) : (\u222b y in (0:\u211d)..1, f y * (x - y)) = x * B - D := by\n    calc\n      (\u222b y in (0:\u211d)..1, f y * (x - y)) = (\u222b y in (0:\u211d)..1, (x * f y - y * f y)) := by\n        refine intervalIntegral.integral_congr (fun y hy => ?_)\n        ring\n      _ = (\u222b y in (0:\u211d)..1, x * f y) - (\u222b y in (0:\u211d)..1, y * f y) := by\n        rw [intervalIntegral.integral_sub]\n        \u00b7 exact (h_int_f.const_mul x)\n        \u00b7 exact h_int_xf\n      _ = x * (\u222b y in (0:\u211d)..1, f y) - (\u222b y in (0:\u211d)..1, y * f y) := by\n        rw [intervalIntegral.integral_const_mul x (\u03bb y => f y)]\n      _ = x * B - D := by\n        simp [B, D]\n  have h_int_linear2 (x : \u211d) : (\u222b y in (0:\u211d)..1, (f y)^2 * (x - y)) = x * C - A := by\n    calc\n      (\u222b y in (0:\u211d)..1, (f y)^2 * (x - y)) = (\u222b y in (0:\u211d)..1, (x * (f y)^2 - y * (f y)^2)) := by\n        refine intervalIntegral.integral_congr (fun y hy => ?_)\n        ring\n      _ = (\u222b y in (0:\u211d)..1, x * (f y)^2) - (\u222b y in (0:\u211d)..1, y * (f y)^2) := by\n        rw [intervalIntegral.integral_sub]\n        \u00b7 exact (h_int_f_sq.const_mul x)\n        \u00b7 exact h_int_yf_sq\n      _ = x * (\u222b y in (0:\u211d)..1, (f y)^2) - (\u222b y in (0:\u211d)..1, y * (f y)^2) := by\n        rw [intervalIntegral.integral_const_mul x (\u03bb y => (f y)^2)]\n      _ = x * C - A := by\n        simp [A, C]\n  have h_int_inner1 (x : \u211d) : IntervalIntegrable (\u03bb y => (f x)^2 * f y * (x - y)) volume (0:\u211d) 1 := by\n    refine (ContinuousOn.intervalIntegrable_of_Icc (by norm_num) ?_)\n    have hcont : ContinuousOn (\u03bb y => (f x)^2 * f y * (x - y)) (Icc (0:\u211d) 1) := by\n      refine (ContinuousOn.mul ?_ ?_)\n      \u00b7 -- (f x)^2 * f y\n        refine (ContinuousOn.mul ?_ hf_cont)\n        exact continuousOn_const\n      \u00b7 -- x - y\n        refine (continuousOn_const.sub continuousOn_id)\n    exact hcont\n  have h_int_inner2 (x : \u211d) : IntervalIntegrable (\u03bb y => f x * (f y)^2 * (x - y)) volume (0:\u211d) 1 := by\n    refine (ContinuousOn.intervalIntegrable_of_Icc (by norm_num) ?_)\n    have hcont : ContinuousOn (\u03bb y => f x * (f y)^2 * (x - y)) (Icc (0:\u211d) 1) := by\n      refine (ContinuousOn.mul ?_ ?_)\n      \u00b7 -- f x * (f y)^2\n        refine (ContinuousOn.mul (continuousOn_const) ?_)\n        -- (f y)^2\n        exact hf_cont.pow 2\n      \u00b7 -- x - y\n        refine (continuousOn_const.sub continuousOn_id)\n    exact hcont\n  have h_cont_F1 : ContinuousOn (\u03bb x => (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y))) (Icc (0:\u211d) 1) := by\n    have h_cont_sq : ContinuousOn (\u03bb x => (f x)^2) (Icc (0:\u211d) 1) :=\n      hf_cont.pow 2\n    have h_cont_linear : ContinuousOn (\u03bb x => x * B - D) (Icc (0:\u211d) 1) := by\n      refine (ContinuousOn.sub (ContinuousOn.mul continuousOn_id continuousOn_const) continuousOn_const)\n    have h_cont_prod : ContinuousOn (\u03bb x => (f x)^2 * (x * B - D)) (Icc (0:\u211d) 1) :=\n      h_cont_sq.mul h_cont_linear\n    have h_eq : (\u03bb x => (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y))) = (\u03bb x => (f x)^2 * (x * B - D)) := by\n      ext x\n      calc\n        (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y)) = (\u222b y in (0:\u211d)..1, (f x)^2 * (f y * (x - y))) := by\n          refine intervalIntegral.integral_congr (fun y hy => ?_)\n          ring\n        _ = (f x)^2 * (\u222b y in (0:\u211d)..1, f y * (x - y)) := by\n          rw [intervalIntegral.integral_const_mul ((f x)^2) (\u03bb y => f y * (x - y))]\n        _ = (f x)^2 * (x * B - D) := by rw [h_int_linear x]\n    rw [h_eq]\n    exact h_cont_prod\n  have h_int_outer1 : IntervalIntegrable (\u03bb x => (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y))) volume (0:\u211d) 1 :=\n    h_cont_F1.intervalIntegrable_of_Icc (by norm_num)\n  have h_cont_F2 : ContinuousOn (\u03bb x => (\u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y))) (Icc (0:\u211d) 1) := by\n    have h_cont_f : ContinuousOn f (Icc (0:\u211d) 1) := hf_cont\n    have h_cont_linear2 : ContinuousOn (\u03bb x => x * C - A) (Icc (0:\u211d) 1) := by\n      refine (ContinuousOn.sub (ContinuousOn.mul continuousOn_id continuousOn_const) continuousOn_const)\n    have h_cont_prod2 : ContinuousOn (\u03bb x => f x * (x * C - A)) (Icc (0:\u211d) 1) :=\n      h_cont_f.mul h_cont_linear2\n    have h_eq2 : (\u03bb x => (\u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y))) = (\u03bb x => f x * (x * C - A)) := by\n      ext x\n      calc\n        (\u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y)) = (\u222b y in (0:\u211d)..1, f x * ((f y)^2 * (x - y))) := by\n          refine intervalIntegral.integral_congr (fun y hy => ?_)\n          ring\n        _ = f x * (\u222b y in (0:\u211d)..1, (f y)^2 * (x - y)) := by\n          rw [intervalIntegral.integral_const_mul (f x) (\u03bb y => (f y)^2 * (x - y))]\n        _ = f x * (x * C - A) := by rw [h_int_linear2 x]\n    rw [h_eq2]\n    exact h_cont_prod2\n  have h_int_outer2 : IntervalIntegrable (\u03bb x => (\u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y))) volume (0:\u211d) 1 :=\n    h_cont_F2.intervalIntegrable_of_Icc (by norm_num)\n  have h_integral_sub_double : (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, ((f x)^2 * f y * (x - y) - f x * (f y)^2 * (x - y))) =\n      (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y)) - (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y)) := by\n    calc\n      (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, ((f x)^2 * f y * (x - y) - f x * (f y)^2 * (x - y)))\n          = (\u222b x in (0:\u211d)..1, ((\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y)) - (\u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y)))) := by\n        refine intervalIntegral.integral_congr (fun x hx => ?_)\n        rw [intervalIntegral.integral_sub (h_int_inner1 x) (h_int_inner2 x)]\n      _ = (\u222b x in (0:\u211d)..1, (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y))) - (\u222b x in (0:\u211d)..1, (\u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y))) := by\n        rw [intervalIntegral.integral_sub h_int_outer1 h_int_outer2]\n  calc\n    (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * f y * (x - y) * (f x - f y))\n        = (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, ((f x)^2 * f y * (x - y) - f x * (f y)^2 * (x - y))) := by\n      refine (intervalIntegral.integral_congr (fun x hx => ?_))\n      refine (intervalIntegral.integral_congr (fun y hy => ?_))\n      ring\n    _ = (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y)) - (\u222b x in (0:\u211d)..1, \u222b y in (0:\u211d)..1, f x * (f y)^2 * (x - y)) := by\n      rw [h_integral_sub_double]\n    _ = ((\u222b x in (0:\u211d)..1, x * (f x)^2) * (\u222b x in (0:\u211d)..1, f x) - (\u222b x in (0:\u211d)..1, (f x)^2) * (\u222b x in (0:\u211d)..1, x * f x)) -\n        ((\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2) - (\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2)) := by\n      rw [h1, h2]"
+    },
+    {
+      "id": "f_pos_of_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If x \u2208 [0,1] and x \u2260 0, then f(x) > 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- If $x \\in [0,1]$ and $x \\neq 0$, then $f(x) > 0$. -/)\n  (proof := /-- Since $f$ is strictly increasing and $f(0) \\ge 0$, we have $f(x) > f(0) \\ge 0$. -/)]\nlemma f_pos_of_pos (f : \u211d \u2192 \u211d) (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x)\n    (x : \u211d) (hx : x \u2208 Icc (0 : \u211d) 1) (hx0 : x \u2260 0) : 0 < f x := by\n  have h0mem : (0 : \u211d) \u2208 Icc (0 : \u211d) 1 := \u27e8by norm_num, by norm_num\u27e9\n  have hpos : 0 < x := hx.1.lt_of_ne hx0.symm\n  have hfx_pos : f 0 < f x := hf_mono h0mem hx hpos\n  have hf0_nonneg : 0 \u2264 f 0 := hf_nonneg 0 h0mem\n  exact hf0_nonneg.trans_lt hfx_pos"
+    },
+    {
+      "id": "g_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For x,y \u2208 [0,1], f(x) f(y) (x-y)(f(x)-f(y)) \u2265 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $x,y \\in [0,1]$, $f(x) f(y) (x-y)(f(x)-f(y)) \\ge 0$. -/)\n  (proof := /-- Use monotonicity and nonnegativity. -/)]\nlemma g_nonneg (f : \u211d \u2192 \u211d) (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x)\n    (x y : \u211d) (hx : x \u2208 Icc (0 : \u211d) 1) (hy : y \u2208 Icc (0 : \u211d) 1) : 0 \u2264 f x * f y * (x - y) * (f x - f y) := by\n  have hfx_nonneg : 0 \u2264 f x := hf_nonneg x hx\n  have hfy_nonneg : 0 \u2264 f y := hf_nonneg y hy\n  have hprod_nonneg : 0 \u2264 f x * f y := mul_nonneg hfx_nonneg hfy_nonneg\n  have hsign_nonneg : 0 \u2264 (x - y) * (f x - f y) := by\n    by_cases hxy : x \u2264 y\n    \u00b7 rcases lt_or_eq_of_le hxy with (hlt | heq)\n      \u00b7 have hflt : f x < f y := hf_mono hx hy hlt\n        have hdiff : (x - y) * (f x - f y) \u2265 0 := by\n          nlinarith\n        nlinarith\n      \u00b7 subst heq\n        simp\n    \u00b7 have hyx : y \u2264 x := by linarith\n      rcases lt_or_eq_of_le hyx with (hlt | heq)\n      \u00b7 have hflt : f y < f x := hf_mono hy hx hlt\n        have hdiff : (x - y) * (f x - f y) \u2265 0 := by\n          nlinarith\n        nlinarith\n      \u00b7 subst heq\n        simp\n  nlinarith"
+    },
+    {
+      "id": "inner_integral_sq_f_y",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any x \u2208 \u211d, int_0^1 (f x)^2 f(y) (x - y) dy = (f x)^2 (x B - A), where B = int_0^1 f and A = int_0^1 y f(y) dy.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any $x \\in \\mathbb{R}$, $\\int_0^1 (f x)^2 f(y) (x - y) \\, dy = (f x)^2 (x B - A)$,\n   where $B = \\int_0^1 f$ and $A = \\int_0^1 y f(y) dy$. -/)\n  (proof := /-- Factor $(f x)^2$, then use linearity and integrability of $f$ and $y f(y)$. -/)]\nlemma inner_integral_sq_f_y (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) (x : \u211d) :\n    (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y)) = (f x)^2 * (x * (\u222b y in (0:\u211d)..1, f y) - (\u222b y in (0:\u211d)..1, y * f y)) := by\n  have h0le1 : (0:\u211d) \u2264 1 := by norm_num\n  have hf_int : IntervalIntegrable f volume (0:\u211d) 1 :=\n    hf_cont.intervalIntegrable_of_Icc h0le1\n  have hxf_int : IntervalIntegrable (fun y : \u211d => x * f y) volume (0:\u211d) 1 :=\n    hf_int.const_mul x\n  have hyf_int : IntervalIntegrable (fun y : \u211d => y * f y) volume (0:\u211d) 1 := by\n    have h_int_on : IntegrableOn (fun x : \u211d => x * f x) (Icc (0 : \u211d) 1) := integrable_xf f hf_cont\n    have h_uicc_eq : uIcc (0:\u211d) 1 = Icc (0:\u211d) 1 := Set.uIcc_of_le h0le1\n    have h_int_uicc : IntegrableOn (fun x : \u211d => x * f x) (uIcc (0:\u211d) 1) := by\n      simpa [h_uicc_eq] using h_int_on\n    exact h_int_uicc.intervalIntegrable\n  calc\n    (\u222b y in (0:\u211d)..1, (f x)^2 * f y * (x - y))\n        = (\u222b y in (0:\u211d)..1, (f x)^2 * (f y * (x - y))) := by\n      refine intervalIntegral.integral_congr ?_\n      intro y hy\n      ring\n    _ = (f x)^2 * (\u222b y in (0:\u211d)..1, f y * (x - y)) := by\n      rw [intervalIntegral.integral_const_mul]\n    _ = (f x)^2 * (\u222b y in (0:\u211d)..1, (x * f y - y * f y)) := by\n      refine congrArg (fun t => (f x)^2 * t) ?_\n      refine intervalIntegral.integral_congr ?_\n      intro y hy\n      ring\n    _ = (f x)^2 * ((\u222b y in (0:\u211d)..1, x * f y) - (\u222b y in (0:\u211d)..1, y * f y)) := by\n      rw [intervalIntegral.integral_sub hxf_int hyf_int]\n    _ = (f x)^2 * (x * (\u222b y in (0:\u211d)..1, f y) - (\u222b y in (0:\u211d)..1, y * f y)) := by\n      rw [intervalIntegral.integral_const_mul]"
+    },
+    {
+      "id": "integrable_f",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "f is integrable on [0,1].",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $f$ is integrable on $[0,1]$. -/)\n  (proof := /-- $f$ is continuous on $[0,1]$ by `hf_cont`, hence integrable on $[0,1]$ by `ContinuousOn.integrableOn_Icc`. -/)]\nlemma integrable_f (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) : IntegrableOn f (Icc (0 : \u211d) 1) := by\n  exact hf_cont.integrableOn_Icc"
+    },
+    {
+      "id": "integrable_f2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "f(x)^2 is integrable on [0,1].",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- $f(x)^2$ is integrable on $[0,1]$. -/)\n  (proof := /-- $f$ is continuous, hence $f^2$ is continuous, hence integrable. -/)]\nlemma integrable_f2 (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) : IntegrableOn (fun x : \u211d => (f x)^2) (Icc (0 : \u211d) 1) := by\n  have hsq_cont : ContinuousOn (fun x : \u211d => (f x)^2) (Icc (0 : \u211d) 1) :=\n    hf_cont.pow 2\n  exact hsq_cont.integrableOn_Icc"
+    },
+    {
+      "id": "integrable_g",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The function g(x,y) = f(x) f(y) (x-y)(f(x)-f(y)) is integrable on [0,1]\u00d7[0,1].",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- The function $g(x,y) = f(x) f(y) (x-y)(f(x)-f(y))$ is integrable on $[0,1]\\times[0,1]$. -/)\n  (proof := /-- Expand as a sum of products of integrable functions. -/)]\nlemma integrable_g (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) :\n    IntegrableOn (fun (z : \u211d \u00d7 \u211d) => f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2)) ((Icc (0 : \u211d) 1) \u00d7\u02e2 (Icc (0 : \u211d) 1)) (volume.prod volume) := by\n  have hf_int : IntegrableOn f (Icc (0:\u211d) 1) := integrable_f f hf_cont\n  have hxf_int : IntegrableOn (fun x : \u211d => x * f x) (Icc (0:\u211d) 1) := integrable_xf f hf_cont\n  have hf2_int : IntegrableOn (fun x : \u211d => (f x)^2) (Icc (0:\u211d) 1) := integrable_f2 f hf_cont\n  have hxf2_int : IntegrableOn (fun x : \u211d => x * (f x)^2) (Icc (0:\u211d) 1) := integrable_xf2 f hf_cont\n  let \u03bc := volume.restrict (Icc (0 : \u211d) 1)\n  have hf_int' : Integrable f \u03bc := hf_int\n  have hxf_int' : Integrable (fun x : \u211d => x * f x) \u03bc := hxf_int\n  have hf2_int' : Integrable (fun x : \u211d => (f x)^2) \u03bc := hf2_int\n  have hxf2_int' : Integrable (fun x : \u211d => x * (f x)^2) \u03bc := hxf2_int\n  have h_prod1 : Integrable (fun (z : \u211d \u00d7 \u211d) => (z.1 * (f z.1)^2) * f z.2) (\u03bc.prod \u03bc) :=\n    Integrable.mul_prod hxf2_int' hf_int'\n  have h_prod2 : Integrable (fun (z : \u211d \u00d7 \u211d) => (f z.1)^2 * (z.2 * f z.2)) (\u03bc.prod \u03bc) :=\n    Integrable.mul_prod hf2_int' hxf_int'\n  have h_prod3 : Integrable (fun (z : \u211d \u00d7 \u211d) => (z.1 * f z.1) * (f z.2)^2) (\u03bc.prod \u03bc) :=\n    Integrable.mul_prod hxf_int' hf2_int'\n  have h_prod4 : Integrable (fun (z : \u211d \u00d7 \u211d) => f z.1 * (z.2 * (f z.2)^2)) (\u03bc.prod \u03bc) :=\n    Integrable.mul_prod hf_int' hxf2_int'\n  have h_total : Integrable (fun (z : \u211d \u00d7 \u211d) => (z.1 * (f z.1)^2) * f z.2 - (f z.1)^2 * (z.2 * f z.2) - (z.1 * f z.1) * (f z.2)^2 + f z.1 * (z.2 * (f z.2)^2)) (\u03bc.prod \u03bc) := by\n    have h_total' : Integrable (fun z : \u211d \u00d7 \u211d => ((z.1 * (f z.1)^2) * f z.2 - (f z.1)^2 * (z.2 * f z.2) - (z.1 * f z.1) * (f z.2)^2) + f z.1 * (z.2 * (f z.2)^2)) (\u03bc.prod \u03bc) :=\n      ((h_prod1.sub h_prod2).sub h_prod3).add h_prod4\n    simpa [add_assoc] using h_total'\n  have h_expand : (fun (z : \u211d \u00d7 \u211d) => f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2)) =\n      (fun (z : \u211d \u00d7 \u211d) => (z.1 * (f z.1)^2) * f z.2 - (f z.1)^2 * (z.2 * f z.2) - (z.1 * f z.1) * (f z.2)^2 + f z.1 * (z.2 * (f z.2)^2)) := by\n    ext \u27e8x, y\u27e9\n    ring\n  rw [IntegrableOn, \u2190 Measure.prod_restrict (Icc (0 : \u211d) 1) (Icc (0 : \u211d) 1)]\n  rw [h_expand]\n  exact h_total"
+    },
+    {
+      "id": "integrable_xf",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "x f(x) is integrable on [0,1].",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- $x f(x)$ is integrable on $[0,1]$. -/)\n  (proof := /-- $x$ and $f(x)$ are both integrable on $[0,1]$, and their product is integrable. -/)]\nlemma integrable_xf (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) : IntegrableOn (fun x : \u211d => x * f x) (Icc (0 : \u211d) 1) := by\n  have hx_cont : ContinuousOn (fun x : \u211d => x) (Icc (0 : \u211d) 1) := continuous_id.continuousOn\n  have hprod_cont : ContinuousOn (fun x => x * f x) (Icc (0 : \u211d) 1) := hx_cont.mul hf_cont\n  exact hprod_cont.integrableOn_Icc"
+    },
+    {
+      "id": "integrable_xf2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.39,
+      "proof_length": 8,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "x f(x)^2 is integrable on [0,1].",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- $x f(x)^2$ is integrable on $[0,1]$. -/)\n  (proof := /-- $x$ and $f(x)^2$ are integrable, product is integrable. -/)]\nlemma integrable_xf2 (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1)) : IntegrableOn (fun x : \u211d => x * (f x)^2) (Icc (0 : \u211d) 1) := by\n  let s : Set \u211d := Icc (0 : \u211d) 1\n  have hg : IntegrableOn (fun x => (f x)^2) s := integrable_f2 f hf_cont\n  have h_meas : AEStronglyMeasurable (fun x => x * (f x)^2) (volume.restrict s) := by\n    have h_cont_x : ContinuousOn (fun x : \u211d => x) s := continuous_id.continuousOn\n    have h_cont_f2 : ContinuousOn (fun x : \u211d => (f x)^2) s := hf_cont.pow 2\n    have h_cont_product : ContinuousOn (fun x : \u211d => x * (f x)^2) s := h_cont_x.mul h_cont_f2\n    exact h_cont_product.aestronglyMeasurable (measurableSet_Icc)\n  have h_ae : \u2200\u1d50 x \u2202(volume.restrict s), |x * (f x)^2| \u2264 |(f x)^2| := by\n    filter_upwards [self_mem_ae_restrict (measurableSet_Icc : MeasurableSet s)] with x hx\n    rcases hx with \u27e8hx1, hx2\u27e9\n    have hx_nonneg : 0 \u2264 x := hx1\n    have hx_le_one : x \u2264 1 := hx2\n    have h_nonneg_f2 : 0 \u2264 (f x)^2 := pow_two_nonneg _\n    have h_nonneg_product : 0 \u2264 x * (f x)^2 := mul_nonneg hx_nonneg h_nonneg_f2\n    have h_product_le_f2 : x * (f x)^2 \u2264 (f x)^2 := by\n      nlinarith\n    have h_abs_product : |x * (f x)^2| = x * (f x)^2 := abs_of_nonneg h_nonneg_product\n    have h_abs_f2 : |(f x)^2| = (f x)^2 := abs_of_nonneg h_nonneg_f2\n    rw [h_abs_product, h_abs_f2]\n    exact h_product_le_f2\n  have h_int : Integrable (fun x => x * (f x)^2) (volume.restrict s) :=\n    Integrable.mono hg h_meas h_ae\n  exact h_int"
+    },
+    {
+      "id": "pos_measure_support",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The support of g intersected with [0,1]^2 has positive volume.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- The support of $g$ intersected with $[0,1]^2$ has positive volume. -/)\n  (proof := /-- Use $f>0$ on a set of full measure and the diagonal is null. -/)]\nlemma pos_measure_support (f : \u211d \u2192 \u211d) (hf_cont : ContinuousOn f (Icc (0 : \u211d) 1))\n    (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x) :\n    0 < volume (Function.support (fun (z : \u211d \u00d7 \u211d) => f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2)) \u2229 ((Icc (0 : \u211d) 1) \u00d7\u02e2 (Icc (0 : \u211d) 1))) := by\n  have h_diag_null : volume (Set.diagonal \u211d : Set (\u211d \u00d7 \u211d)) = 0 := by\n    have hmeas : MeasurableSet (Set.diagonal \u211d) := by\n      exact isClosed_diagonal.measurableSet\n    rw [MeasureTheory.Measure.volume_eq_prod (\u211d) (\u211d)]\n    have hslice : \u2200 x : \u211d, (Prod.mk x)\u207b\u00b9' (Set.diagonal \u211d) = {x} := by\n      intro x; ext y; simp [Set.mem_diagonal_iff, eq_comm]\n    have hvol_slice : \u2200 x : \u211d, volume ((Prod.mk x)\u207b\u00b9' (Set.diagonal \u211d) : Set \u211d) = 0 := by\n      intro x; rw [hslice x, Real.volume_singleton]\n    have hnull : (fun x : \u211d => volume ((Prod.mk x)\u207b\u00b9' (Set.diagonal \u211d) : Set \u211d)) =\u1d50[volume] (fun _ : \u211d => (0 : ENNReal)) := by\n      filter_upwards [] with x\n      exact hvol_slice x\n    exact (Measure.measure_prod_null hmeas).mpr hnull\n  let A : Set \u211d := {x \u2208 Icc (0 : \u211d) 1 | f x > 0}\n  have hAvol : volume A = 1 := pos_set_volume_one f hf_mono hf_nonneg\n  have hAprod_vol : volume (A \u00d7\u02e2 A) = 1 := by\n    calc\n      volume (A \u00d7\u02e2 A) = ((volume : Measure \u211d).prod (volume : Measure \u211d)) (A \u00d7\u02e2 A) := by\n        rw [MeasureTheory.Measure.volume_eq_prod (\u211d) (\u211d)]\n      _ = (volume : Measure \u211d) A * (volume : Measure \u211d) A := by rw [Measure.prod_prod]\n      _ = 1 * 1 := by rw [hAvol]\n      _ = 1 := by norm_num\n  have hS'_subset_S : ((A \u00d7\u02e2 A) \\ (Set.diagonal \u211d)) \u2286 (Function.support (fun (z : \u211d \u00d7 \u211d) => f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2)) \u2229 ((Icc (0 : \u211d) 1) \u00d7\u02e2 (Icc (0 : \u211d) 1))) := by\n    intro z hz\n    rcases hz with \u27e8hzA, hznotdiag\u27e9\n    have hzAprod : z \u2208 A \u00d7\u02e2 A := hzA\n    rcases hzAprod with \u27e8hx, hy\u27e9\n    have hxIcc : z.1 \u2208 Icc (0 : \u211d) 1 := hx.1\n    have hyIcc : z.2 \u2208 Icc (0 : \u211d) 1 := hy.1\n    have hxpos : f z.1 > 0 := hx.2\n    have hypos : f z.2 > 0 := hy.2\n    have hne : z.1 \u2260 z.2 := by\n      intro heq\n      apply hznotdiag\n      simp [Set.mem_diagonal_iff, heq]\n    have hpos_prod : f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2) > 0 := by\n      have hpos_fz1fz2 : f z.1 * f z.2 > 0 := mul_pos hxpos hypos\n      have hpos_diff : (z.1 - z.2) * (f z.1 - f z.2) > 0 := by\n        by_cases hlt : z.1 < z.2\n        \u00b7 have hflt : f z.1 < f z.2 := (hf_mono.lt_iff_lt hxIcc hyIcc).mpr hlt\n          have hsub_neg : z.1 - z.2 < 0 := sub_neg.mpr hlt\n          have hsubf_neg : f z.1 - f z.2 < 0 := sub_neg.mpr hflt\n          nlinarith\n        \u00b7 have hgt : z.2 < z.1 := by\n            by_contra! hle\n            have heq : z.1 = z.2 := by linarith\n            exact hne heq\n          have hfgt : f z.2 < f z.1 := (hf_mono.lt_iff_lt hyIcc hxIcc).mpr hgt\n          have hsub_pos : z.1 - z.2 > 0 := sub_pos.mpr hgt\n          have hsubf_pos : f z.1 - f z.2 > 0 := sub_pos.mpr hfgt\n          nlinarith\n      simpa [mul_assoc] using mul_pos hpos_fz1fz2 hpos_diff\n    have hpos_ne_zero : f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2) \u2260 0 := by linarith\n    refine \u27e8?_, ?_\u27e9\n    \u00b7 simpa using hpos_ne_zero\n    \u00b7 exact Set.mem_prod.mpr \u27e8hxIcc, hyIcc\u27e9\n  have hvol_S'_eq_one : volume ((A \u00d7\u02e2 A) \\ (Set.diagonal \u211d)) = 1 := by\n    calc\n      volume ((A \u00d7\u02e2 A) \\ (Set.diagonal \u211d)) = volume (A \u00d7\u02e2 A) := by\n        rw [MeasureTheory.measure_diff_null h_diag_null]\n      _ = 1 := hAprod_vol\n  have hpos_vol : 0 < volume ((A \u00d7\u02e2 A) \\ (Set.diagonal \u211d)) := by\n    rw [hvol_S'_eq_one]\n    norm_num\n  have hmono : volume ((A \u00d7\u02e2 A) \\ (Set.diagonal \u211d)) \u2264 volume (Function.support (fun (z : \u211d \u00d7 \u211d) => f z.1 * f z.2 * (z.1 - z.2) * (f z.1 - f z.2)) \u2229 ((Icc (0 : \u211d) 1) \u00d7\u02e2 (Icc (0 : \u211d) 1))) :=\n    measure_mono hS'_subset_S\n  exact lt_of_lt_of_le hpos_vol hmono"
+    },
+    {
+      "id": "pos_set_volume_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The set {x \u2208 [0,1] | f(x) > 0} has volume 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- The set $\\{x \\in [0,1] \\mid f(x) > 0\\}$ has volume $1$. -/)\n  (proof := /-- From `zero_set_volume_zero` and the fact that `volume(Icc 0 1) = 1`. -/)]\nlemma pos_set_volume_one (f : \u211d \u2192 \u211d) (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x) :\n    volume ({x \u2208 Icc (0 : \u211d) 1 | f x > 0}) = 1 := by\n  set C := Icc (0 : \u211d) 1\n  set B := {x \u2208 C | f x = 0}\n  set A := {x \u2208 C | f x > 0}\n  have hA_eq : A = C \\ B := by\n    ext x; constructor\n    \u00b7 intro hx; refine \u27e8hx.1, ?_\u27e9\n      intro hxB\n      have hxB' : f x = 0 := hxB.2\n      have hxA_pos : f x > 0 := hx.2\n      linarith\n    \u00b7 intro hx; refine \u27e8hx.1, ?_\u27e9\n      have hx_not_B : x \u2209 B := hx.2\n      have hx_f_nonneg : 0 \u2264 f x := hf_nonneg x hx.1\n      by_contra! hle\n      have hx_B : x \u2208 B := \u27e8hx.1, by linarith\u27e9\n      exact hx_not_B hx_B\n  have hB_null : volume B = 0 := zero_set_volume_zero f hf_mono hf_nonneg\n  have hB_nullmeas : NullMeasurableSet B volume := NullMeasurableSet.of_null hB_null\n  have hC_meas : MeasurableSet C := measurableSet_Icc\n  have hC_nullmeas : NullMeasurableSet C volume := hC_meas.nullMeasurableSet\n  have hA_nullmeas : NullMeasurableSet A volume := by\n    rw [hA_eq]\n    exact hC_nullmeas.diff hB_nullmeas\n  have h_disjoint : Disjoint A B := by\n    rw [Set.disjoint_iff_inter_eq_empty]\n    ext x; constructor\n    \u00b7 intro hx; exfalso\n      rcases hx with \u27e8\u27e8hxC, hx_pos\u27e9, \u27e8hxC', hx_zero\u27e9\u27e9\n      have : f x > 0 := hx_pos\n      have : f x = 0 := hx_zero\n      linarith\n    \u00b7 intro hx; exfalso; exact Set.not_mem_empty x hx\n  have h_ae_disjoint : AEDisjoint volume A B := by\n    rw [AEDisjoint, h_disjoint.inter_eq, measure_empty]\n  have h_union : A \u222a B = C := by\n    ext x; constructor\n    \u00b7 intro hx\n      rcases hx with (hxA | hxB)\n      \u00b7 exact hxA.1\n      \u00b7 exact hxB.1\n    \u00b7 intro hx\n      have hx_f_nonneg : 0 \u2264 f x := hf_nonneg x hx\n      by_cases hpos : f x > 0\n      \u00b7 left; exact \u27e8hx, hpos\u27e9\n      \u00b7 right; exact \u27e8hx, by\n          have : f x = 0 := by linarith\n          exact this\u27e9\n  have h_union_eq : volume A + volume B = volume (A \u222a B) :=\n    (measure_union\u2080' hA_nullmeas h_ae_disjoint).symm\n  have h_vol_Icc : volume C = 1 := by\n    have h := volume_Icc (a := (0 : \u211d)) (b := (1 : \u211d))\n    -- h : volume (Icc 0 1) = ENNReal.ofReal (1 - 0)\n    -- C is defined as Icc 0 1\n    rw [show C = Icc (0 : \u211d) 1 from rfl]\n    simpa [sub_zero, ENNReal.ofReal_one] using h\n  have h_vol_A : volume A = 1 := by\n    calc\n      volume A = volume (A \u222a B) := by\n        simpa [hB_null] using h_union_eq\n      _ = volume C := by rw [h_union]\n      _ = 1 := h_vol_Icc\n  exact h_vol_A"
+    },
+    {
+      "id": "putnam_2025_b2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 31.16,
+      "proof_length": 49,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let f : [0,1] \u2192 [0,\u221e) be strictly increasing and continuous. Let x_1 = (int_0^1 x f(x) dx) / (int_0^1 f(x) dx) and x_2 = (int_0^1 x f(x)^2 dx) / (int_0^1 f(x)^2 dx). Then x_1 < x_2.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Let $f : [0,1] \\to [0,\\infty)$ be strictly increasing and continuous. Let\n  $x_1 = (\\int_0^1 x f(x)\\,dx) / (\\int_0^1 f(x)\\,dx)$ and\n  $x_2 = (\\int_0^1 x f(x)^2\\,dx) / (\\int_0^1 f(x)^2\\,dx)$.  Then $x_1 < x_2$. -/)\n  (proof := /-- By `B_pos` and `D_pos` the denominators are positive.\n  It suffices to show $(\\int x f)(\\int f^2) < (\\int f)(\\int x f^2)$.\n  By `diff_formula`, the difference of the two sides equals $\\frac12$ times the double integral\n  $\\int_0^1\\int_0^1 f(x)f(y)(x-y)(f(x)-f(y))\\,dx\\,dy$.\n  By `double_integral_pos`, this double integral is strictly positive, hence the inequality follows. -/)]\ntheorem putnam_2025_b2\n    (f : \u211d \u2192 \u211d)\n    (hf_cont : ContinuousOn f (Icc 0 1))\n    (hf_mono : StrictMonoOn f (Icc 0 1))\n    (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x) :\n    (\u222b x in (0:\u211d)..1, x * f x) / (\u222b x in (0:\u211d)..1, f x) <\n    (\u222b x in (0:\u211d)..1, x * (f x) ^ 2) / (\u222b x in (0:\u211d)..1, (f x) ^ 2) := by\n  have hBpos : 0 < \u222b x in (0:\u211d)..1, f x := B_pos f hf_cont hf_nonneg hf_mono\n  have hDpos : 0 < \u222b x in (0:\u211d)..1, (f x)^2 := D_pos f hf_cont hf_nonneg hf_mono\n  have hdiffpos : 0 < (\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) - (\u222b x in (0:\u211d)..1, x * f x) * (\u222b x in (0:\u211d)..1, (f x)^2) := by\n    rw [diff_formula f hf_cont]\n    have hdouble := double_integral_pos f hf_cont hf_nonneg hf_mono\n    nlinarith\n  rw [div_lt_div_iff\u2080 hBpos hDpos]\n  have : (\u222b x in (0:\u211d)..1, x * (f x) ^ 2) * (\u222b x in (0:\u211d)..1, f x) = (\u222b x in (0:\u211d)..1, f x) * (\u222b x in (0:\u211d)..1, x * (f x)^2) := by ring\n  rw [this]\n  linarith"
+    },
+    {
+      "id": "zero_set_volume_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The set {x \u2208 [0,1] | f(x) = 0} has volume zero.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- The set $\\{x \\in [0,1] \\mid f(x) = 0\\}$ has volume zero. -/)\n  (proof := /-- This set is contained in $\\{0\\}$, whose volume is zero. -/)]\nlemma zero_set_volume_zero (f : \u211d \u2192 \u211d) (hf_mono : StrictMonoOn f (Icc (0 : \u211d) 1)) (hf_nonneg : \u2200 x \u2208 Icc (0 : \u211d) 1, 0 \u2264 f x) :\n    volume ({x \u2208 Icc (0 : \u211d) 1 | f x = 0}) = 0 := by\n  have hzero_subset : {x \u2208 Icc (0 : \u211d) 1 | f x = 0} \u2286 {(0 : \u211d)} := by\n    intro x hx\n    rcases hx with \u27e8hxIcc, hx_eq\u27e9\n    -- we need to show x = 0\n    by_contra hx_ne\n    have hpos : 0 < f x := f_pos_of_pos f hf_mono hf_nonneg x hxIcc hx_ne\n    rw [hx_eq] at hpos\n    linarith\n  have h_vol_singleton : volume ({(0 : \u211d)} : Set \u211d) = 0 := by\n    simp\n  exact measure_mono_null hzero_subset h_vol_singleton"
+    }
+  ],
+  "edges": [
+    {
+      "source": "integrable_f",
+      "target": "B_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "expand_product",
+      "target": "diff_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "algebraic_identity",
+      "target": "diff_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_xf2",
+      "target": "double_integral_f_sq_y",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_f2",
+      "target": "double_integral_f_sq_y",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_nonneg",
+      "target": "double_integral_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_g",
+      "target": "double_integral_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "pos_measure_support",
+      "target": "double_integral_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "inner_integral_sq_f_y",
+      "target": "double_integral_sq_f_y",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_xf2",
+      "target": "double_integral_sq_f_y",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_f2",
+      "target": "double_integral_sq_f_y",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "double_integral_sq_f_y",
+      "target": "expand_product",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "double_integral_f_sq_y",
+      "target": "expand_product",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_xf",
+      "target": "inner_integral_sq_f_y",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_xf",
+      "target": "integrable_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_f",
+      "target": "integrable_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_xf2",
+      "target": "integrable_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_f2",
+      "target": "integrable_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "integrable_f2",
+      "target": "integrable_xf2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "pos_set_volume_one",
+      "target": "pos_measure_support",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "zero_set_volume_zero",
+      "target": "pos_set_volume_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "B_pos",
+      "target": "putnam_2025_b2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "D_pos",
+      "target": "putnam_2025_b2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "diff_formula",
+      "target": "putnam_2025_b2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "double_integral_pos",
+      "target": "putnam_2025_b2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_pos_of_pos",
+      "target": "zero_set_volume_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

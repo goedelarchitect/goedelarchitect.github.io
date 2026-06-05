@@ -1,0 +1,1938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">USAMO 2026 P4. 1,290 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item current">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item current">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "D",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The set D = {0,2,3,4,5,6,7,8,9}, all decimal digits except 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- The set $D = \\{0,2,3,4,5,6,7,8,9\\}$, all decimal digits except $1$. -/)]\ndef D : Finset \u2115 := {0,2,3,4,5,6,7,8,9}"
+    },
+    {
+      "id": "N_set",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The set N of positive integers n < 10^k whose k-digit zero-padded decimal representation contains exactly one digit 1, with all less significant digits equal to 9, and all more significant digits either 0 or 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The set $N$ of positive integers $n < 10^k$ whose $k$-digit zero-padded decimal representation contains exactly one digit $1$, with all less significant digits equal to $9$, and all more significant digits either $0$ or $2$. -/)]\ndef N_set : Finset \u2115 :=\n  (Finset.Icc 1 (10 ^ k - 1)).filter (fun n =>\n    ((Finset.range k).filter (fun j =>\n      (\u2200 i \u2208 Finset.range j, digit_at n i = 9) \u2227\n      digit_at n j = 1 \u2227\n      (\u2200 i \u2208 ((Finset.range k).filter (\u03bb i => j < i)), digit_at n i = 0 \u2228 digit_at n i = 2)\n    )).Nonempty)"
+    },
+    {
+      "id": "N_subset_target",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "N \u2286 text{target\\_set}.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- $N \\subseteq \\text{target\\_set}$. -/)\n  (proof := /-- Take $n \\in N$. By `no_such_a_b`, there are no $a,b \\in S$ with $a+b=n$. Then `no_sum_implies_condition` gives the required condition. -/)]\nlemma N_subset_target : N_set \u2286 target_set := by\n  intro n hn\n  dsimp [target_set]\n  rw [Finset.mem_filter]\n  have hIcc : n \u2208 Finset.Icc 1 (10 ^ k - 1) := (Finset.mem_filter.mp hn).1\n  have hcond : \u2200 a \u2208 Finset.range (n + 1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a)) := by\n    apply no_sum_implies_condition n\n    exact no_such_a_b n hn\n  exact And.intro hIcc hcond"
+    },
+    {
+      "id": "card_N_set_ge",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.4,
+      "proof_length": 49,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "\\#N \u2265 2^k - 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- $\\#N \\ge 2^k - 1$. -/)\n  (proof := /-- We construct $2^k-1$ distinct integers in $N$ as follows.\n    For each $j$ from $0$ to $k-1$, for each choice of $c_{j+1},\\dots,c_{k-1} \\in \\{0,2\\}$,\n    define $n = 9\\cdot\\sum_{t=0}^{j-1}10^t + 1\\cdot10^j + \\sum_{t=j+1}^{k-1}c_t\\cdot10^t$.\n    There are $2^{k-1-j}$ choices for each $j$, totalling $\\sum_{j=0}^{k-1}2^{k-1-j}=2^k-1$ numbers.\n    All such $n$ belong to $N$, so $\\#N \\ge 2^k-1$. -/)]\nlemma card_N_set_ge : N_set.card \u2265 2 ^ k - 1 := by\n  sorry_using [N_set, k, digit_at]"
+    },
+    {
+      "id": "carries_one_after_j",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.75,
+      "proof_length": 66,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "After position j, all carries stay equal to 1 up to position k.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- After position $j$, all carries stay equal to $1$ up to position $k$. -/)\n  (proof := /-- Induction on $i$ from $j$ to $k-1$. Assume $C_{i}=1$ for some $i \\ge j$.\n    Then $n_i \\in \\{0,2\\}$. The equation gives $a_i+b_i+1 = n_i + 10C_{i+1}$.\n    - If $n_i=0$, then $a_i+b_i+1 = 10C_{i+1}$. Since $0 \\le a_i+b_i \\le 18$, we have $1 \\le RHS \\le 19$, so $C_{i+1}=1$.\n    - If $n_i=2$, then $a_i+b_i = 1+10C_{i+1}$. If $C_{i+1}=0$, then $a_i+b_i=1$, impossible because $a_i,b_i \\neq 1$.\n      Hence $C_{i+1} \\ge 1$. Because $a_i+b_i \\le 18$, we get $C_{i+1}=1$. -/)]\nlemma carries_one_after_j (a b n : \u2115) (h_sum : a + b = n) (hSa : mem_S a) (hSb : mem_S b)\n    (j : \u2115) (hj_lt : j < k) (h9 : \u2200 i, i < j \u2192 digit_at n i = 9) (h1 : digit_at n j = 1)\n    (h02 : \u2200 i, j < i \u2192 i < k \u2192 (digit_at n i = 0 \u2228 digit_at n i = 2))\n    (h_cj1 : carry_seq a b (j+1) = 1) : \u2200 i, j \u2264 i \u2192 i < k \u2192 carry_seq a b (i+1) = 1 := by\n  intro i hi_j hi_lt_k\n  have hP : \u2200 t, j \u2264 t \u2192 ((t < k) \u2192 carry_seq a b (t+1) = 1) := by\n    refine Nat.le_induction ?base ?step\n    \u00b7 -- base: P j\n      intro hjk\n      exact h_cj1\n    \u00b7 -- step: for any m, j \u2264 m \u2192 P m \u2192 P (m+1)\n      intro m hm_j hmP\n      intro hm1k\n      have hmk : m < k := by omega\n      have hCm : carry_seq a b (m+1) = 1 := hmP hmk\n      have h_eq := carry_eq a b n (m+1) h_sum\n      rw [hCm] at h_eq\n      have h_digit_n : digit_at n (m+1) = 0 \u2228 digit_at n (m+1) = 2 := by\n        apply h02 (m+1) (by omega) (by omega)\n      rcases h_digit_n with (hn0 | hn2)\n      \u00b7 rw [hn0] at h_eq\n        have hda10 : digit_at a (m+1) < 10 := by\n          unfold digit_at\n          apply Nat.mod_lt\n          norm_num\n        have hdb10 : digit_at b (m+1) < 10 := by\n          unfold digit_at\n          apply Nat.mod_lt\n          norm_num\n        have hpos : 0 < digit_at a (m+1) + digit_at b (m+1) + 1 := by omega\n        have hsumle : digit_at a (m+1) + digit_at b (m+1) + 1 \u2264 19 := by omega\n        have h_mul : 10 * carry_seq a b (m+2) \u2264 19 := by\n          linarith\n        have hC_cases : carry_seq a b (m+2) = 0 \u2228 carry_seq a b (m+2) = 1 := by\n          have : carry_seq a b (m+2) \u2264 1 := by omega\n          omega\n        rcases hC_cases with (hC0 | hC1)\n        \u00b7 rw [hC0] at h_eq\n          -- LHS = 0, but LHS > 0\n          linarith\n        \u00b7 exact hC1\n      \u00b7 rw [hn2] at h_eq\n        have hda10 : digit_at a (m+1) < 10 := by\n          unfold digit_at\n          apply Nat.mod_lt\n          norm_num\n        have hdb10 : digit_at b (m+1) < 10 := by\n          unfold digit_at\n          apply Nat.mod_lt\n          norm_num\n        -- h_eq: da + db + 1 = 2 + 10*C\n        -- So da + db - 1 = 10*C\n        -- Since da+db \u2265 ? \n        -- We'll show C=1 similarly.\n        have hsumle : digit_at a (m+1) + digit_at b (m+1) + 1 \u2264 19 := by omega\n        have h_mul : 10 * carry_seq a b (m+2) \u2264 19 := by\n          linarith\n        have hC_cases : carry_seq a b (m+2) = 0 \u2228 carry_seq a b (m+2) = 1 := by\n          have : carry_seq a b (m+2) \u2264 1 := by omega\n          omega\n        rcases hC_cases with (hC0 | hC1)\n        \u00b7 rw [hC0] at h_eq\n          -- LHS: da+db+1 = 2, so da+db = 1, impossible because each digit is not 1.\n          have h_not_one : digit_at a (m+1) \u2260 1 := mem_S_implies_digit_not_one a hSa (m+1)\n          have h_not_one_b : digit_at b (m+1) \u2260 1 := mem_S_implies_digit_not_one b hSb (m+1)\n          -- but we have da+db=1, so possibilities: (0,1) or (1,0). Both impossible because each digit is not 1.\n          -- Use omega to get contradiction.\n          omega\n        \u00b7 exact hC1\n  exact hP i hi_j hi_lt_k"
+    },
+    {
+      "id": "carries_zero_to_j",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.14,
+      "proof_length": 46,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let n \u2208 N with distinguished index j. If a,b \u2208 S satisfy a+b=n, then all carries up to position j are zero.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Let $n \\in N$ with distinguished index $j$. If $a,b \\in S$ satisfy $a+b=n$,\n    then all carries up to position $j$ are zero. -/)\n  (proof := /-- By induction on $i$ from $0$ to $j$. Base $i=0$: $C_0=0$ by definition.\n    Inductive step: assume $C_i=0$ for $i<j$. Since $a_i,b_i \\in D$ they are at most $9$, so $a_i+b_i \\le 18$.\n    The addition equation gives $a_i+b_i = 9 + 10C_{i+1}$ (because $n_i=9$). Hence $9+10C_{i+1} \\le 18$, so $C_{i+1}=0$. -/)]\nlemma carries_zero_to_j (a b n : \u2115) (h_sum : a + b = n) (hSa : mem_S a) (hSb : mem_S b)\n    (j : \u2115) (hj_lt : j < k) (h9 : \u2200 i, i < j \u2192 digit_at n i = 9) (h1 : digit_at n j = 1)\n    (h02 : \u2200 i, j < i \u2192 i < k \u2192 (digit_at n i = 0 \u2228 digit_at n i = 2)) :\n    \u2200 i, i \u2264 j \u2192 carry_seq a b i = 0 := by\n  intro i hi\n  have h_strong : \u2200 m, m \u2264 j \u2192 carry_seq a b m = 0 := by\n    intro m\n    refine Nat.strong_induction_on m ?_\n    intro m ih hm_le_j\n    by_cases hm : m = 0\n    \u00b7 subst hm; rfl\n    \u00b7 have hm_pos : m > 0 := Nat.pos_of_ne_zero hm\n      let i := m-1\n      have hi_lt_m : i < m := by\n        omega\n      have hi_lt_j : i < j := by\n        omega\n      have h_digit_n_i : digit_at n i = 9 := h9 i hi_lt_j\n      have h_carry_i : carry_seq a b i = 0 := ih i hi_lt_m (by omega)\n      have h_carry_eq := carry_eq a b n i h_sum\n      rw [h_carry_i, h_digit_n_i] at h_carry_eq\n      have h_sum_eq : digit_at a i + digit_at b i = 9 + 10 * carry_seq a b (i+1) := by\n        simpa using h_carry_eq\n      have ha_i_le_9 : digit_at a i \u2264 9 := by\n        have hmem : digit_at a i \u2208 D := hSa i\n        have h_all : \u2200 d \u2208 D, d \u2264 9 := by decide\n        exact h_all _ hmem\n      have hb_i_le_9 : digit_at b i \u2264 9 := by\n        have hmem : digit_at b i \u2208 D := hSb i\n        have h_all : \u2200 d \u2208 D, d \u2264 9 := by decide\n        exact h_all _ hmem\n      have hsum_le_18 : digit_at a i + digit_at b i \u2264 18 := by\n        nlinarith\n      have hineq : 9 + 10 * carry_seq a b (i+1) \u2264 18 := by\n        nlinarith\n      have h10c_le_9 : 10 * carry_seq a b (i+1) \u2264 9 := by\n        omega\n      have h_carry_succ_eq_zero : carry_seq a b (i+1) = 0 := by\n        by_contra! hpos\n        have hpos' : 0 < carry_seq a b (i+1) := Nat.pos_of_ne_zero hpos\n        have h10c_ge_10 : 10 * carry_seq a b (i+1) \u2265 10 := by\n          nlinarith\n        nlinarith\n      have hm_eq : m = i+1 := by\n        omega\n      rw [hm_eq]\n      exact h_carry_succ_eq_zero\n  exact h_strong i hi"
+    },
+    {
+      "id": "carry_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.35,
+      "proof_length": 28,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a,b,n with a+b=n, the digit-wise addition equation holds: a_i + b_i + C_i = n_i + 10 C_{i+1}, where C_i is the carry sequence.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b,n$ with $a+b=n$, the digit-wise addition equation holds:\n    $a_i + b_i + C_i = n_i + 10 C_{i+1}$, where $C_i$ is the carry sequence. -/)\n  (proof := /-- By induction on $i$. Base $i=0$: $C_0=0$, and the equation reduces to\n    $(a \\% 10) + (b \\% 10) = n \\% 10 + 10*C_1$, which holds because $a+b=n$ and $n\\%10 = (a\\%10 + b\\%10) \\% 10$,\n    and $C_1 = (a\\%10 + b\\%10)/10$. For the inductive step, use the division algorithm and the fact that\n    $n/10^{i+1} = (n/10^i)/10$, etc. Full proof uses `Nat.div_add_mod` and `Nat.mod_add_div`. -/)]\nlemma carry_eq (a b n i : \u2115) (h : a + b = n) :\n    digit_at a i + digit_at b i + carry_seq a b i = digit_at n i + 10 * carry_seq a b (i+1) := by\n  have sum_div : \u2200 i : \u2115, (a / 10 ^ i) + (b / 10 ^ i) + carry_seq a b i = n / 10 ^ i := by\n    intro i\n    induction' i with i ih\n    \u00b7 simp [carry_seq, h]\n    \u00b7 -- i+1 case\n      let A := a / 10 ^ i\n      let B := b / 10 ^ i\n      let N := n / 10 ^ i\n      let c := carry_seq a b i\n      have hsum : A + B + c = N := ih\n      have hA : A = 10 * (A / 10) + A % 10 := by\n        simpa [mul_comm] using (Nat.div_add_mod A 10).symm\n      have hB : B = 10 * (B / 10) + B % 10 := by\n        simpa [mul_comm] using (Nat.div_add_mod B 10).symm\n      have hN : N = 10 * (N / 10) + N % 10 := by\n        simpa [mul_comm] using (Nat.div_add_mod N 10).symm\n      have hmod : (A % 10 + B % 10 + c) % 10 = N % 10 := by\n        calc\n          (A % 10 + B % 10 + c) % 10 = ((A % 10 + B % 10) % 10 + c % 10) % 10 := by simp [Nat.add_mod]\n          _ = ((A + B) % 10 + c % 10) % 10 := by simp [Nat.add_mod]\n          _ = ((A + B + c) % 10) % 10 := by simp [Nat.add_mod]\n          _ = (A + B + c) % 10 := by simp\n          _ = N % 10 := by rw [hsum]\n      have hsplit : A % 10 + B % 10 + c = N % 10 + 10 * ((A % 10 + B % 10 + c) / 10) := by\n        have := Nat.div_add_mod (A % 10 + B % 10 + c) 10\n        omega\n      have h_eq : 10 * ((A / 10) + (B / 10)) + (A % 10 + B % 10 + c) = 10 * (N / 10) + N % 10 := by\n        omega\n      rw [hsplit] at h_eq\n      have h_eq3 : 10 * ((A / 10) + (B / 10)) + 10 * ((A % 10 + B % 10 + c) / 10) = 10 * (N / 10) := by\n        omega\n      have h_eq4 : 10 * (((A / 10) + (B / 10)) + ((A % 10 + B % 10 + c) / 10)) = 10 * (N / 10) := by\n        calc\n          10 * (((A / 10) + (B / 10)) + ((A % 10 + B % 10 + c) / 10)) = 10 * ((A / 10) + (B / 10)) + 10 * ((A % 10 + B % 10 + c) / 10) := by\n            simp [mul_add]\n          _ = 10 * (N / 10) := h_eq3\n      have hpos : 0 < 10 := by decide\n      have h_cancel : ((A / 10) + (B / 10)) + ((A % 10 + B % 10 + c) / 10) = N / 10 :=\n        (Nat.mul_right_inj hpos.ne').mp h_eq4\n      calc\n        (a / 10 ^ (i+1)) + (b / 10 ^ (i+1)) + carry_seq a b (i+1) = (A / 10) + (B / 10) + ((A % 10 + B % 10 + c) / 10) := by\n          simp [A, B, c, carry_seq, digit_at, pow_succ, mul_comm, Nat.div_div_eq_div_mul]\n        _ = N / 10 := h_cancel\n        _ = n / 10 ^ (i+1) := by\n          simp [N, pow_succ, mul_comm, Nat.div_div_eq_div_mul]\n  -- Now use sum_div to prove carry_eq\n  have hmod' : digit_at n i = ((digit_at a i) + (digit_at b i) + carry_seq a b i) % 10 := by\n    have hsum := sum_div i\n    calc\n      digit_at n i = (n / 10 ^ i) % 10 := rfl\n      _ = ((a / 10 ^ i) + (b / 10 ^ i) + carry_seq a b i) % 10 := by rw [hsum]\n      _ = (((a / 10 ^ i) % 10) + ((b / 10 ^ i) % 10) + carry_seq a b i) % 10 := by simp [Nat.add_mod]\n      _ = (digit_at a i + digit_at b i + carry_seq a b i) % 10 := by simp [digit_at]\n  have hcarry : carry_seq a b (i+1) = ((digit_at a i) + (digit_at b i) + carry_seq a b i) / 10 := by\n    simp [carry_seq]\n  calc\n    digit_at a i + digit_at b i + carry_seq a b i =\n        (((digit_at a i) + (digit_at b i) + carry_seq a b i) / 10) * 10 +\n        ((digit_at a i) + (digit_at b i) + carry_seq a b i) % 10 := by\n      have := Nat.div_add_mod ((digit_at a i) + (digit_at b i) + carry_seq a b i) 10\n      omega\n    _ = 10 * carry_seq a b (i+1) + digit_at n i := by\n      simp [hcarry, hmod', mul_comm, add_comm]\n    _ = digit_at n i + 10 * carry_seq a b (i+1) := by omega"
+    },
+    {
+      "id": "carry_final_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.79,
+      "proof_length": 32,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a+b=n and n < 10^m, then the m-th carry C_m = 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If $a+b=n$ and $n < 10^m$, then the $m$-th carry $C_m = 0$. -/)\n  (proof := /-- Since $n < 10^m$, $n$ has at most $m$ digits, so there is no carry beyond the $m-1$st digit.\n    Formal proof by induction on $i$, bounding $a/10^i + b/10^i$ and using `carry_eq`. -/)]\nlemma carry_final_zero (a b n m : \u2115) (h_sum : a + b = n) (hn_lt : n < 10 ^ m) : carry_seq a b m = 0 := by\n  have sum_mod_carry (a b i : \u2115) : (a % 10^i) + (b % 10^i) = ((a+b) % 10^i) + 10^i * carry_seq a b i := by\n    induction' i with i ih\n    \u00b7 simp [carry_seq, Nat.mod_one]\n    \u00b7 set s := a+b with hs\n      have hcarry_eq_i : digit_at a i + digit_at b i + carry_seq a b i = digit_at s i + 10 * carry_seq a b (i.succ) :=\n        carry_eq a b s i rfl\n      have hdigit_at_a : digit_at a i = (a / 10 ^ i) % 10 := rfl\n      have hdigit_at_b : digit_at b i = (b / 10 ^ i) % 10 := rfl\n      have hdigit_at_s : digit_at s i = (s / 10 ^ i) % 10 := rfl\n      rw [hdigit_at_a, hdigit_at_b, hdigit_at_s] at hcarry_eq_i\n      have ha_mod_succ : a % 10^(i.succ) = (a % 10^i) + 10^i * ((a / 10 ^ i) % 10) := by\n        simpa using Nat.mod_pow_succ (x := a) (b := 10) (k := i)\n      have hb_mod_succ : b % 10^(i.succ) = (b % 10^i) + 10^i * ((b / 10 ^ i) % 10) := by\n        simpa using Nat.mod_pow_succ (x := b) (b := 10) (k := i)\n      have hs_mod_succ : s % 10^(i.succ) = (s % 10^i) + 10^i * ((s / 10 ^ i) % 10) := by\n        simpa using Nat.mod_pow_succ (x := s) (b := 10) (k := i)\n      calc\n        (a % 10^(i.succ)) + (b % 10^(i.succ))\n            = ((a % 10^i) + 10^i * ((a / 10 ^ i) % 10)) + ((b % 10^i) + 10^i * ((b / 10 ^ i) % 10)) := by\n              rw [ha_mod_succ, hb_mod_succ]\n        _ = ((a % 10^i) + (b % 10^i)) + 10^i * (((a / 10 ^ i) % 10) + ((b / 10 ^ i) % 10)) := by ring\n        _ = (((a+b) % 10^i) + 10^i * carry_seq a b i) + 10^i * (((a / 10 ^ i) % 10) + ((b / 10 ^ i) % 10)) := by rw [ih]\n        _ = ((a+b) % 10^i) + 10^i * (carry_seq a b i + (((a / 10 ^ i) % 10) + ((b / 10 ^ i) % 10))) := by ring\n        _ = ((a+b) % 10^i) + 10^i * ((((a / 10 ^ i) % 10) + ((b / 10 ^ i) % 10)) + carry_seq a b i) := by\n          rw [add_comm (carry_seq a b i) (((a / 10 ^ i) % 10) + ((b / 10 ^ i) % 10))]\n        _ = ((a+b) % 10^i) + 10^i * (((s / 10 ^ i) % 10) + 10 * carry_seq a b (i.succ)) := by\n          rw [hcarry_eq_i]\n        _ = ((a+b) % 10^i) + 10^i * ((s / 10 ^ i) % 10) + 10^(i.succ) * carry_seq a b (i.succ) := by\n          ring_nf\n          simp [pow_succ, mul_comm, mul_left_comm, mul_assoc]\n        _ = (s % 10^i) + 10^i * ((s / 10 ^ i) % 10) + 10^(i.succ) * carry_seq a b (i.succ) := by rw [hs]\n        _ = ((s % 10^i) + 10^i * ((s / 10 ^ i) % 10)) + 10^(i.succ) * carry_seq a b (i.succ) := by rw [add_assoc]\n        _ = (s % 10^(i.succ)) + 10^(i.succ) * carry_seq a b (i.succ) := by rw [hs_mod_succ]\n        _ = ((a+b) % 10^(i.succ)) + 10^(i.succ) * carry_seq a b (i.succ) := by rw [hs]\n  have ha_lt : a < 10 ^ m := by\n    have hsum_lt : a + b < 10 ^ m := by rwa [h_sum]\n    exact Nat.lt_of_le_of_lt (Nat.le_add_right a b) hsum_lt\n  have hb_lt : b < 10 ^ m := by\n    have hsum_lt : a + b < 10 ^ m := by rwa [h_sum]\n    exact Nat.lt_of_le_of_lt (Nat.le_add_left b a) hsum_lt\n  have ha_mod_eq : a % 10^m = a := Nat.mod_eq_of_lt ha_lt\n  have hb_mod_eq : b % 10^m = b := Nat.mod_eq_of_lt hb_lt\n  have hn_mod_eq : n % 10^m = n := Nat.mod_eq_of_lt hn_lt\n  have hsum_mod_carry := sum_mod_carry a b m\n  rw [h_sum] at hsum_mod_carry\n  rw [ha_mod_eq, hb_mod_eq, hn_mod_eq] at hsum_mod_carry\n  rw [h_sum] at hsum_mod_carry\n  -- hsum_mod_carry: n = n + 10^m * carry_seq a b m\n  have hzero : 10^m * carry_seq a b m = 0 := by\n    omega\n  have hpow_pos : 10^m > 0 := by\n    exact pow_pos (by norm_num : 0 < 10) m\n  have hcarry_zero : carry_seq a b m = 0 := by\n    have hcases := (Nat.mul_eq_zero.mp hzero)\n    rcases hcases with (h | h)\n    \u00b7 exfalso; exact hpow_pos.ne' h\n    \u00b7 exact h\n  exact hcarry_zero"
+    },
+    {
+      "id": "carry_one_at_j_plus_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.0,
+      "proof_length": 34,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "In the same setting, the carry into position j+1 is 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- In the same setting, the carry into position $j+1$ is $1$. -/)\n  (proof := /-- From the addition equation at $i=j$ we have $a_j+b_j = n_j + 10C_{j+1} = 1 + 10C_{j+1}$.\n    Since $a_j,b_j \\in D$, $a_j+b_j \\neq 1$, so $C_{j+1} \\neq 0$. Because $a_j+b_j \\le 18$, $C_{j+1}$ cannot exceed $1$.\n    Therefore $C_{j+1}=1$. -/)]\nlemma carry_one_at_j_plus_one (a b n : \u2115) (h_sum : a + b = n) (hSa : mem_S a) (hSb : mem_S b)\n    (j : \u2115) (hj_lt : j < k) (h9 : \u2200 i, i < j \u2192 digit_at n i = 9) (h1 : digit_at n j = 1)\n    (h02 : \u2200 i, j < i \u2192 i < k \u2192 (digit_at n i = 0 \u2228 digit_at n i = 2))\n    (h_cj : carry_seq a b j = 0) : carry_seq a b (j+1) = 1 := by\n  have h_da_lt10 : digit_at a j < 10 := by\n    unfold digit_at\n    exact Nat.mod_lt _ (by norm_num)\n  have h_db_lt10 : digit_at b j < 10 := by\n    unfold digit_at\n    exact Nat.mod_lt _ (by norm_num)\n  have h_da_not_one : digit_at a j \u2260 1 := mem_S_implies_digit_not_one a hSa j\n  have h_db_not_one : digit_at b j \u2260 1 := mem_S_implies_digit_not_one b hSb j\n  have h_sum_ne_one : digit_at a j + digit_at b j \u2260 1 := by\n    omega\n  have hcarry_eq := carry_eq a b n j h_sum\n  rw [h_cj, h1] at hcarry_eq\n  simp at hcarry_eq\n  -- hcarry_eq: digit_at a j + digit_at b j = 1 + 10 * carry_seq a b (j+1)\n  have hmod10 : (digit_at a j + digit_at b j) % 10 = 1 := by\n    have h_eq : digit_at a j + digit_at b j = 1 + 10 * carry_seq a b (j+1) := hcarry_eq\n    omega\n  have h_s_ge_10 : 10 \u2264 digit_at a j + digit_at b j := by\n    by_contra! hlt\n    -- hlt: digit_at a j + digit_at b j < 10\n    have hmod10' : (digit_at a j + digit_at b j) % 10 = digit_at a j + digit_at b j := by\n      apply Nat.mod_eq_of_lt\n      exact hlt\n    have h_eq1 : digit_at a j + digit_at b j = 1 := by\n      calc\n        digit_at a j + digit_at b j = (digit_at a j + digit_at b j) % 10 := by\n          symm; exact hmod10'\n        _ = 1 := hmod10\n    exact h_sum_ne_one h_eq1\n  have h_s_lt_20 : digit_at a j + digit_at b j < 20 := by\n    omega\n  have h_div10 : (digit_at a j + digit_at b j) / 10 = 1 := by\n    omega\n  have h_carry_eq' : carry_seq a b (j+1) = (digit_at a j + digit_at b j) / 10 := by\n    unfold carry_seq\n    rw [h_cj]\n    simp\n  rw [h_carry_eq']\n  exact h_div10"
+    },
+    {
+      "id": "carry_seq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The sequence of carries when adding a and b digit by digit; C_0 = 0 and C_{i+1} = \u230a (a_i + b_i + C_i)/10\u230b.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The sequence of carries when adding $a$ and $b$ digit by digit; $C_0 = 0$ and $C_{i+1} = \\lfloor (a_i + b_i + C_i)/10\\rfloor$. -/)]\ndef carry_seq (a b : \u2115) : \u2115 \u2192 \u2115\n  | 0 => 0\n  | i+1 => ((digit_at a i) + (digit_at b i) + carry_seq a b i) / 10"
+    },
+    {
+      "id": "condition_iff_not_sum_S",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.9,
+      "proof_length": 55,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The condition \u2200 a \u2264 n, either a or n-a contains digit 1 is equivalent to the non-existence of a,b \u2208 S with a+b=n.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- The condition $\\forall a \\le n$, either $a$ or $n-a$ contains digit $1$ is equivalent to\n    the non-existence of $a,b \\in S$ with $a+b=n$. -/)\n  (proof := /-- ($\\Rightarrow$) If such $a,b \\in S$ existed with $a+b=n$, then for $a$ (which is $\\le n$) both $a$ and $n-a=b$ lack digit $1$, contradicting the condition.\n    ($\\Leftarrow$) Conversely, if the condition fails, there exists $a \\le n$ such that both $a$ and $n-a$ lack digit $1$; then set $a$ and $b=n-a$; both are in $S$ by `mem_S_iff_no_one`. -/)]\nlemma condition_iff_not_sum_S (n : \u2115) : (\u2200 a \u2208 Finset.range (n + 1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a))) \u2194\n    \u00ac \u2203 (a b : \u2115), mem_S a \u2227 mem_S b \u2227 a + b = n := by\n  constructor\n  \u00b7 intro h\n    intro h_ex\n    rcases h_ex with \u27e8a, b, haS, hbS, hsum\u27e9\n    have ha_no_one : 1 \u2209 Nat.digits 10 a := (mem_S_iff_no_one a).mp haS\n    have hb_no_one : 1 \u2209 Nat.digits 10 b := (mem_S_iff_no_one b).mp hbS\n    have ha_le_n : a \u2264 n := by\n      omega\n    have ha_mem_range : a \u2208 Finset.range (n+1) := by\n      apply Finset.mem_range.mpr\n      omega\n    have h_cases := h a ha_mem_range\n    rcases h_cases with (h_a1 | h_na1)\n    \u00b7 exact ha_no_one h_a1\n    \u00b7 have h_n_minus_a_eq_b : n - a = b := by\n        omega\n      have h_b1 : 1 \u2208 Nat.digits 10 b := by\n        rw [h_n_minus_a_eq_b] at h_na1\n        exact h_na1\n      exact hb_no_one h_b1\n  \u00b7 intro h\n    intro a ha_mem_range\n    have ha_le_n : a \u2264 n := by\n      have := Finset.mem_range.1 ha_mem_range\n      omega\n    by_cases h_a_one : 1 \u2208 Nat.digits 10 a\n    \u00b7 exact Or.inl h_a_one\n    \u00b7 by_cases h_na_one : 1 \u2208 Nat.digits 10 (n - a)\n      \u00b7 exact Or.inr h_na_one\n      \u00b7 exfalso\n        apply h\n        refine \u27e8a, n - a, ?_, ?_, ?_\u27e9\n        \u00b7 exact (mem_S_iff_no_one a).mpr h_a_one\n        \u00b7 exact (mem_S_iff_no_one (n - a)).mpr h_na_one\n        \u00b7 omega"
+    },
+    {
+      "id": "digit_at",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The i-th decimal digit (from the right, 0-indexed) of n, i.e., \u230a n/10^i\u230b bmod 10.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- The $i$-th decimal digit (from the right, $0$-indexed) of $n$, i.e., $\\lfloor n/10^i\\rfloor \\bmod 10$. -/)]\ndef digit_at (n i : \u2115) : \u2115 := (n / 10 ^ i) % 10"
+    },
+    {
+      "id": "k",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The exponent 2026, which appears as k in the proof.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The exponent $2026$, which appears as $k$ in the proof. -/)]\ndef k : \u2115 := 2026"
+    },
+    {
+      "id": "mem_N_set_iff'",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Membership in N expressed with plain arithmetic quantifiers.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Membership in $N$ expressed with plain arithmetic quantifiers. -/)\n  (proof := /-- Uses `mem_N_set_iff` and `Finset.mem_range`. -/)]\nlemma mem_N_set_iff' (n : \u2115) : n \u2208 N_set \u2194\n    n \u2208 Finset.Icc 1 (10 ^ k - 1) \u2227\n    \u2203 (j : \u2115), j < k \u2227\n      (\u2200 i, i < j \u2192 digit_at n i = 9) \u2227\n      digit_at n j = 1 \u2227\n      (\u2200 i, j < i \u2192 i < k \u2192 (digit_at n i = 0 \u2228 digit_at n i = 2)) := by\n  rw [mem_N_set_iff]\n  constructor\n  \u00b7 intro \u27e8hnIcc, h\u27e9\n    rcases h with \u27e8j, hjrange, h\u27e9\n    rcases h with \u27e8hdigits_lt_j, hdigit_j, hdigits_gt_j\u27e9\n    refine \u27e8hnIcc, j, ?_, ?_, hdigit_j, ?_\u27e9\n    \u00b7 -- j < k from hjrange (j \u2208 Finset.range k)\n      simpa [Finset.mem_range] using hjrange\n    \u00b7 -- \u2200 i, i < j \u2192 digit_at n i = 9\n      intro i hi\n      have hi' : i \u2208 Finset.range j := by\n        simpa [Finset.mem_range] using hi\n      exact hdigits_lt_j i hi'\n    \u00b7 -- \u2200 i, j < i \u2192 i < k \u2192 (digit_at n i = 0 \u2228 digit_at n i = 2)\n      intro i hji hik\n      have hi_range : i \u2208 Finset.range k := by\n        simpa [Finset.mem_range] using hik\n      have hi_filter : i \u2208 ((Finset.range k).filter (\u03bb i => j < i)) := by\n        simpa [Finset.mem_filter, Finset.mem_range, hji]\n      exact hdigits_gt_j i hi_filter\n  \u00b7 intro \u27e8hnIcc, j, hj, hdigits_lt_j, hdigit_j, hdigits_gt_j\u27e9\n    refine \u27e8hnIcc, ?_\u27e9\n    refine \u27e8j, ?_, ?_\u27e9\n    \u00b7 -- j \u2208 Finset.range k\n      simpa [Finset.mem_range] using hj\n    \u00b7 -- (\u2200 i \u2208 Finset.range j, digit_at n i = 9) \u2227 digit_at n j = 1 \u2227 (\u2200 i \u2208 ((Finset.range k).filter (\u03bb i => j < i)), digit_at n i = 0 \u2228 digit_at n i = 2)\n      refine \u27e8?_, hdigit_j, ?_\u27e9\n      \u00b7 intro i hi\n        have hi_lt_j : i < j := by\n          simpa [Finset.mem_range] using hi\n        exact hdigits_lt_j i hi_lt_j\n      \u00b7 intro i hi\n        have hi_filter : i \u2208 Finset.range k \u2227 j < i := by\n          simpa [Finset.mem_filter] using hi\n        rcases hi_filter with \u27e8hi_range, hji\u27e9\n        have hik : i < k := by\n          simpa [Finset.mem_range] using hi_range\n        exact hdigits_gt_j i hji hik"
+    },
+    {
+      "id": "mem_N_set_iff",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Membership in N expressed with quantifiers over Finset.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- Membership in $N$ expressed with quantifiers over `Finset`. -/)\n  (proof := /-- Unfolds the definition. -/)]\nlemma mem_N_set_iff (n : \u2115) : n \u2208 N_set \u2194\n    n \u2208 Finset.Icc 1 (10 ^ k - 1) \u2227\n    \u2203 (j : \u2115), j \u2208 Finset.range k \u2227\n      (\u2200 i \u2208 Finset.range j, digit_at n i = 9) \u2227\n      digit_at n j = 1 \u2227\n      (\u2200 i \u2208 ((Finset.range k).filter (\u03bb i => j < i)), digit_at n i = 0 \u2228 digit_at n i = 2) := by\n  rw [N_set]\n  simp [Finset.mem_filter, Finset.Nonempty]"
+    },
+    {
+      "id": "mem_S_iff_no_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.06,
+      "proof_length": 57,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "n \u2208 S iff 1 is not among the decimal digits of n.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- $n \\in S$ iff $1$ is not among the decimal digits of $n$. -/)\n  (proof := /-- Forward direction: if $n \\in S$, all its digits are in $D$, so none equals $1$, hence $1 \\notin \\mathrm{Nat.digits} \\, 10 \\, n$.\n    Reverse direction: if $1 \\notin \\mathrm{Nat.digits} \\, 10 \\, n$, then every digit is not $1$, i.e., each digit is in $D$, so $n \\in S$.\n    This uses the lemma `Nat.digits_eq_nil_iff_eq_zero` and the fact that `digit_at` captures all digits. -/)]\nlemma mem_S_iff_no_one (n : \u2115) : mem_S n \u2194 1 \u2209 Nat.digits 10 n := by\n  have digit_at_lt_10 (n i : \u2115) : digit_at n i < 10 := by\n    dsimp [digit_at]\n    have hpos : 0 < 10 := by norm_num\n    exact Nat.mod_lt _ hpos\n  have mem_D_iff_ne_one_of_lt_10 {a : \u2115} (ha : a < 10) : a \u2208 D \u2194 a \u2260 1 := by\n    have h_all : (Finset.filter (fun x => x \u2260 1) (Finset.range 10)) = D := by decide\n    have ha_range : a \u2208 Finset.range 10 := Finset.mem_range.mpr ha\n    constructor\n    \u00b7 intro hD\n      have : a \u2208 Finset.filter (fun x => x \u2260 1) (Finset.range 10) := by\n        rw [h_all]\n        exact hD\n      exact (Finset.mem_filter.mp this).2\n    \u00b7 intro hne\n      have : a \u2208 Finset.filter (fun x => x \u2260 1) (Finset.range 10) := by\n        apply Finset.mem_filter.mpr\n        exact \u27e8ha_range, hne\u27e9\n      rw [h_all] at this\n      exact this\n  have getD_ne_one_of_not_mem {l : List \u2115} (h : 1 \u2209 l) (i : \u2115) : l.getD i 0 \u2260 1 := by\n    by_contra! h_eq\n    by_cases hi : i < l.length\n    \u00b7 have hmem : 1 \u2208 l := by\n        have hget : l[i] = 1 := by\n          have this := List.getD_eq_getElem l 0 hi\n          rw [this] at h_eq\n          exact h_eq\n        exact (List.mem_iff_get (a := 1) (l := l)).mpr \u27e8\u27e8i, hi\u27e9, hget\u27e9\n      exact h hmem\n    \u00b7 have hdefault : l.getD i 0 = 0 := List.getD_eq_default l 0 (Nat.le_of_not_lt hi)\n      rw [hdefault] at h_eq\n      norm_num at h_eq\n  constructor\n  \u00b7 intro hS h1mem\n    rcases (List.mem_iff_get (a := 1) (l := Nat.digits 10 n)).mp h1mem with \u27e8i, hi\u27e9\n    -- i : Fin (Nat.digits 10 n).length, hi : (Nat.digits 10 n).get i = 1\n    have hdigit_at : digit_at n (i.val) \u2208 D := hS (i.val)\n    have hlt : digit_at n (i.val) < 10 := digit_at_lt_10 n (i.val)\n    have hne_one : digit_at n (i.val) \u2260 1 := (mem_D_iff_ne_one_of_lt_10 hlt).mp hdigit_at\n    have hdigit_eq : digit_at n (i.val) = (Nat.digits 10 n).getD (i.val) 0 := by\n      dsimp [digit_at]\n      have h10pos : 2 \u2264 10 := by norm_num\n      rw [Nat.getD_digits n (i.val) h10pos]\n    have hi_val_lt : (i.val) < (Nat.digits 10 n).length := i.2\n    have hgetD_eq_get : (Nat.digits 10 n).getD (i.val) 0 = (Nat.digits 10 n).get i := by\n      calc\n        (Nat.digits 10 n).getD (i.val) 0 = (Nat.digits 10 n)[i.val] :=\n          List.getD_eq_getElem (Nat.digits 10 n) 0 hi_val_lt\n        _ = (Nat.digits 10 n).get i := rfl\n    have hdigit_eq_one : digit_at n (i.val) = 1 := by\n      calc\n        digit_at n (i.val) = (Nat.digits 10 n).getD (i.val) 0 := hdigit_eq\n        _ = (Nat.digits 10 n).get i := hgetD_eq_get\n        _ = 1 := hi\n    exact hne_one hdigit_eq_one\n  \u00b7 intro hNoOne\n    intro i\n    have hlt : digit_at n i < 10 := digit_at_lt_10 n i\n    have hdigit_eq : digit_at n i = (Nat.digits 10 n).getD i 0 := by\n      dsimp [digit_at]\n      have h10pos : 2 \u2264 10 := by norm_num\n      rw [Nat.getD_digits n i h10pos]\n    have hgetD_ne_one : (Nat.digits 10 n).getD i 0 \u2260 1 := getD_ne_one_of_not_mem hNoOne i\n    have hne_one : digit_at n i \u2260 1 := by\n      intro h_eq\n      apply hgetD_ne_one\n      rw [\u2190 hdigit_eq, h_eq]\n    exact (mem_D_iff_ne_one_of_lt_10 hlt).mpr hne_one"
+    },
+    {
+      "id": "mem_S_implies_digit_not_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If n \u2208 S, then none of its decimal digits equal 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If $n \\in S$, then none of its decimal digits equal $1$. -/)\n  (proof := /-- By definition of $S$, all digits are in $D$, and $1 \\notin D$ because $D=\\{0,2,3,4,5,6,7,8,9\\}$. -/)]\nlemma mem_S_implies_digit_not_one (n : \u2115) (hS : mem_S n) (i : \u2115) : digit_at n i \u2260 1 := by\n  intro h_eq\n  have hmem : digit_at n i \u2208 D := hS i\n  have h_not_one : (1 : \u2115) \u2209 D := by\n    decide\n  rw [h_eq] at hmem\n  exact h_not_one hmem"
+    },
+    {
+      "id": "no_such_a_b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.23,
+      "proof_length": 47,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "No n \u2208 N can be written as a+b with a,b \u2208 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- No $n \\in N$ can be written as $a+b$ with $a,b \\in S$. -/)\n  (proof := /-- Assume for contradiction that $n=a+b$ with $a,b \\in S$. Let $j$ be the index from the definition of $N$.\n    By `carries_zero_to_j`, $C_j=0$. By `carry_one_at_j_plus_one`, $C_{j+1}=1$.\n    By `carries_one_after_j$, $C_i=1$ for all $i$ with $j < i \\le k$. In particular $C_k=1$.\n    But `carry_final_zero` forces $C_k=0$ because $n < 10^k$. Contradiction. -/)]\nlemma no_such_a_b (n : \u2115) (hN : n \u2208 N_set) : \u00ac \u2203 (a b : \u2115), mem_S a \u2227 mem_S b \u2227 a + b = n := by\n  intro h\n  rcases h with \u27e8a, b, haS, hbS, hsum\u27e9\n  -- get the condition on n from mem_N_set_iff'\n  have hn_mem : n \u2208 Finset.Icc 1 (10 ^ k - 1) \u2227 \u2203 (j : \u2115), j < k \u2227 (\u2200 i, i < j \u2192 digit_at n i = 9) \u2227 digit_at n j = 1 \u2227 (\u2200 i, j < i \u2192 i < k \u2192 (digit_at n i = 0 \u2228 digit_at n i = 2)) := by\n    exact (mem_N_set_iff' n).mp hN\n  rcases hn_mem with \u27e8hicc, hex\u27e9\n  rcases hex with \u27e8j, hj_lt, h9, h1, h02\u27e9\n  -- Now we have the hypotheses needed for the carry lemmas.\n  have hcarry_zero_up_to_j : \u2200 i, i \u2264 j \u2192 carry_seq a b i = 0 := by\n    exact carries_zero_to_j a b n hsum haS hbS j hj_lt h9 h1 h02\n  have hcarry_one_at_j_plus_one : carry_seq a b (j+1) = 1 := by\n    apply carry_one_at_j_plus_one a b n hsum haS hbS j hj_lt h9 h1 h02 (hcarry_zero_up_to_j j (le_refl j))\n  -- Then we get carries after j are 1 up to k.\n  have hcarries_one_after_j : \u2200 i, j \u2264 i \u2192 i < k \u2192 carry_seq a b (i+1) = 1 := by\n    exact carries_one_after_j a b n hsum haS hbS j hj_lt h9 h1 h02 hcarry_one_at_j_plus_one\n  -- Now we need to get a contradiction using carry_final_zero.\n  rcases Finset.mem_Icc.mp hicc with \u27e8hle, hle'\u27e9\n  have hn_lt : n < 10 ^ k := by omega\n  have hcarry_final_zero : carry_seq a b k = 0 := carry_final_zero a b n k hsum hn_lt\n  -- From hcarries_one_after_j, we can get carry_seq a b k = 1, because we can take i = k-1 if k-1 >= j.\n  have hcarry_at_k : carry_seq a b k = 1 := by\n    have htemp : carry_seq a b ((k-1)+1) = 1 := hcarries_one_after_j (k-1) (by omega) (by omega)\n    -- simplify (k-1)+1 = k\n    have : (k-1)+1 = k := by omega\n    rw [this] at htemp\n    exact htemp\n  -- Now hcarry_final_zero gives 0, hcarry_at_k gives 1, contradiction.\n  have : (0 : \u2115) = 1 := by\n    calc\n      (0 : \u2115) = carry_seq a b k := by symm; exact hcarry_final_zero\n      _ = 1 := hcarry_at_k\n  omega"
+    },
+    {
+      "id": "no_sum_implies_condition",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If there are no a,b \u2208 S with a+b=n, then n satisfies the original condition.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If there are no $a,b \\in S$ with $a+b=n$, then $n$ satisfies the original condition. -/)\n  (proof := /-- Immediate from `condition_iff_not_sum_S`. -/)]\nlemma no_sum_implies_condition (n : \u2115) (h : \u00ac \u2203 (a b : \u2115), mem_S a \u2227 mem_S b \u2227 a + b = n) :\n    \u2200 a \u2208 Finset.range (n + 1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a)) := by\n  exact (condition_iff_not_sum_S n).mpr h"
+    },
+    {
+      "id": "target_set",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The set of integers n \u2208 [1,10^k-1] satisfying the original property.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The set of integers $n \\in [1,10^k-1]$ satisfying the original property. -/)]\ndef target_set : Finset \u2115 :=\n  Finset.filter (fun n =>\n    \u2200 a \u2208 Finset.range (n + 1),\n      (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a)))\n    (Finset.Icc 1 (10 ^ k - 1))"
+    },
+    {
+      "id": "usamo_2026_p4_at_least",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 31,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The original theorem: the number of integers n between 1 and 10^{2026}-1 such that for every a \u2264 n, at least one of a, n-a contains the decimal digit 1, is at least 2^{2026}-1.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The original theorem: the number of integers $n$ between $1$ and $10^{2026}-1$ such that for every $a \\le n$, at least one of $a$, $n-a$ contains the decimal digit $1$, is at least $2^{2026}-1$. -/)\n  (proof := /-- Let $k=2026$. Define $N$ as above. `card_N_set_ge` gives $\\#N \\ge 2^k-1$, and `N_subset_target` shows $N \\subseteq$ the target set, therefore the target set has at least $2^k-1$ elements. By `Finset.card_le_card` we conclude. -/)]\ntheorem usamo_2026_p4_at_least :\n    (Finset.filter (fun n =>\n        \u2200 a \u2208 Finset.range (n + 1),\n          (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a)))\n      (Finset.Icc 1 (10 ^ 2026 - 1))).card\n    \u2265 2 ^ 2026 - 1 := by\n  have hcard_N : N_set.card \u2265 2 ^ k - 1 := card_N_set_ge\n  have h_sub : N_set \u2286 target_set := N_subset_target\n  have card_le : N_set.card \u2264 target_set.card := Finset.card_le_card h_sub\n  have hcard_target : target_set.card \u2265 2 ^ k - 1 := le_trans hcard_N card_le\n  simpa [target_set, k] using hcard_target"
+    },
+    {
+      "id": "S",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "S_k is the set of solitary integers strictly less than 10^k.",
+      "is_main": false,
+      "col": 1,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $S_k$ is the set of solitary integers strictly less than $10^k$. -/)]\ndef S (k : \u2115) : Finset \u2115 :=\n  (Finset.range (10 ^ k)).filter solitary"
+    },
+    {
+      "id": "S_succ_eq_union",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 19.88,
+      "proof_length": 98,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any k\u22650, S_{k+1} = S_k \u222a {2\u00b710^k-1} \u222a {2\u00b710^k + n | n\u2208 S_k}.",
+      "is_main": false,
+      "col": 1,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any $k\\ge0$, $S_{k+1} = S_k \\cup \\{2\\cdot10^k-1\\} \\cup \\{2\\cdot10^k + n \\mid n\\in S_k\\}$. -/)\n  (proof := /-- The equality is proved by double inclusion using the characterization lemmas. For the forward inclusion, take $m\\in S_{k+1}$ ($m<10^{k+1}$ solitary). If $m<10^k$ then $m\\in S_k$. Otherwise $m\\in[10^k,10^{k+1}-1]$. By Lemma 3, $m$ must be either $2\\cdot10^k-1$ or of the form $2\\cdot10^k+n$ with $n<10^k$. In the latter case $n$ is solitary by Lemma 2, so $n\\in S_k$ and $m$ lies in the image set. Conversely, $S_k\\subseteq S_{k+1}$ because numbers $<10^k$ are also $<10^{k+1}$; $2\\cdot10^k-1$ is solitary by Lemma 1 and lies in $[10^k,10^{k+1}-1]$; and if $n\\in S_k$ then $2\\cdot10^k+n$ is solitary by Lemma 2 and $<10^{k+1}$, so belongs to $S_{k+1}$. -/)]\nlemma S_succ_eq_union (k : \u2115) : S (k+1) = (S k) \u222a {2 * 10 ^ k - 1} \u222a (Finset.image (fun n : \u2115 => 2 * 10 ^ k + n) (S k)) := by\n  ext m\n  constructor\n  \u00b7 intro hm\n    have hm_solitary : solitary m := by\n      rcases Finset.mem_filter.mp hm with \u27e8hm_range, hm_sol\u27e9\n      exact hm_sol\n    have hm_bound : m < 10 ^ (k+1) := by\n      rcases Finset.mem_filter.mp hm with \u27e8hm_range, hm_sol\u27e9\n      exact Finset.mem_range.mp hm_range\n    by_cases h : m < 10 ^ k\n    \u00b7 have hm_Sk : m \u2208 S k := by\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 apply Finset.mem_range.mpr\n          exact h\n        \u00b7 exact hm_solitary\n      apply Finset.mem_union_left\n      apply Finset.mem_union_left\n      exact hm_Sk\n    \u00b7 have hm_ge : 10 ^ k \u2264 m := by omega\n      have hm_special : m = 2 * 10 ^ k - 1 \u2228 \u2203 n : \u2115, n < 10 ^ k \u2227 m = 2 * 10 ^ k + n := by\n        by_contra! hnot\n        rcases hnot with \u27e8hm_ne, hm_not\u27e9\n        have h_not_solitary : \u00ac solitary m := by\n          apply not_solitary_of_not_special k m hm_ge ?_ \u27e8hm_ne, hm_not\u27e9\n          have hm_upper : m \u2264 10 ^ (k+1) - 1 := by\n            have : m < 10 ^ (k+1) := hm_bound\n            omega\n          exact hm_upper\n        exact h_not_solitary hm_solitary\n      rcases hm_special with (h_eq | \u27e8n, hn_lt, h_eq\u27e9)\n      \u00b7 apply Finset.mem_union_left\n        apply Finset.mem_union_right\n        apply Finset.mem_singleton.mpr\n        exact h_eq\n      \u00b7 have hn_solitary : solitary n := by\n          rw [h_eq] at hm_solitary\n          have h_iff := (solitary_iff_of_range k n hn_lt).mp hm_solitary\n          exact h_iff\n        have hn_Sk : n \u2208 S k := by\n          apply Finset.mem_filter.mpr\n          constructor\n          \u00b7 apply Finset.mem_range.mpr\n            exact hn_lt\n          \u00b7 exact hn_solitary\n        apply Finset.mem_union_right\n        apply Finset.mem_image.mpr\n        refine \u27e8n, hn_Sk, ?_\u27e9\n        symm; exact h_eq\n  \u00b7 intro hm\n    rcases Finset.mem_union.mp hm with (hm' | hm')\n    \u00b7 rcases Finset.mem_union.mp hm' with (hm_Sk | hm_singleton)\n      \u00b7 have hm_lt_10k : m < 10 ^ k := by\n          rcases Finset.mem_filter.mp hm_Sk with \u27e8hm_range, _\u27e9\n          exact Finset.mem_range.mp hm_range\n        have hm_solitary : solitary m := by\n          rcases Finset.mem_filter.mp hm_Sk with \u27e8_, hm_sol\u27e9\n          exact hm_sol\n        have hm_lt_10kplus1 : m < 10 ^ (k+1) := by\n          have hpos : 0 < 10 ^ k := pow_pos (by norm_num) k\n          have h : 10 ^ k < 10 ^ (k+1) := by\n            calc\n              10 ^ k = 1 * 10 ^ k := by ring\n              _ < 10 * 10 ^ k := Nat.mul_lt_mul_of_pos_right (by norm_num) hpos\n              _ = 10 ^ (k+1) := by ring\n          omega\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 apply Finset.mem_range.mpr\n          exact hm_lt_10kplus1\n        \u00b7 exact hm_solitary\n      \u00b7 have hm_eq : m = 2 * 10 ^ k - 1 := Finset.mem_singleton.mp hm_singleton\n        subst hm_eq\n        have hm_solitary : solitary (2 * 10 ^ k - 1) := solitary_2_mul_10_pow_k_sub_one k\n        have hm_bound : 2 * 10 ^ k - 1 < 10 ^ (k+1) := by\n          have h_pos : 0 < 2 * 10 ^ k := by\n            have : 0 < 10 ^ k := pow_pos (by norm_num) k\n            nlinarith\n          have h_lt : 2 * 10 ^ k - 1 < 2 * 10 ^ k := Nat.sub_lt h_pos (by norm_num)\n          have h_le' : 2 * 10 ^ k \u2264 10 ^ (k+1) := by\n            calc\n              2 * 10 ^ k \u2264 10 * 10 ^ k := Nat.mul_le_mul_right (10 ^ k) (by omega)\n              _ = 10 ^ (k+1) := by ring\n          exact lt_of_lt_of_le h_lt h_le'\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 apply Finset.mem_range.mpr\n          exact hm_bound\n        \u00b7 exact hm_solitary\n    \u00b7 rcases Finset.mem_image.mp hm' with \u27e8n, hn_Sk, hm_eq\u27e9\n      have hm_eq' : m = 2 * 10 ^ k + n := by\n        symm; exact hm_eq\n      subst hm_eq'\n      have hn_lt_10k : n < 10 ^ k := by\n        rcases Finset.mem_filter.mp hn_Sk with \u27e8hn_range, _\u27e9\n        exact Finset.mem_range.mp hn_range\n      have hn_solitary : solitary n := by\n        rcases Finset.mem_filter.mp hn_Sk with \u27e8_, hn_sol\u27e9\n        exact hn_sol\n      have hm_solitary : solitary (2 * 10 ^ k + n) := by\n        apply (solitary_iff_of_range k n hn_lt_10k).mpr\n        exact hn_solitary\n      have hm_bound : 2 * 10 ^ k + n < 10 ^ (k+1) := by\n        have h : 2 * 10 ^ k + n < 3 * 10 ^ k := by\n          nlinarith\n        calc\n          2 * 10 ^ k + n < 3 * 10 ^ k := h\n          _ < 10 * 10 ^ k := by nlinarith\n          _ = 10 ^ (k+1) := by ring\n      apply Finset.mem_filter.mpr\n      constructor\n      \u00b7 apply Finset.mem_range.mpr\n        exact hm_bound\n      \u00b7 exact hm_solitary"
+    },
+    {
+      "id": "card_S_succ_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.9,
+      "proof_length": 55,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any k\u22650, s_{k+1} = 2 s_k + 1.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For any $k\\ge0$, $s_{k+1} = 2\\,s_k + 1$. -/)\n  (proof := /-- From `S_succ_eq_union`, the three sets on the right are pairwise disjoint (their elements lie in disjoint intervals), so the cardinality of the union is the sum of the cardinalities. $|S_k| = s_k$, $|\\{2\\cdot10^k-1\\}| = 1$, and $|\\{2\\cdot10^k+n\\mid n\\in S_k\\}| = |S_k| = s_k$ because the map $n\\mapsto 2\\cdot10^k+n$ is injective. Hence $s_{k+1}= s_k+1+s_k = 2s_k+1$. -/)]\nlemma card_S_succ_eq (k : \u2115) : s (k+1) = 2 * s k + 1 := by\n  unfold s\n  have h_eq : S (k+1) = (S k) \u222a {2 * 10 ^ k - 1} \u222a (Finset.image (fun n : \u2115 => 2 * 10 ^ k + n) (S k)) := S_succ_eq_union k\n  rw [h_eq]\n  have disjoint_S_singleton : Disjoint (S k) ({2 * 10 ^ k - 1} : Finset \u2115) := by\n    rw [Finset.disjoint_iff_inter_eq_empty]\n    ext x\n    constructor\n    \u00b7 intro hx\n      exfalso\n      rcases Finset.mem_inter.1 hx with \u27e8hxS, hxB\u27e9\n      have hx_lt : x < 10 ^ k := by\n        have : x \u2208 range (10 ^ k) := (Finset.mem_filter.mp hxS).1\n        exact Finset.mem_range.1 this\n      have hxB_val : x = 2 * 10 ^ k - 1 := by simpa using hxB\n      have h_one_le : 1 \u2264 10 ^ k := Nat.one_le_pow k 10 (by norm_num)\n      have hle : 10 ^ k \u2264 2 * 10 ^ k - 1 := by\n        have : 10 ^ k + 1 \u2264 2 * 10 ^ k := by\n          calc\n            10 ^ k + 1 \u2264 10 ^ k + 10 ^ k := Nat.add_le_add_left h_one_le _\n            _ = 2 * 10 ^ k := by ring\n        omega\n      have hx_ge : x \u2265 10 ^ k := by\n        rw [hxB_val]\n        exact hle\n      exact not_lt.mpr hx_ge hx_lt\n    \u00b7 intro hx\n      exfalso\n      exact Finset.not_mem_empty x hx\n  have disjoint_union_singleton_image : Disjoint ((S k) \u222a ({2 * 10 ^ k - 1} : Finset \u2115)) (Finset.image (fun n : \u2115 => 2 * 10 ^ k + n) (S k)) := by\n    rw [Finset.disjoint_iff_inter_eq_empty]\n    ext x\n    constructor\n    \u00b7 intro hx\n      exfalso\n      rcases Finset.mem_inter.1 hx with \u27e8hxU, hxC\u27e9\n      rcases Finset.mem_union.1 hxU with (hxS | hxB)\n      \u00b7 -- x \u2208 S k\n        have hx_lt : x < 10 ^ k := by\n          have : x \u2208 range (10 ^ k) := (Finset.mem_filter.mp hxS).1\n          exact Finset.mem_range.1 this\n        rcases Finset.mem_image.1 hxC with \u27e8y, hyS, hy_eq\u27e9\n        have hx_val : x = 2 * 10 ^ k + y := hy_eq.symm\n        have hx_ge : x \u2265 2 * 10 ^ k := by\n          rw [hx_val]\n          exact Nat.le_add_right _ _\n        have h_gt : 10 ^ k < 2 * 10 ^ k := by\n          have hpos : 0 < 10 ^ k := pow_pos (by norm_num) k\n          omega\n        have : x > 10 ^ k := lt_of_lt_of_le h_gt hx_ge\n        omega\n      \u00b7 -- x \u2208 {2*10^k - 1}\n        have hxB_val : x = 2 * 10 ^ k - 1 := by simpa using hxB\n        rcases Finset.mem_image.1 hxC with \u27e8y, hyS, hy_eq\u27e9\n        have hx_val' : x = 2 * 10 ^ k + y := hy_eq.symm\n        have h_lt : 2 * 10 ^ k - 1 < 2 * 10 ^ k := by\n          have hpos : 0 < 2 * 10 ^ k := mul_pos (by norm_num) (pow_pos (by norm_num) k)\n          exact Nat.sub_lt hpos (by norm_num)\n        have h_le : 2 * 10 ^ k \u2264 2 * 10 ^ k + y := Nat.le_add_right _ _\n        have h_lt2 : 2 * 10 ^ k - 1 < 2 * 10 ^ k + y := lt_of_lt_of_le h_lt h_le\n        rw [hxB_val] at hx_val'\n        have : 2 * 10 ^ k - 1 = 2 * 10 ^ k + y := hx_val'\n        exact Nat.ne_of_lt h_lt2 this\n    \u00b7 intro hx\n      exfalso\n      exact Finset.not_mem_empty x hx\n  have h_card_union1 : card ((S k) \u222a ({2 * 10 ^ k - 1} : Finset \u2115)) = card (S k) + 1 := by\n    rw [Finset.card_union_eq_card_add_card.mpr disjoint_S_singleton, Finset.card_singleton]\n  have h_card_union2 : card (((S k) \u222a ({2 * 10 ^ k - 1} : Finset \u2115)) \u222a (Finset.image (fun n : \u2115 => 2 * 10 ^ k + n) (S k))) = \n    card ((S k) \u222a ({2 * 10 ^ k - 1} : Finset \u2115)) + card (Finset.image (fun n : \u2115 => 2 * 10 ^ k + n) (S k)) :=\n    Finset.card_union_eq_card_add_card.mpr disjoint_union_singleton_image\n  rw [h_card_union2, h_card_union1]\n  have h_card_image : card (Finset.image (fun n : \u2115 => 2 * 10 ^ k + n) (S k)) = card (S k) := by\n    apply Finset.card_image_of_injective\n    intro x y h\n    have h' : 2 * 10 ^ k + x = 2 * 10 ^ k + y := by simpa using h\n    exact Nat.add_left_cancel h'\n  rw [h_card_image]\n  omega"
+    },
+    {
+      "id": "card_target_set_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.05,
+      "proof_length": 45,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The set in the problem has cardinality exactly 2^{2026}-1, hence at most 2^{2026}-1.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- The set in the problem has cardinality exactly $2^{2026}-1$, hence at most $2^{2026}-1$. -/)\n  (proof := /-- By `solitary_iff`, the filter condition is equivalent to `solitary`. Thus the target set equals the set of solitary $n$ in $[1,10^{2026}-1]$. Since $0$ is not solitary (`not_solitary_zero`), this set is exactly $S_{2026}$. Therefore its cardinality is $s_{2026} = 2^{2026}-1$ by `s_eq_pow_sub_one`. Hence at most $2^{2026}-1$. -/)]\nlemma card_target_set_eq : (Finset.filter (fun n => \u2200 a \u2208 Finset.range (n+1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a))) (Finset.Icc 1 (10 ^ 2026 - 1))).card = 2 ^ 2026 - 1 := by\n  have hcard_s2026 : s 2026 = 2^2026 - 1 := s_eq_pow_sub_one 2026\n  have hS_filter_eq : (S 2026) = (Finset.filter (fun n => \u2200 a \u2208 Finset.range (n+1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a))) (Finset.Icc 1 (10 ^ 2026 - 1))) := by\n    ext n\n    constructor\n    \u00b7 intro hn\n      unfold S at hn\n      rw [Finset.mem_filter] at hn\n      rcases hn with \u27e8hnrange, hsol\u27e9\n      have hsol' : \u2200 a \u2208 Finset.range (n+1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a)) := by\n        rw [\u2190 solitary_iff]\n        exact hsol\n      have hnpos : 1 \u2264 n := by\n        by_contra! h\n        -- h: n < 1, so n = 0\n        have hn0 : n = 0 := by omega\n        subst hn0\n        have : \u00ac solitary 0 := not_solitary_zero\n        exact this hsol\n      apply Finset.mem_filter.mpr\n      constructor\n      \u00b7 apply Finset.mem_Icc.mpr\n        constructor\n        \u00b7 exact hnpos\n        \u00b7 have hbound : n < 10^2026 := Finset.mem_range.1 hnrange\n          omega\n      \u00b7 exact hsol'\n    \u00b7 intro hn\n      rw [Finset.mem_filter] at hn\n      rcases hn with \u27e8hnIcc, hsol'\u27e9\n      have hsol : solitary n := by\n        rw [solitary_iff]\n        exact hsol'\n      have hnrange : n \u2208 Finset.range (10 ^ 2026) := by\n        rcases Finset.mem_Icc.1 hnIcc with \u27e8hn1, hn2\u27e9\n        apply Finset.mem_range.mpr\n        omega\n      unfold S\n      apply Finset.mem_filter.mpr\n      exact \u27e8hnrange, hsol\u27e9\n  calc\n    (Finset.filter (fun n => \u2200 a \u2208 Finset.range (n+1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a))) (Finset.Icc 1 (10 ^ 2026 - 1))).card\n        = (S 2026).card := by rw [hS_filter_eq]\n    _ = s 2026 := rfl\n    _ = 2 ^ 2026 - 1 := hcard_s2026"
+    },
+    {
+      "id": "not_solitary_of_not_special",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 20.92,
+      "proof_length": 116,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any k\u22650 and m with 10^k\u2264 m\u2264 10^{k+1}-1, if m\u22602\u00b710^k-1 and m is not of the form 2\u00b710^k+n for any 0\u2264 n<10^k, then m is not solitary.",
+      "is_main": false,
+      "col": 1,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- For any $k\\ge0$ and $m$ with $10^k\\le m\\le 10^{k+1}-1$, if $m\\neq2\\cdot10^k-1$ and $m$ is not of the form $2\\cdot10^k+n$ for any $0\\le n<10^k$, then $m$ is not solitary. -/)\n  (proof := /-- Under the assumptions, $m$ lies either in $[10^k,2\\cdot10^k-2]$ or $[3\\cdot10^k,10^{k+1}-1]$. Set $a = 10^k-1$ (all $k$ nines, no digit $1$) and $b = m-a = m-10^k+1$. The leading digit $b_k$ (position $k$) is not $1$: in the first interval $b_k=0$, in the second $2\\le b_k\\le9$. Let $I=\\{i<k\\mid b_i=1\\}$ and $S=\\sum_{i\\in I}10^i$. Define $A = a - S$ and $B = b + S$. Then $A$ has digits $8$ or $9$ in positions $i<k$ (no $1$), $B$ has digits $b_i + c_i$ (where $c_i=1$ if $i\\in I$ else $0$) which are $\\neq 1$, and $B$'s digit at $k$ is $b_k\\neq1$, so both $A,B$ lack digit $1$, and $A+B = a+b = m$. Hence $m$ is not solitary. -/)]\nlemma not_solitary_of_not_special (k m : \u2115) (hm_lower : 10 ^ k \u2264 m) (hm_upper : m \u2264 10 ^ (k+1) - 1)\n    (hm_not_special : m \u2260 2 * 10 ^ k - 1 \u2227 \u2200 n : \u2115, n < 10 ^ k \u2192 m \u2260 2 * 10 ^ k + n) : \u00ac solitary m := by\n  sorry_using [solitary]"
+    },
+    {
+      "id": "not_solitary_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.0,
+      "proof_length": 34,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "0 is not solitary.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- $0$ is not solitary. -/)\n  (proof := /-- The only decomposition $0 = a + b$ with $a,b\\ge0$ is $0=0+0$. The decimal representation of $0$ is ``0``, which does not contain the digit $1$. Hence $0$ fails the solitary condition when $a=0$. -/)]\nlemma not_solitary_zero : \u00ac solitary 0 := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [solitary]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [solitary]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold solitary; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [solitary]; field_simp; ring; done) | (unfold solitary; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "s",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "s_k = |S_k| is the number of solitary integers strictly less than 10^k.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- $s_k = |S_k|$ is the number of solitary integers strictly less than $10^k$. -/)]\ndef s (k : \u2115) : \u2115 := (S k).card"
+    },
+    {
+      "id": "s_eq_pow_sub_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.87,
+      "proof_length": 43,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k\u22650, s_k = 2^k - 1.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For all $k\\ge0$, $s_k = 2^k - 1$. -/)\n  (proof := /-- By induction on $k$. Base $k=0$: $S_0$ is the set of solitary numbers $<1$, i.e., $\\{0\\}$ but $0$ is not solitary, so $S_0=\\emptyset$ and $s_0=0 = 2^0-1$. Induction step: assume $s_k = 2^k - 1$. Then $s_{k+1}=2s_k+1 = 2(2^k-1)+1 = 2^{k+1}-1$ by `card_S_succ_eq`. -/)]\nlemma s_eq_pow_sub_one (k : \u2115) : s k = 2 ^ k - 1 := by\n  induction' k with k ih\n  \u00b7 -- base\n    simp [s, S, solitary]\n  \u00b7 -- step\n    rw [card_S_succ_eq k]\n    rw [ih]\n    have hpos : 2 \u2264 2 * 2 ^ k := by\n      have h := Nat.one_le_two_pow (n := k)\n      nlinarith\n    omega"
+    },
+    {
+      "id": "solitary",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A natural number n is *solitary* if for every decomposition n = a + b with a, b \u2265 0, at least one of a or b contains the digit 1 in its decimal representation.",
+      "is_main": false,
+      "col": 1,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- A natural number $n$ is *solitary* if for every decomposition $n = a + b$ with $a, b \\ge 0$, at least one of $a$ or $b$ contains the digit $1$ in its decimal representation. -/)]\ndef solitary (n : \u2115) : Prop :=\n  \u2200 a : \u2115, a \u2264 n \u2192 (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a))"
+    },
+    {
+      "id": "solitary_2_mul_10_pow_k_sub_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 18.39,
+      "proof_length": 75,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For every k \u2265 0, the number 2 \u00b7 10^k - 1 is solitary.",
+      "is_main": false,
+      "col": 1,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- For every $k \\ge 0$, the number $2 \\cdot 10^k - 1$ is solitary. -/)\n  (proof := /-- Assume for contradiction that $n = 2\\cdot10^k-1$ is not solitary. Then there exist $a,b\\ge0$ with $a+b=n$ and neither contains digit $1$. WLOG $a\\ge b$, so $2a \\ge n = 2\\cdot10^k-1$. The smallest even integer $\\ge 2\\cdot10^k-1$ is $2\\cdot10^k$, thus $2a \\ge 2\\cdot10^k$ and $a\\ge 10^k$. Also $a\\le n = 2\\cdot10^k-1$. Hence $10^k\\le a\\le2\\cdot10^k-1$, so the $k$-th digit of $a$ (units digit at position $0$) is exactly $1$, contradicting that $a$ lacks digit $1$. Therefore $n$ is solitary. -/)]\nlemma solitary_2_mul_10_pow_k_sub_one (k : \u2115) : solitary (2 * 10 ^ k - 1) := by\n  have hmem : \u2200 (k n : \u2115), 10 ^ k \u2264 n \u2192 n < 2 * 10 ^ k \u2192 1 \u2208 Nat.digits 10 n := by\n    intro k n hk hn\n    induction' k with k ih generalizing n\n    \u00b7 -- k=0\n      have : n = 1 := by\n        have h10 : 10 ^ 0 = 1 := by norm_num\n        have : n < 2 := by\n          simpa [h10] using hn\n        omega\n      subst this\n      simp\n    \u00b7 -- k.succ\n      have hnpos : 0 < n := by\n        have : 0 < 10 ^ k.succ := pow_pos (by norm_num) (k.succ)\n        omega\n      rcases Nat.digits_of_two_le_of_pos (by norm_num : 2 \u2264 10) hnpos with hdigits\n      rw [hdigits]\n      have hdiv_low : 10 ^ k \u2264 n / 10 := by\n        have hk' : 10 ^ (k+1) \u2264 n := hk\n        have h_eq : 10 ^ (k+1) = 10 * 10 ^ k := by ring\n        rw [h_eq] at hk'\n        omega\n      have hdiv_high : n / 10 < 2 * 10 ^ k := by\n        have hn' : n < 2 * 10 ^ (k+1) := hn\n        have h_eq : 2 * 10 ^ (k+1) = 20 * 10 ^ k := by ring\n        rw [h_eq] at hn'\n        omega\n      have ih_div := ih (n / 10) hdiv_low hdiv_high\n      apply List.mem_cons_of_mem\n      exact ih_div\n  intro a ha\n  have ha_le_n : a \u2264 2 * 10 ^ k - 1 := ha\n  have h_cases : a < 10 ^ k \u2228 10 ^ k \u2264 a := Nat.lt_or_ge a (10 ^ k)\n  rcases h_cases with (h_lt | h_ge)\n  \u00b7 -- a < 10^k\n    have h_diff_ge : 10 ^ k \u2264 (2 * 10 ^ k - 1) - a := by\n      have ha_le : a \u2264 10 ^ k - 1 := by omega\n      omega\n    have h_diff_lt : (2 * 10 ^ k - 1) - a < 2 * 10 ^ k := by\n      omega\n    have h_mem : 1 \u2208 Nat.digits 10 ((2 * 10 ^ k - 1) - a) :=\n      hmem k ((2 * 10 ^ k - 1) - a) h_diff_ge h_diff_lt\n    exact Or.inr h_mem\n  \u00b7 -- 10^k \u2264 a\n    have ha_lt_2pow : a < 2 * 10 ^ k := by\n      have hpos : 0 < 2 * 10 ^ k := by positivity\n      have h_lt : 2 * 10 ^ k - 1 < 2 * 10 ^ k := Nat.sub_lt hpos (by norm_num)\n      exact lt_of_le_of_lt ha_le_n h_lt\n    have h_mem : 1 \u2208 Nat.digits 10 a :=\n      hmem k a h_ge ha_lt_2pow\n    exact Or.inl h_mem\n\n@[blueprint\n  (statement := /-- For any $k \\ge 0$ and any $n$ with $0 \\le n < 10^k$, the number $2 \\cdot 10^k + n$ is solitary iff $n$ is solitary. -/)\n  (proof := /-- We prove both directions by contradiction.\n\n($\\Rightarrow$) Suppose $2\\cdot10^k+n$ is solitary but $n$ is not. Then there exist $a,b\\ge0$ with $n=a+b$ and neither contains digit $1$. Set $a' = 2\\cdot10^k + a$, $b' = b$. Then $a'+b' = 2\\cdot10^k+n = m$. Since $a<10^k$, the decimal digits of $a'$ are those of $a$ in lower positions, digit $2$ at position $k$, and zeros above; thus $a'$ lacks digit $1$ because $a$ does and $2\\neq1$. Also $b'=b$ lacks digit $1$. This contradicts $m$ solitary.\n\n($\\Leftarrow$) Suppose $n$ is solitary but $m=2\\cdot10^k+n$ is not. Then there exist $a,b\\ge0$ with $a+b=m$ and neither contains digit $1$. Write $a = x\\cdot10^k + a'$, $b = y\\cdot10^k + b'$ with $0\\le a',b' < 10^k$. Since $a$ lacks digit $1$, its digit at position $k$ is $x\\bmod 10\\neq 1$, so $x\\neq1$. Similarly $y\\neq1$. From $a+b=m=(x+y)10^k + a'+b' = 2\\cdot10^k+n$, we analyze $x+y$. Cases $x+y=0,1,3$ or more lead to contradictions (sum too small or too large, or $x=1$ or $y=1$). The only viable case is $x+y=2$ with $(x,y)=(2,0)$ or $(0,2)$ (the pair $(1,1)$ is impossible because $x\\neq1,y\\neq1$). By symmetry assume $x=2$, $y=0$. Then $a'+b'=n$. Since $a'$ (lower digits of $a$) lacks digit $1$ and $b'=b$ lacks digit $1$, we obtain a decomposition of $n$ without digit $1$, contradicting $n$ solitary. Hence $m$ must be solitary. -/)]"
+    },
+    {
+      "id": "solitary_iff",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.12,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "A natural number n is solitary iff for every a in {0,\u2026,n}, either a or n-a contains the digit 1 in decimal.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- A natural number $n$ is solitary iff for every $a$ in $\\{0,\\dots,n\\}$, either $a$ or $n-a$ contains the digit $1$ in decimal. -/)\n  (proof := /-- The condition $\\forall a \\le n$ is equivalent to $\\forall a \\in \\text{range}(n+1)$ because $\\text{range}(n+1)$ contains exactly $0,\\dots,n$. Thus the equivalence follows directly from the definition of `solitary`. -/)]\nlemma solitary_iff (n : \u2115) : solitary n \u2194 \u2200 a \u2208 Finset.range (n+1), (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a)) := by\n  constructor\n  \u00b7 intro h a ha\n    have ha_le_n : a \u2264 n := by\n      have h_lt : a < n+1 := Finset.mem_range.1 ha\n      omega\n    exact h a ha_le_n\n  \u00b7 intro h a ha_le_n\n    have ha_mem_range : a \u2208 Finset.range (n+1) := Finset.mem_range.mpr (Nat.lt_succ_of_le ha_le_n)\n    exact h a ha_mem_range"
+    },
+    {
+      "id": "solitary_iff_of_range",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 25.68,
+      "proof_length": 217,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any k \u2265 0 and any n with 0 \u2264 n < 10^k, the number 2 \u00b7 10^k + n is solitary iff n is solitary.",
+      "is_main": false,
+      "col": 1,
+      "level": 5,
+      "lean": "lemma solitary_iff_of_range (k n : \u2115) (h : n < 10 ^ k) : solitary (2 * 10 ^ k + n) \u2194 solitary n := by\n  have no_one_in_digits_two_mul_pow (k : \u2115) : 1 \u2209 Nat.digits 10 (2*10 ^ k) := by\n    have hb : 1 < 10 := by norm_num\n    have hm : 0 < 2 := by norm_num\n    rw [show (2:\u2115)*10 ^ k = 10 ^ k * 2 by ring]\n    rw [Nat.digits_base_pow_mul hb hm]\n    intro h\n    rcases List.mem_append.mp h with (h' | h')\n    \u00b7 -- 1 \u2208 List.replicate k 0\n      have : (1:\u2115) \u2209 List.replicate k 0 := by\n        intro hmem; have := List.mem_replicate.mp hmem; omega\n      exact this h'\n    \u00b7 -- 1 \u2208 digits 10 2\n      have : Nat.digits 10 2 = [2] := by norm_num\n      rw [this] at h'\n      simp at h'\n  have one_in_digits_10_pow_add (k r : \u2115) (hr : r < 10 ^ k) : 1 \u2208 Nat.digits 10 (10 ^ k + r) := by\n    induction' k with k ih generalizing r\n    \u00b7 -- k = 0\n      have : 10 ^ 0 = 1 := by norm_num\n      rw [this] at hr\n      have : r = 0 := by omega\n      subst this\n      simp [Nat.digits_one]\n    \u00b7 -- k.succ\n      have h10pos : 1 < 10 := by norm_num\n      have h10kpos : 10 ^ k > 0 := by\n        apply pow_pos (by norm_num : 0 < 10)\n      -- write r = 10*q + d, with d < 10, q < 10^k\n      have hdiv := Nat.div_add_mod r 10\n      set q := r / 10 with hq\n      set d := r % 10 with hd\n      have hdq : d < 10 := Nat.mod_lt _ (by norm_num : 0 < 10)\n      have hq_lt : q < 10 ^ k := by\n        have : r < 10 ^ (k+1) := hr\n        have h : 10 ^ (k+1) = 10 ^ k * 10 := by ring\n        rw [h] at this\n        exact (Nat.div_lt_iff_lt_mul (by norm_num : 0 < 10)).mpr this\n      have hsum : 10 ^ (k+1) + r = 10 * (10 ^ k + q) + d := by\n        calc\n          10 ^ (k+1) + r = 10 * 10 ^ k + (10*q + d) := by\n            rw [Nat.pow_succ, \u2190 hdiv, hq, hd]\n            ring\n          _ = 10*(10 ^ k + q) + d := by ring\n      rw [hsum]\n      rw [add_comm, Nat.digits_add 10 h10pos d (10 ^ k + q) hdq (by\n        right\n        have : 10 ^ k > 0 := h10kpos\n        omega\n      )]\n      -- digits = d :: digits (10^k + q)\n      -- We need 1 \u2208 d :: digits (10^k + q)\n      by_cases hd1 : d = 1\n      \u00b7 rw [hd1]; simp\n      \u00b7 apply List.mem_cons_of_mem\n        apply ih q hq_lt\n  have mem_digits_10_two_mul_pow_add_iff (k r : \u2115) (hr : r < 10 ^ k) : 1 \u2208 Nat.digits 10 (2*10 ^ k + r) \u2194 1 \u2208 Nat.digits 10 r := by\n    constructor\n    \u00b7 intro h\n      induction' k with k ih generalizing r\n      \u00b7 -- k = 0\n        have h10pow0 : 10^0 = 1 := by norm_num\n        rw [h10pow0] at hr\n        have hr0 : r = 0 := by omega\n        subst hr0\n        -- h: 1 \u2208 digits 10 (2*1) = digits 2, contradiction\n        have h_no_one : 1 \u2209 Nat.digits 10 (2*10^0) := by\n          rw [h10pow0]; norm_num\n        exact absurd h h_no_one\n      \u00b7 -- k.succ\n        by_cases hr0 : r = 0\n        \u00b7 subst hr0\n          -- h: 1 \u2208 digits 10 (2*10^(k+1))\n          have h_no_one : 1 \u2209 Nat.digits 10 (2*10^(k+1)) := no_one_in_digits_two_mul_pow (k+1)\n          exact absurd h h_no_one\n        \u00b7 -- r \u2260 0\n          have h10pos : 1 < 10 := by norm_num\n          have h10kpos : 10 ^ k > 0 := pow_pos (by norm_num : 0 < 10) k\n          set d := r % 10 with hd\n          set q := r / 10 with hq\n          have hdq : d < 10 := Nat.mod_lt _ (by norm_num : 0 < 10)\n          have hq_lt : q < 10 ^ k := by\n            have : r < 10 ^ (k+1) := hr\n            have hpow_succ : 10 ^ (k+1) = 10 ^ k * 10 := by ring\n            rw [hpow_succ] at this\n            exact (Nat.div_lt_iff_lt_mul (by norm_num : 0 < 10)).mpr this\n          have h_r_eq : r = 10*q + d := by\n            rw [hq, hd]; exact (Nat.div_add_mod r 10).symm\n          have h_r_digits : Nat.digits 10 r = d :: Nat.digits 10 q := by\n            rw [h_r_eq]\n            rw [add_comm, Nat.digits_add 10 h10pos d q hdq (by\n              -- need d \u2260 0 \u2228 q \u2260 0; since r \u2260 0, this holds\n              have : r \u2260 0 := hr0\n              rw [h_r_eq] at this\n              omega\n            )]\n          have h_eq : 2 * 10 ^ (k+1) + r = d + 10 * (2 * 10 ^ k + q) := by\n            rw [h_r_eq]\n            calc\n              2 * 10 ^ (k+1) + (10*q + d) = 2 * (10 * 10 ^ k) + 10*q + d := by ring\n              _ = 10*(2*10 ^ k) + 10*q + d := by ring\n              _ = 10*(2*10 ^ k + q) + d := by ring\n              _ = d + 10*(2*10 ^ k + q) := add_comm _ _\n          rw [h_eq] at h\n          rw [Nat.digits_add 10 h10pos d (2*10 ^ k + q) hdq (by\n            right\n            have : 2*10 ^ k + q > 0 := by nlinarith [h10kpos]\n            exact this.ne.symm\n          )] at h\n          -- h : 1 \u2208 d :: digits 10 (2*10 ^ k + q)\n          rcases List.mem_cons.mp h with (hd1 | htail)\n          \u00b7 -- hd1 : 1 = d\n            rw [\u2190 hd1] at h_r_digits\n            -- h_r_digits: digits 10 r = 1 :: digits 10 q\n            -- need to show 1 \u2208 digits 10 r\n            rw [h_r_digits]\n            simp\n          \u00b7 -- 1 \u2208 digits 10 (2*10 ^ k + q)\n            have hq_digits : 1 \u2208 Nat.digits 10 q := ih q hq_lt htail\n            rw [h_r_digits]\n            exact List.mem_cons_of_mem _ hq_digits\n    \u00b7 intro h\n      induction' k with k ih generalizing r\n      \u00b7 -- k = 0\n        have h10pow0 : 10^0 = 1 := by norm_num\n        rw [h10pow0] at hr\n        have hr0 : r = 0 := by omega\n        subst hr0\n        -- h: 1 \u2208 digits 10 0 is false, contradiction\n        have : 1 \u2209 Nat.digits 10 0 := by norm_num\n        exact absurd h this\n      \u00b7 -- k.succ\n        by_cases hr0 : r = 0\n        \u00b7 subst hr0\n          -- h: 1 \u2208 digits 10 0, contradiction\n          have : 1 \u2209 Nat.digits 10 0 := by norm_num\n          exact absurd h this\n        \u00b7 -- r \u2260 0\n          have h10pos : 1 < 10 := by norm_num\n          have h10kpos : 10 ^ k > 0 := pow_pos (by norm_num : 0 < 10) k\n          set d := r % 10 with hd\n          set q := r / 10 with hq\n          have hdq : d < 10 := Nat.mod_lt _ (by norm_num : 0 < 10)\n          have hq_lt : q < 10 ^ k := by\n            have : r < 10 ^ (k+1) := hr\n            have hpow_succ : 10 ^ (k+1) = 10 ^ k * 10 := by ring\n            rw [hpow_succ] at this\n            exact (Nat.div_lt_iff_lt_mul (by norm_num : 0 < 10)).mpr this\n          have h_r_eq : r = 10*q + d := by\n            rw [hq, hd]; exact (Nat.div_add_mod r 10).symm\n          have h_r_digits : Nat.digits 10 r = d :: Nat.digits 10 q := by\n            rw [h_r_eq]\n            rw [add_comm, Nat.digits_add 10 h10pos d q hdq (by\n              have : r \u2260 0 := hr0\n              rw [h_r_eq] at this\n              omega\n            )]\n          rw [h_r_digits] at h\n          rcases List.mem_cons.mp h with (hd1 | hq1)\n          \u00b7 -- hd1 : 1 = d\n            have h_eq : 2 * 10 ^ (k+1) + r = d + 10*(2*10 ^ k + q) := by\n              rw [h_r_eq]\n              calc\n                2 * 10 ^ (k+1) + (10*q + d) = 2 * (10 * 10 ^ k) + 10*q + d := by ring\n                _ = 10*(2*10 ^ k) + 10*q + d := by ring\n                _ = 10*(2*10 ^ k + q) + d := by ring\n                _ = d + 10*(2*10 ^ k + q) := add_comm _ _\n            rw [h_eq]\n            rw [Nat.digits_add 10 h10pos d (2*10 ^ k + q) hdq (by\n              right; nlinarith [h10kpos]\n            )]\n            simp [hd1]\n          \u00b7 -- 1 \u2208 digits 10 q\n            have hq1' : 1 \u2208 Nat.digits 10 (2*10 ^ k + q) := ih q hq_lt hq1\n            have h_eq : 2 * 10 ^ (k+1) + r = d + 10*(2*10 ^ k + q) := by\n              rw [h_r_eq]\n              calc\n                2 * 10 ^ (k+1) + (10*q + d) = 2 * (10 * 10 ^ k) + 10*q + d := by ring\n                _ = 10*(2*10 ^ k) + 10*q + d := by ring\n                _ = 10*(2*10 ^ k + q) + d := by ring\n                _ = d + 10*(2*10 ^ k + q) := add_comm _ _\n            rw [h_eq]\n            rw [Nat.digits_add 10 h10pos d (2*10 ^ k + q) hdq (by\n              right; nlinarith [h10kpos]\n            )]\n            exact List.mem_cons_of_mem _ hq1'\n  constructor\n  \u00b7 intro hM a ha\n    have ha_le_M : a \u2264 2 * 10 ^ k + n := by\n      omega\n    rcases hM a ha_le_M with (h_a | h_Ma)\n    \u00b7 left; exact h_a\n    \u00b7 right\n      -- h_Ma : 1 \u2208 Nat.digits 10 ((2 * 10 ^ k + n) - a)\n      have hsub : (2 * 10 ^ k + n) - a = 2 * 10 ^ k + (n - a) := by\n        omega\n      rw [hsub] at h_Ma\n      have h_n_minus_a_lt : n - a < 10 ^ k := by\n        have : n - a \u2264 n := Nat.sub_le _ _\n        omega\n      -- use mem_digits_10_two_mul_pow_add_iff\n      rcases (mem_digits_10_two_mul_pow_add_iff k (n - a) h_n_minus_a_lt).mp h_Ma with h'\n      exact h'\n  \u00b7 intro hn a ha\n    have ha_le_M : a \u2264 2 * 10 ^ k + n := by\n      omega\n    by_cases ha_le_n : a \u2264 n\n    \u00b7 rcases hn a ha_le_n with (h_a | h_na)\n      \u00b7 left; exact h_a\n      \u00b7 right\n        have hsub : (2 * 10 ^ k + n) - a = 2 * 10 ^ k + (n - a) := by\n          omega\n        rw [hsub]\n        have h_na_lt : n - a < 10 ^ k := by\n          have : n - a \u2264 n := Nat.sub_le _ _\n          omega\n        apply (mem_digits_10_two_mul_pow_add_iff k (n - a) h_na_lt).mpr\n        exact h_na\n    \u00b7 -- a > n\n      by_cases ha_lt_10k : a < 10 ^ k\n      \u00b7 -- n < a < 10^k, then M-a contains 1 because it's between 10^k and 2*10^k\n        have hM_sub_a : (2 * 10 ^ k + n) - a = 10 ^ k + (10 ^ k - (a - n)) := by\n          omega\n        right\n        rw [hM_sub_a]\n        have h10k_sub : 10 ^ k - (a - n) < 10 ^ k := by\n          omega\n        exact one_in_digits_10_pow_add k (10 ^ k - (a - n)) h10k_sub\n      \u00b7 -- a >= 10^k\n        by_cases ha_lt_2_10k : a < 2 * 10 ^ k\n        \u00b7 -- 10^k \u2264 a < 2*10^k, then a contains 1\n          have ha_sub : a = 10 ^ k + (a - 10 ^ k) := by omega\n          left\n          rw [ha_sub]\n          have ha_sub_lt : a - 10 ^ k < 10 ^ k := by\n            omega\n          exact one_in_digits_10_pow_add k (a - 10 ^ k) ha_sub_lt\n        \u00b7 -- a >= 2*10^k\n          have ha' : a - 2 * 10 ^ k \u2264 n := by\n            omega\n          set a' := a - 2 * 10 ^ k with ha'_def\n          have ha'_le_n : a' \u2264 n := ha'\n          rcases hn a' ha'_le_n with (h_a' | h_na')\n          \u00b7 -- a' contains 1, then a = 2*10^k + a' contains 1\n            have ha_eq : a = 2 * 10 ^ k + a' := by omega\n            left\n            rw [ha_eq]\n            have ha'_lt_10k : a' < 10 ^ k := by\n              omega\n            apply (mem_digits_10_two_mul_pow_add_iff k a' ha'_lt_10k).mpr\n            exact h_a'\n          \u00b7 -- n - a' contains 1, and (2*10^k + n) - a = n - a'\n            have hsub' : (2 * 10 ^ k + n) - a = n - a' := by\n              omega\n            right\n            rw [hsub']\n            exact h_na'"
+    },
+    {
+      "id": "usamo_2026_p4_at_most",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The cardinality of the set described in the problem is at most 2^{2026} - 1.",
+      "is_main": true,
+      "col": 1,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The cardinality of the set described in the problem is at most $2^{2026} - 1$. -/)\n  (proof := /-- Follows from `card_target_set_eq`. -/)]\ntheorem usamo_2026_p4_at_most :\n    (Finset.filter (fun n =>\n        \u2200 a \u2208 Finset.range (n + 1),\n          (1 \u2208 Nat.digits 10 a) \u2228 (1 \u2208 Nat.digits 10 (n - a)))\n      (Finset.Icc 1 (10 ^ 2026 - 1))).card\n    \u2264 2 ^ 2026 - 1 := by\n  have h := card_target_set_eq\n  exact h.le"
+    }
+  ],
+  "edges": [
+    {
+      "source": "no_sum_implies_condition",
+      "target": "N_subset_target",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "k",
+      "target": "N_subset_target",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "no_such_a_b",
+      "target": "N_subset_target",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "digit_at",
+      "target": "N_subset_target",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "digit_at",
+      "target": "card_N_set_ge",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carry_eq",
+      "target": "carries_one_after_j",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_S_implies_digit_not_one",
+      "target": "carries_one_after_j",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "D",
+      "target": "carries_zero_to_j",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carry_eq",
+      "target": "carries_zero_to_j",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carry_eq",
+      "target": "carry_final_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "digit_at",
+      "target": "carry_final_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carry_eq",
+      "target": "carry_one_at_j_plus_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_S_implies_digit_not_one",
+      "target": "carry_one_at_j_plus_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_S_iff_no_one",
+      "target": "condition_iff_not_sum_S",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_N_set_iff",
+      "target": "mem_N_set_iff'",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "D",
+      "target": "mem_S_iff_no_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "digit_at",
+      "target": "mem_S_iff_no_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "D",
+      "target": "mem_S_implies_digit_not_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carry_one_at_j_plus_one",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "k",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carry_final_zero",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carry_seq",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_N_set_iff'",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carries_one_after_j",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "carries_zero_to_j",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "digit_at",
+      "target": "no_such_a_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "condition_iff_not_sum_S",
+      "target": "no_sum_implies_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N_subset_target",
+      "target": "usamo_2026_p4_at_least",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "k",
+      "target": "usamo_2026_p4_at_least",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N_set",
+      "target": "usamo_2026_p4_at_least",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "target_set",
+      "target": "usamo_2026_p4_at_least",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_N_set_ge",
+      "target": "usamo_2026_p4_at_least",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "solitary_iff_of_range",
+      "target": "S_succ_eq_union",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "solitary",
+      "target": "S_succ_eq_union",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_solitary_of_not_special",
+      "target": "S_succ_eq_union",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "solitary_2_mul_10_pow_k_sub_one",
+      "target": "S_succ_eq_union",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S",
+      "target": "card_S_succ_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_succ_eq_union",
+      "target": "card_S_succ_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "solitary",
+      "target": "card_S_succ_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S",
+      "target": "card_target_set_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "s",
+      "target": "card_target_set_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "solitary_iff",
+      "target": "card_target_set_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_solitary_zero",
+      "target": "card_target_set_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "s_eq_pow_sub_one",
+      "target": "card_target_set_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "solitary",
+      "target": "card_target_set_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_S_succ_eq",
+      "target": "s_eq_pow_sub_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "solitary",
+      "target": "s_eq_pow_sub_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_target_set_eq",
+      "target": "usamo_2026_p4_at_most",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

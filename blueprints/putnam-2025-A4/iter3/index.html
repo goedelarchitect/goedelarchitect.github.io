@@ -1,0 +1,2026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 A4. 1,221 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item current">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item current">4</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "S_contains_3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "3 \u2208 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- $3 \\in S$. -/)\n  (proof := /-- Using the orthogonal sequence and the commutation condition for reflections. -/)]\nlemma S_contains_3 : (3 : \u2115) \u2208 S := by\n  have dot_comm (v w : Fin 3 \u2192 \u211d) : dot v w = dot w v := by\n    simp [dot, mul_comm]\n  rcases exists_orthogonal_sequence with \u27e8v, hunit, horth, hnonorth\u27e9\n  let A : Fin 2025 \u2192 Matrix (Fin 3) (Fin 3) \u211d := \u03bb i => reflection (v i)\n  have hA : \u2200 i j : Fin 2025, i \u2264 j \u2192 (A i * A j = A j * A i \u2194 j.val - i.val \u2208 ({0, 1, 2024} : Set \u2115)) := by\n    intro i j hij\n    constructor\n    \u00b7 intro hcomm\n      have h := reflection_commute_iff (v i) (v j) (hunit i) (hunit j) |>.mp hcomm\n      rcases h with (hdot | hcoll)\n      \u00b7 -- hdot : dot (v i) (v j) = 0\n        by_contra! hnot\n        have : dot (v i) (v j) = 0 := hdot\n        have := hnonorth i j hnot\n        rw [hdot] at this\n        exact this rfl\n      \u00b7 -- hcoll : \u2203 c, v i = c \u2022 v j\n        by_contra! hnot\n        have := noncollinear_aux v hunit horth hnonorth i j hnot\n        exact this hcoll\n    \u00b7 intro hdiff\n      have hcases : j.val - i.val = 0 \u2228 j.val - i.val = 1 \u2228 j.val - i.val = 2024 := by\n        simpa [Set.mem_insert_iff, Set.mem_singleton_iff] using hdiff\n      rcases hcases with (h | h | h)\n      \u00b7 -- case 0: i = j\n        have heq : i = j := by\n          apply Fin.ext\n          omega\n        subst heq\n        rfl\n      \u00b7 -- case 1: j.val - i.val = 1\n        have hi_lt_2024 : i.val < 2024 := by\n          have hj_lt : j.val < 2025 := Fin.is_lt j\n          have hj_val : j.val = i.val + 1 := by omega\n          omega\n        have hnext_val : (next i).val = i.val + 1 := by\n          dsimp [next]\n          simp [hi_lt_2024]\n        have hj_val : j.val = i.val + 1 := by\n          omega\n        have hnext : j = next i := Fin.ext (by\n          calc\n            j.val = i.val + 1 := hj_val\n            _ = (next i).val := by symm; exact hnext_val\n          )\n        have hdot : dot (v i) (v j) = 0 := by\n          simpa [hnext] using horth i\n        have hcomm := reflection_commute_iff (v i) (v j) (hunit i) (hunit j) |>.mpr (Or.inl hdot)\n        exact hcomm\n      \u00b7 -- case 2024: j.val - i.val = 2024\n        have hi_le_j : i.val \u2264 j.val := hij\n        have hi_val0 : i.val = 0 := by\n          omega\n        have hj_val2024 : j.val = 2024 := by\n          omega\n        have hnext_j_eq_i : next j = i := by\n          apply Fin.ext\n          simp [next, hj_val2024, hi_val0]\n        have hdot : dot (v i) (v j) = 0 := by\n          have horthj := horth j\n          -- horthj : dot (v j) (v (next j)) = 0\n          simpa [hnext_j_eq_i, dot_comm] using horthj\n        have hcomm := reflection_commute_iff (v i) (v j) (hunit i) (hunit j) |>.mpr (Or.inl hdot)\n        exact hcomm\n  exact \u27e8A, hA\u27e9"
+    },
+    {
+      "id": "S_lower_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any k \u2208 S, we have 3 \u2264 k.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For any $k \\in S$, we have $3 \\le k$. -/)\n  (proof := /-- If $k < 3$, then `not_S_of_lt_3` would give $k \\notin S$, contradicting the hypothesis. Hence $3 \\le k$. -/)]\nlemma S_lower_bound (k : \u2115) (hk : k \u2208 S) : 3 \u2264 k := by\n  by_contra! h\n  -- h: k < 3\n  have h_not_S : k \u2209 S := not_S_of_lt_3 k h\n  exact h_not_S hk"
+    },
+    {
+      "id": "adjacent_orthogonality",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.16,
+      "proof_length": 12,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For every index i, \u27e8 v_i, v_{mathrm{next}(i)}\u27e9 = 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For every index $i$, $\\langle v_i, v_{\\mathrm{next}(i)}\\rangle = 0$. -/)\n  (proof := /-- Case analysis on whether $i<2024$ or $i=2024$, using `dot_product_formula` and trigonometric identities. -/)]\nlemma adjacent_orthogonality (i : Fin 2025) : dot (v_2025 i) (v_2025 (next i)) = 0 := by\n  have dot_symm (v w : Fin 3 \u2192 \u211d) : dot v w = dot w v := by\n    unfold dot\n    simp [mul_comm]\n  by_cases h : i.val < 2024\n  \u00b7 have hle : i \u2264 next i := by\n      dsimp [next]\n      simp [h]\n      have : i.val \u2264 i.val + 1 := by omega\n      simpa [Fin.le_iff_val_le_val] using this\n    rw [dot_product_formula i (next i) hle]\n    have sub_eq_one : ((next i).val - i.val : \u211d) = 1 := by\n      dsimp [next]\n      simp [h]\n    rw [sub_eq_one]\n    have : (1 : \u211d) * theta_2025 = theta_2025 := by ring\n    rw [this]\n    exact x_sq_cos_theta_add_z_sq_eq_zero\n  \u00b7 have hi_val : i.val = 2024 := by omega\n    have hnext : next i = (0 : Fin 2025) := by\n      dsimp [next]\n      simp [hi_val]\n    rw [hnext]\n    rw [dot_symm (v_2025 i) (v_2025 (0 : Fin 2025))]\n    have hle0i : (0 : Fin 2025) \u2264 i := Fin.zero_le i\n    rw [dot_product_formula (0 : Fin 2025) i hle0i]\n    have sub_eq_2024 : ((i : Fin 2025).val - (0 : Fin 2025).val : \u211d) = (2024 : \u211d) := by\n      simp [hi_val]\n    rw [sub_eq_2024]\n    rw [cos_2024_theta_eq_cos_theta]\n    exact x_sq_cos_theta_add_z_sq_eq_zero"
+    },
+    {
+      "id": "centralizer_comm_of_non_scalar_2x2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let B be a 2 \u00d7 2 real matrix that is not a scalar multiple of the identity. Then any two matrices A and C that both commute with B also commute with each other.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- Let $B$ be a $2 \\times 2$ real matrix that is not a scalar multiple of the identity. Then any two matrices $A$ and $C$ that both commute with $B$ also commute with each other. -/)\n  (proof := /-- Immediate from `commute_of_both_commute`. -/)]\nlemma centralizer_comm_of_non_scalar_2x2 (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) : \u2200 (A C : Matrix (Fin 2) (Fin 2) \u211d), A * B = B * A \u2192 C * B = B * C \u2192 A * C = C * A := by\n  intro A C hA hC\n  exact commute_of_both_commute B h A C hA hC"
+    },
+    {
+      "id": "centralizer_span",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.12,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then any matrix A that commutes with B is a linear combination of I and B.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint\n  (statement := /-- If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then any matrix A that commutes with B is a linear combination of I and B. -/)\n  (proof := /-- Using the linearly independent pair (v, B\u00b7v) to express A\u00b7v as \u03b1 v + \u03b2 (B\u00b7v) and then deducing A = \u03b1 I + \u03b2 B. -/)]\nlemma centralizer_span (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) (A : Matrix (Fin 2) (Fin 2) \u211d) (hA : A * B = B * A) : \u2203 (\u03b1 \u03b2 : \u211d), A = \u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B := by\n  obtain \u27e8v, hv\u27e9 := exists_independent_vector B h\n  have hdim : Module.finrank \u211d (Fin 2 \u2192 \u211d) = 2 := by\n    simpa using finrank_fun \u211d\n  have h_span_range : Submodule.span \u211d (Set.range ![v, B.mulVec v]) = \u22a4 :=\n    hv.span_eq_top_of_card_eq_finrank (by\n      simp [hdim])\n  have h_range_pair : Set.range (![v, B.mulVec v] : Fin 2 \u2192 (Fin 2 \u2192 \u211d)) = {v, B.mulVec v} := by\n    ext x; simp [or_comm]\n  have h_span_set : Submodule.span \u211d ({v, B.mulVec v} : Set (Fin 2 \u2192 \u211d)) = \u22a4 := by\n    simpa [h_range_pair] using h_span_range\n  have h_mem : A.mulVec v \u2208 Submodule.span \u211d ({v, B.mulVec v} : Set (Fin 2 \u2192 \u211d)) := by\n    rw [h_span_set]\n    exact Submodule.mem_top\n  rcases (Submodule.mem_span_pair.mp h_mem) with \u27e8\u03b1, \u03b2, h_eq\u27e9\n  -- h_eq: \u03b1 \u2022 v + \u03b2 \u2022 (B.mulVec v) = A.mulVec v\n  set C := A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) with hC\n  have h_comm_sum : (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * B = B * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by\n    calc\n      (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * B = \u03b1 \u2022 1 * B + \u03b2 \u2022 B * B := by rw [add_mul]\n      _ = \u03b1 \u2022 (1 * B) + \u03b2 \u2022 (B * B) := by simp [smul_mul_assoc, mul_smul_comm]\n      _ = \u03b1 \u2022 (B * 1) + \u03b2 \u2022 (B * B) := by simp\n      _ = B * (\u03b1 \u2022 1) + B * (\u03b2 \u2022 B) := by simp [mul_smul_comm, smul_mul_assoc]\n      _ = B * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by rw [mul_add]\n  have hC_comm : C * B = B * C := by\n    calc\n      C * B = (A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)) * B := rfl\n      _ = A * B - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * B := by rw [sub_mul]\n      _ = B * A - B * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by rw [hA, h_comm_sum]\n      _ = B * (A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)) := by rw [mul_sub]\n      _ = B * C := rfl\n  have hCv : C.mulVec v = 0 := by\n    calc\n      C.mulVec v = (A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)).mulVec v := rfl\n      _ = A.mulVec v - ((\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)).mulVec v := by\n        rw [Matrix.sub_mulVec]\n      _ = A.mulVec v - ((\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)).mulVec v + (\u03b2 \u2022 B).mulVec v) := by\n        rw [Matrix.add_mulVec]\n      _ = (A.mulVec v - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)).mulVec v) - (\u03b2 \u2022 B).mulVec v := by\n        rw [sub_add_eq_sub_sub]\n      _ = A.mulVec v - (\u03b1 \u2022 ((1 : Matrix (Fin 2) (Fin 2) \u211d).mulVec v)) - (\u03b2 \u2022 (B.mulVec v)) := by\n        simp [Matrix.smul_mulVec]\n      _ = A.mulVec v - (\u03b1 \u2022 v) - (\u03b2 \u2022 (B.mulVec v)) := by simp\n      _ = A.mulVec v - (\u03b1 \u2022 v + \u03b2 \u2022 (B.mulVec v)) := by ring\n      _ = 0 := by\n        rw [\u2190 h_eq, sub_self]\n  have hCBv : C.mulVec (B.mulVec v) = 0 := by\n    calc\n      C.mulVec (B.mulVec v) = (C * B).mulVec v := by\n        rw [Matrix.mulVec_mulVec]\n      _ = (B * C).mulVec v := by rw [hC_comm]\n      _ = B.mulVec (C.mulVec v) := by rw [Matrix.mulVec_mulVec]\n      _ = B.mulVec 0 := by rw [hCv]\n      _ = 0 := by simp\n  have hC_all : \u2200 w : (Fin 2 \u2192 \u211d), C.mulVec w = 0 := by\n    intro w\n    have h_mem_span : w \u2208 Submodule.span \u211d ({v, B.mulVec v} : Set (Fin 2 \u2192 \u211d)) := by\n      rw [h_span_set]\n      exact Submodule.mem_top\n    rcases (Submodule.mem_span_pair.mp h_mem_span) with \u27e8a, b, h_w\u27e9\n    -- h_w: a \u2022 v + b \u2022 (B.mulVec v) = w\n    calc\n      C.mulVec w = C.mulVec (a \u2022 v + b \u2022 (B.mulVec v)) := by rw [h_w]\n      _ = a \u2022 C.mulVec v + b \u2022 C.mulVec (B.mulVec v) := by\n        simp [Matrix.mulVec_add, Matrix.mulVec_smul]\n      _ = a \u2022 0 + b \u2022 0 := by simp [hCv, hCBv]\n      _ = 0 := by simp\n  have hC_zero : C = 0 := by\n    ext i j\n    have h' := hC_all (fun k => if k = j then 1 else 0)\n    have h'i := congr_fun h' i\n    have htemp : (C.mulVec (fun k => if k = j then 1 else 0)) i = 0 := by\n      simpa using h'i\n    have hsum : (\u2211 k : Fin 2, C i k * (if k = j then (1 : \u211d) else 0)) = 0 := by\n      exact htemp\n    have hCij : C i j = 0 := by\n      simpa using hsum\n    exact hCij\n  have hA_eq : A = \u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B := by\n    apply sub_eq_zero.mp\n    calc\n      A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) = C := rfl\n      _ = 0 := hC_zero\n  exact \u27e8\u03b1, \u03b2, hA_eq\u27e9"
+    },
+    {
+      "id": "commute_of_both_commute",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a 2\u00d72 real matrix B is not a scalar multiple of the identity, and A, C both commute with B, then A and C commute.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- If a 2\u00d72 real matrix B is not a scalar multiple of the identity, and A, C both commute with B, then A and C commute. -/)\n  (proof := /-- Write A = \u03b1I + \u03b2B and C = \u03b1'I + \u03b2'B using centralizer_span, then expand the product. -/)]\nlemma commute_of_both_commute (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) (A C : Matrix (Fin 2) (Fin 2) \u211d) (hA : A * B = B * A) (hC : C * B = B * C) : A * C = C * A := by\n  rcases centralizer_span B h A hA with \u27e8\u03b1, \u03b2, hA_eq\u27e9\n  rcases centralizer_span B h C hC with \u27e8\u03b3, \u03b4, hC_eq\u27e9\n  have expand_linear_comb (\u03b1 \u03b2 \u03b3 \u03b4 : \u211d) (B : Matrix (Fin 2) (Fin 2) \u211d) : (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * (\u03b3 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b4 \u2022 B) = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n    calc\n      (\u03b1 \u2022 1 + \u03b2 \u2022 B) * (\u03b3 \u2022 1 + \u03b4 \u2022 B) = ((\u03b1 \u2022 1) * (\u03b3 \u2022 1) + (\u03b2 \u2022 B) * (\u03b3 \u2022 1)) + ((\u03b1 \u2022 1) * (\u03b4 \u2022 B) + (\u03b2 \u2022 B) * (\u03b4 \u2022 B)) := by\n        rw [mul_add, add_mul, add_mul]\n      _ = (\u03b1*\u03b3) \u2022 (1 * 1) + (\u03b2*\u03b3) \u2022 (B * 1) + (\u03b1*\u03b4) \u2022 (1 * B) + (\u03b2*\u03b4) \u2022 (B * B) := by\n        simp [Matrix.smul_mul, Matrix.mul_smul, smul_smul, mul_comm, add_comm, add_left_comm, add_assoc]\n      _ = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + (\u03b2*\u03b3) \u2022 B + (\u03b1*\u03b4) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n        simp\n      _ = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n        simp [add_smul, add_comm, add_left_comm, add_assoc]\n  have h_expandA : A * C = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n    calc\n      A * C = (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * (\u03b3 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b4 \u2022 B) := by rw [hA_eq, hC_eq]\n      _ = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := expand_linear_comb \u03b1 \u03b2 \u03b3 \u03b4 B\n  have h_expandC : C * A = (\u03b3*\u03b1) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b3*\u03b2)+(\u03b4*\u03b1)) \u2022 B + (\u03b4*\u03b2) \u2022 (B * B) := by\n    calc\n      C * A = (\u03b3 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b4 \u2022 B) * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by rw [hC_eq, hA_eq]\n      _ = (\u03b3*\u03b1) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b3*\u03b2)+(\u03b4*\u03b1)) \u2022 B + (\u03b4*\u03b2) \u2022 (B * B) := expand_linear_comb \u03b3 \u03b4 \u03b1 \u03b2 B\n  calc\n    A * C = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := h_expandA\n    _ = (\u03b3*\u03b1) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b3*\u03b2)+(\u03b4*\u03b1)) \u2022 B + (\u03b4*\u03b2) \u2022 (B * B) := by\n      ring\n    _ = C * A := by\n      symm\n      exact h_expandC"
+    },
+    {
+      "id": "cos_2024_theta_eq_cos_theta",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "cos(2024\u03b8) = cos\u03b8, where \u03b8 = 2024\u03c0/2025.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- $\\cos(2024\\theta) = \\cos\\theta$, where $\\theta = 2024\\pi/2025$. -/)\n  (proof := /-- Using $2025\\theta = 2024\\pi$ and the cosine subtraction formula. -/)]\nlemma cos_2024_theta_eq_cos_theta : Real.cos ((2024 : \u211d) * theta_2025) = Real.cos theta_2025 := by\n  have h_eq : (2024 : \u211d) * theta_2025 = 2024 * \u03c0 - theta_2025 := by\n    calc\n      (2024 : \u211d) * theta_2025 = (2024 : \u211d) * (2024 * \u03c0 / 2025) := rfl\n      _ = (2024 ^ 2 * \u03c0) / 2025 := by ring\n      _ = 2024 * \u03c0 - 2024 * \u03c0 / 2025 := by ring\n      _ = 2024 * \u03c0 - theta_2025 := rfl\n  rw [h_eq]\n  have h_cos : Real.cos (2024 * \u03c0 - theta_2025) = Real.cos theta_2025 := by\n    have h_arg : 2024 * \u03c0 - theta_2025 = (-theta_2025) + ((1012 : \u2124) : \u211d) * (2 * \u03c0) := by\n      ring\n    rw [h_arg]\n    rw [Real.cos_add_int_mul_two_pi]\n    rw [Real.cos_neg]\n  exact h_cos"
+    },
+    {
+      "id": "cos_theta_2025",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "cos(\u03b8).",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- cos(\u03b8). -/)]\nnoncomputable def cos_theta_2025 : \u211d := Real.cos theta_2025"
+    },
+    {
+      "id": "cos_theta_2025_ne_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "cos(2024\u03c0/2025) \u2260 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint\n  (statement := /-- $\\cos(2024\\pi/2025) \\neq 1$. -/)\n  (proof := /-- Because $2024\\pi/2025$ is not an integer multiple of $2\\pi$. -/)]\nlemma cos_theta_2025_ne_one : Real.cos theta_2025 \u2260 1 := by\n  intro hcos\n  have hcos_eq1 : Real.cos theta_2025 = 1 := hcos\n  rcases ((Real.cos_eq_one_iff theta_2025).mp hcos_eq1) with \u27e8n, hn\u27e9\n  have h\u03c0pos : \u03c0 > 0 := Real.pi_pos\n  have h\u03c0_ne_zero : \u03c0 \u2260 0 := by linarith\n  have hn_eq : (n : \u211d) * (2 * \u03c0) = 2024 * \u03c0 / 2025 := hn\n  have h2025_ne_zero : (2025 : \u211d) \u2260 0 := by norm_num\n  field_simp [h2025_ne_zero] at hn_eq\n  ring_nf at hn_eq\n  have h\u03c0_cancel : (n : \u211d) * (4050 : \u211d) = (2024 : \u211d) := by\n    nlinarith\n  have hn_int : (n : \u2124) * (4050 : \u2124) = (2024 : \u2124) := by\n    exact_mod_cast h\u03c0_cancel\n  omega"
+    },
+    {
+      "id": "cos_theta_non_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any integer k with 2 \u2264 k \u2264 2023, cos(k\u03b8) \u2260 cos\u03b8 where \u03b8 = 2024\u03c0/2025.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For any integer $k$ with $2 \\le k \\le 2023$, $\\cos(k\\theta) \\neq \\cos\\theta$ where $\\theta = 2024\\pi/2025$. -/)\n  (proof := /-- Use $\\cos\\alpha = \\cos\\beta \\iff \\alpha \\equiv \\pm\\beta \\pmod{2\\pi}$ and number theory. -/)]\nlemma cos_theta_non_eq (k : \u2115) (hk2 : 2 \u2264 k) (hk2023 : k \u2264 2023) : Real.cos (k * theta_2025) \u2260 Real.cos theta_2025 := by\n  have sin_mul_1012pi_div_2025_ne_zero {m : \u2115} (hm : m \u2208 Finset.Icc 1 2024) : Real.sin (m * (1012 * \u03c0 / 2025 : \u211d)) \u2260 0 := by\n    intro hzero\n    have h\u03c0 : \u03c0 \u2260 0 := Real.pi_ne_zero\n    rcases Real.sin_eq_zero_iff.mp hzero with \u27e8n, hn\u27e9\n    field_simp [h\u03c0] at hn\n    have hn' : (n : \u2124) * 2025 = (m : \u2124) * 1012 := by exact_mod_cast hn\n    have hm1 : 1 \u2264 m := (Finset.mem_Icc.mp hm).left\n    have hm2024 : m \u2264 2024 := (Finset.mem_Icc.mp hm).right\n    omega\n  have hcos_sub : Real.cos (k * theta_2025) - Real.cos theta_2025 = -2 * Real.sin (((k+1) * theta_2025) / 2) * Real.sin (((k-1) * theta_2025) / 2) := by\n    calc\n      Real.cos (k * theta_2025) - Real.cos theta_2025 = -2 * Real.sin (((k * theta_2025) + theta_2025) / 2) * Real.sin (((k * theta_2025) - theta_2025) / 2) := by\n        rw [Real.cos_sub_cos]\n      _ = -2 * Real.sin (((k+1) * theta_2025) / 2) * Real.sin (((k-1) * theta_2025) / 2) := by ring\n  intro heq\n  have hzero : Real.cos (k * theta_2025) - Real.cos theta_2025 = 0 := by\n    rw [heq, sub_self]\n  rw [hcos_sub] at hzero\n  have hprod : Real.sin (((k+1) * theta_2025) / 2) * Real.sin (((k-1) * theta_2025) / 2) = 0 := by\n    nlinarith\n  rcases eq_zero_or_eq_zero_of_mul_eq_zero hprod with (hsin1 | hsin2)\n  \u00b7 -- hsin1: sin (((k+1) * theta_2025) / 2) = 0\n    have hm1 : k+1 \u2208 Finset.Icc (1 : \u2115) 2024 := by\n      have hlow : 1 \u2264 k+1 := by omega\n      have hhigh : k+1 \u2264 2024 := by omega\n      exact Finset.mem_Icc.mpr \u27e8hlow, hhigh\u27e9\n    have hcalc : ((k+1 : \u211d) * theta_2025) / 2 = (k+1 : \u211d) * (1012 * \u03c0 / 2025 : \u211d) := by\n      calc\n        ((k+1 : \u211d) * theta_2025) / 2 = ((k+1 : \u211d) * (2024 * \u03c0 / 2025)) / 2 := rfl\n        _ = ((k+1 : \u211d) * 1012 * \u03c0) / 2025 := by ring\n        _ = (k+1 : \u211d) * (1012 * \u03c0 / 2025) := by ring\n    have hcalc' : ((k+1) * theta_2025) / 2 = (k+1 : \u211d) * (1012 * \u03c0 / 2025 : \u211d) := by\n      simpa using hcalc\n    rw [hcalc'] at hsin1\n    have h_contra := sin_mul_1012pi_div_2025_ne_zero hm1\n    apply h_contra\n    simpa using hsin1\n  \u00b7 -- hsin2: sin (((k-1) * theta_2025) / 2) = 0\n    have hm2 : k-1 \u2208 Finset.Icc (1 : \u2115) 2024 := by\n      have hlow : 1 \u2264 k-1 := by\n        have : 1 \u2264 k := by omega\n        omega\n      have hhigh : k-1 \u2264 2024 := by omega\n      exact Finset.mem_Icc.mpr \u27e8hlow, hhigh\u27e9\n    have hcalc : ((k : \u211d) - 1) * (1012 * \u03c0 / 2025 : \u211d) = (((k : \u211d) - 1) * theta_2025) / 2 := by\n      calc\n        ((k : \u211d) - 1) * (1012 * \u03c0 / 2025 : \u211d) = ((k : \u211d) - 1) * 1012 * \u03c0 / 2025 := by ring\n        _ = (((k : \u211d) - 1) * (2024 * \u03c0 / 2025)) / 2 := by ring\n        _ = (((k : \u211d) - 1) * theta_2025) / 2 := rfl\n    have hcalc' : ((k-1) * theta_2025) / 2 = ((k : \u211d) - 1) * (1012 * \u03c0 / 2025 : \u211d) := by\n      -- note that ((k-1) * theta_2025) / 2 = (((k:\u211d)-1) * theta_2025) / 2\n      simpa using hcalc.symm\n    rw [hcalc'] at hsin2\n    have h_contra := sin_mul_1012pi_div_2025_ne_zero hm2\n    -- hsin2 : Real.sin (((k : \u211d) - 1) * (1012 * \u03c0 / 2025 : \u211d)) = 0\n    -- need to rewrite to sin(\u2191(k-1 : \u2115) * ...)\n    have hcast : ((k-1 : \u2115) : \u211d) = (k : \u211d) - 1 := by\n      simp [Nat.cast_sub (by omega : 1 \u2264 k)]\n    have hsin2' : Real.sin (\u2191(k-1 : \u2115) * (1012 * \u03c0 / 2025 : \u211d)) = 0 := by\n      simpa [hcast] using hsin2\n    exact h_contra hsin2'\n\n/-! ### Helper lemmas for dot\u2011product formula  -/"
+    },
+    {
+      "id": "dot",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The standard dot product on \u211d^3.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The standard dot product on \u211d^3. -/)]\ndef dot (v w : Fin 3 \u2192 \u211d) : \u211d := \u2211 k : Fin 3, v k * w k"
+    },
+    {
+      "id": "dot_comm",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The standard dot product is symmetric.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- The standard dot product is symmetric. -/)\n  (proof := /-- By commutativity of multiplication. -/)]\nlemma dot_comm (v w : Fin 3 \u2192 \u211d) : dot v w = dot w v := by\n  simp [dot, mul_comm]"
+    },
+    {
+      "id": "dot_product_formula",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For the vectors v_i defined above and i\u2264 j, the dot product equals x_{mathrm{sq}}cos((j-i)\u03b8)+z_{mathrm{sq}}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For the vectors $v_i$ defined above and $i\\le j$, the dot product equals $x_{\\mathrm{sq}}\\cos((j-i)\\theta)+z_{\\mathrm{sq}}$. -/)\n  (proof := /-- Expand the dot product, use $\\cos(i\\theta)\\cos(j\\theta)+\\sin(i\\theta)\\sin(j\\theta)=\\cos((j-i)\\theta)$. -/)]\nlemma dot_product_formula (i j : Fin 2025) (hij : i \u2264 j) : dot (v_2025 i) (v_2025 j) = x_sq_2025 * Real.cos ((j.val - i.val : \u211d) * theta_2025) + z_sq_2025 := by\n  have theta_pos : 0 < theta_2025 := by\n    unfold theta_2025; positivity\n  have theta_lt_pi : theta_2025 < \u03c0 := by\n    unfold theta_2025; field_simp; nlinarith\n  have cos_theta_lt_one : Real.cos theta_2025 < 1 := by\n    have hpos : 0 < theta_2025 := theta_pos\n    have hlt : theta_2025 \u2264 \u03c0 := le_of_lt theta_lt_pi\n    have h := Real.cos_lt_cos_of_nonneg_of_le_pi (by norm_num) hlt hpos\n    simpa [Real.cos_zero] using h\n  have cos_theta_neg : Real.cos theta_2025 < 0 := by\n    have hpos : \u03c0 / 2 < theta_2025 := by\n      unfold theta_2025; nlinarith [Real.pi_pos]\n    have hlt : theta_2025 < \u03c0 + \u03c0 / 2 := by\n      nlinarith [theta_lt_pi]\n    exact Real.cos_neg_of_pi_div_two_lt_of_lt hpos hlt\n  have hpos_denom : 0 < 1 - Real.cos theta_2025 := by\n    have h := cos_theta_lt_one\n    linarith\n  have hpos_num : 0 < -Real.cos theta_2025 := by\n    have h := cos_theta_neg\n    linarith\n  have hz_sq_pos : 0 < z_sq_2025 := by\n    unfold z_sq_2025\n    exact div_pos hpos_num hpos_denom\n  have hz_sq_lt_one : z_sq_2025 < 1 := by\n    unfold z_sq_2025\n    apply (div_lt_one hpos_denom).mpr\n    have h : -Real.cos theta_2025 < 1 - Real.cos theta_2025 := by nlinarith\n    simpa [cos_theta_2025] using h\n  have hx_sq_nonneg : 0 \u2264 x_sq_2025 := by\n    unfold x_sq_2025\n    have h := hz_sq_lt_one\n    linarith\n  have hz_sq_nonneg : 0 \u2264 z_sq_2025 := by linarith\n  unfold dot\n  simp [v_2025, Fin.sum_univ_three]\n  calc\n    (x_2025 * Real.cos (i.val * theta_2025)) * (x_2025 * Real.cos (j.val * theta_2025)) +\n    (x_2025 * Real.sin (i.val * theta_2025)) * (x_2025 * Real.sin (j.val * theta_2025)) +\n    z_2025 * z_2025\n        = x_2025^2 * (Real.cos (i.val * theta_2025) * Real.cos (j.val * theta_2025) + Real.sin (i.val * theta_2025) * Real.sin (j.val * theta_2025)) + z_2025^2 := by ring\n    _ = x_2025^2 * Real.cos ((j.val * theta_2025) - (i.val * theta_2025)) + z_2025^2 := by\n      rw [Real.cos_sub (j.val * theta_2025) (i.val * theta_2025)]\n      ring\n    _ = x_2025^2 * Real.cos ((j.val - i.val : \u211d) * theta_2025) + z_2025^2 := by ring\n    _ = x_sq_2025 * Real.cos ((j.val - i.val : \u211d) * theta_2025) + z_sq_2025 := by\n      simp [x_2025, z_2025, hx_sq_nonneg, hz_sq_nonneg, Real.sq_sqrt]"
+    },
+    {
+      "id": "exists_independent_vector",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then there exists a vector v such that v and B\u00b7v are linearly independent over \u211d.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint\n  (statement := /-- If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then there exists a vector v such that v and B\u00b7v are linearly independent over \u211d. -/)\n  (proof := /-- Case analysis on the standard basis vectors e1, e2. -/)]\nlemma exists_independent_vector (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) : \u2203 v : (Fin 2 \u2192 \u211d), LinearIndependent \u211d ![v, B.mulVec v] := by\n  by_contra h2\n  -- h2 : \u00ac \u2203 v, LinearIndependent \u211d ![v, B.mulVec v]\n  have h_forall_not_ind : \u2200 v : Fin 2 \u2192 \u211d, \u00ac LinearIndependent \u211d ![v, B.mulVec v] := by\n    intro v\n    intro h_ind\n    apply h2\n    exact \u27e8v, h_ind\u27e9\n  have exists_smul_eq : \u2200 v : Fin 2 \u2192 \u211d, \u2203 (r : \u211d), B.mulVec v = r \u2022 v := by\n    intro v\n    have h_not_ind : \u00ac LinearIndependent \u211d ![v, B.mulVec v] := h_forall_not_ind v\n    by_cases hv : v = 0\n    \u00b7 subst hv; refine \u27e80, ?_\u27e9; simp\n    \u00b7 have h_dep' : \u00ac (\u2200 (s t : \u211d), s \u2022 v + t \u2022 (B.mulVec v) = 0 \u2192 s = 0 \u2227 t = 0) := by\n        rwa [LinearIndependent.pair_iff] at h_not_ind\n      have h_exists : \u2203 (s t : \u211d), s \u2022 v + t \u2022 (B.mulVec v) = 0 \u2227 (s = 0 \u2192 t \u2260 0) := by\n        push_neg at h_dep'\n        exact h_dep'\n      rcases h_exists with \u27e8s, t, h_eq, h_cond\u27e9\n      have ht0 : t \u2260 0 := by\n        by_contra ht0\n        have hs0 : s = 0 := by\n          have : s \u2022 v = 0 := by\n            simpa [ht0] using h_eq\n          rcases eq_zero_or_eq_zero_of_smul_eq_zero this with (hs | hv')\n          \u00b7 exact hs\n          \u00b7 exact (hv hv').elim\n        exact (h_cond hs0) ht0\n      have h_eq' : t \u2022 (B.mulVec v) = (-s) \u2022 v := by\n        calc\n          t \u2022 (B.mulVec v) = (s \u2022 v + t \u2022 (B.mulVec v)) - s \u2022 v := by abel\n          _ = 0 - s \u2022 v := by rw [h_eq]\n          _ = -(s \u2022 v) := by simp\n          _ = (-s) \u2022 v := by simp\n      refine \u27e8-s / t, ?_\u27e9\n      calc\n        B.mulVec v = (1 : \u211d) \u2022 (B.mulVec v) := by simp\n        _ = ((t\u207b\u00b9 * t) \u2022 (B.mulVec v)) := by\n          field_simp [ht0]\n        _ = t\u207b\u00b9 \u2022 (t \u2022 (B.mulVec v)) := by simp [smul_smul]\n        _ = t\u207b\u00b9 \u2022 ((-s) \u2022 v) := by rw [h_eq']\n        _ = (t\u207b\u00b9 * (-s)) \u2022 v := by simp [smul_smul]\n        _ = (-s / t) \u2022 v := by ring\n  let e0 : Fin 2 \u2192 \u211d := ![1, 0]\n  let e1 : Fin 2 \u2192 \u211d := ![0, 1]\n  rcases exists_smul_eq e0 with \u27e8r0, h0\u27e9\n  rcases exists_smul_eq e1 with \u27e8r1, h1\u27e9\n  rcases exists_smul_eq (e0 + e1) with \u27e8r2, h2\u27e9\n  have h_comb : (r0 \u2022 e0 + r1 \u2022 e1) = r2 \u2022 (e0 + e1) := by\n    calc\n      r0 \u2022 e0 + r1 \u2022 e1 = B.mulVec e0 + B.mulVec e1 := by simp [h0, h1]\n      _ = B.mulVec (e0 + e1) := by rw [Matrix.mulVec_add]\n      _ = r2 \u2022 (e0 + e1) := h2\n  have hr0_eq_r2 : r0 = r2 := by\n    calc\n      r0 = (r0 \u2022 e0 + r1 \u2022 e1) 0 := by simp [e0, e1]\n      _ = (r2 \u2022 (e0 + e1)) 0 := by rw [h_comb]\n      _ = r2 := by simp [e0, e1]\n  have hr1_eq_r2 : r1 = r2 := by\n    calc\n      r1 = (r0 \u2022 e0 + r1 \u2022 e1) 1 := by simp [e0, e1]\n      _ = (r2 \u2022 (e0 + e1)) 1 := by rw [h_comb]\n      _ = r2 := by simp [e0, e1]\n  have hr0_eq_r1 : r0 = r1 := by\n    calc\n      r0 = r2 := hr0_eq_r2\n      _ = r1 := hr1_eq_r2.symm\n  set c := r0 with hc\n  have h0' : B.mulVec e0 = c \u2022 e0 := by simpa [hc] using h0\n  have h1' : B.mulVec e1 = c \u2022 e1 := by\n    calc\n      B.mulVec e1 = r1 \u2022 e1 := h1\n      _ = c \u2022 e1 := by rw [\u2190 hr0_eq_r1, hc]\n  have hB_scalar : \u2200 v : Fin 2 \u2192 \u211d, B.mulVec v = c \u2022 v := by\n    intro v\n    have h_eq_v : v = (v 0) \u2022 e0 + (v 1) \u2022 e1 := by\n      ext i; fin_cases i <;> simp [e0, e1]\n    calc\n      B.mulVec v = B.mulVec ((v 0) \u2022 e0 + (v 1) \u2022 e1) := by\n        apply congrArg (fun w => B.mulVec w) h_eq_v\n      _ = (v 0) \u2022 B.mulVec e0 + (v 1) \u2022 B.mulVec e1 := by\n        simp [Matrix.mulVec_add, Matrix.mulVec_smul]\n      _ = (v 0) \u2022 (c \u2022 e0) + (v 1) \u2022 (c \u2022 e1) := by simp [h0', h1']\n      _ = c \u2022 ((v 0) \u2022 e0 + (v 1) \u2022 e1) := by\n        simp [smul_smul, mul_comm, add_comm, add_left_comm, add_assoc]\n      _ = c \u2022 v := by\n        apply (congrArg (fun w => c \u2022 w) h_eq_v).symm\n  have hB_eq_cI : B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := by\n    apply Matrix.mulVec_injective\n    funext v\n    calc\n      B.mulVec v = c \u2022 v := hB_scalar v\n      _ = (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)).mulVec v := by\n        simp [Matrix.smul_mulVec]\n  exact h \u27e8c, hB_eq_cI\u27e9"
+    },
+    {
+      "id": "exists_orthogonal_sequence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There exists a sequence of unit vectors in \u211d^3 such that consecutive vectors (with wrap\u2011around) are orthogonal, and any two non\u2011adjacent vectors are not orthogonal.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- There exists a sequence of unit vectors in \u211d^3 such that consecutive vectors (with wrap\u2011around) are orthogonal, and any two non\u2011adjacent vectors are not orthogonal. -/)\n  (proof := /-- Construction via rotating basis, using the helper lemmas above. -/)]\nlemma exists_orthogonal_sequence : \u2203 (v : Fin 2025 \u2192 (Fin 3 \u2192 \u211d)),\n    (\u2200 i, dot (v i) (v i) = 1) \u2227\n    (\u2200 i, dot (v i) (v (next i)) = 0) \u2227\n    (\u2200 (i j : Fin 2025), j.val - i.val \u2209 ({0,1,2024} : Set \u2115) \u2192 dot (v i) (v j) \u2260 0) := by\n  refine \u27e8v_2025, ?_, adjacent_orthogonality, ?_\u27e9\n  \u00b7 intro i\n    have hi : i \u2264 i := le_rfl\n    rw [dot_product_formula i i hi]\n    have : ((i.val : \u211d) - (i.val : \u211d)) = 0 := by ring\n    rw [this]\n    simp [x_sq_add_z_sq_eq_one]\n  \u00b7 intro i j hcond\n    by_cases h : i \u2264 j\n    \u00b7 have hval : i.val \u2264 j.val := h\n      have hd_ne_zero : j.val - i.val \u2260 0 := by\n        intro hzero\n        apply hcond\n        simp [hzero]\n      have hd_ne_one : j.val - i.val \u2260 1 := by\n        intro hone\n        apply hcond\n        simp [hone]\n      have hd_ne_2024 : j.val - i.val \u2260 2024 := by\n        intro h2024\n        apply hcond\n        simp [h2024]\n      have hd2 : 2 \u2264 j.val - i.val := by\n        by_contra! H\n        have : j.val - i.val < 2 := H\n        have : j.val - i.val = 0 \u2228 j.val - i.val = 1 := by omega\n        rcases this with (hzero | hone)\n        \u00b7 exact hd_ne_zero hzero\n        \u00b7 exact hd_ne_one hone\n      have hd2023 : j.val - i.val \u2264 2023 := by\n        have hmax : j.val \u2264 2024 := by\n          have : j.val < 2025 := j.2\n          omega\n        have hsub_le_j : j.val - i.val \u2264 j.val := Nat.sub_le _ _\n        have htemp : j.val - i.val \u2264 2024 := Nat.le_trans hsub_le_j hmax\n        by_contra! H\n        have : j.val - i.val = 2024 := by omega\n        exact hd_ne_2024 this\n      have hcos_ne : Real.cos ((j.val - i.val : \u211d) * theta_2025) \u2260 Real.cos theta_2025 := by\n        simpa [Nat.cast_sub hval] using cos_theta_non_eq (j.val - i.val) hd2 hd2023\n      rw [dot_product_formula i j h]\n      have hz : z_sq_2025 = -(x_sq_2025 * Real.cos theta_2025) := by\n        linarith [x_sq_cos_theta_add_z_sq_eq_zero]\n      rw [hz]\n      have hx_ne : x_sq_2025 \u2260 0 := x_sq_2025_ne_zero\n      have h_expr : x_sq_2025 * Real.cos ((j.val - i.val : \u211d) * theta_2025) + (-(x_sq_2025 * Real.cos theta_2025)) = x_sq_2025 * (Real.cos ((j.val - i.val : \u211d) * theta_2025) - Real.cos theta_2025) := by ring\n      rw [h_expr]\n      apply mul_ne_zero hx_ne\n      intro hzero\n      apply hcos_ne\n      linarith\n    \u00b7 have h' : j \u2264 i := le_of_not_ge h\n      have hval' : i.val \u2264 j.val := by\n        by_contra! H\n        -- H: i.val > j.val\n        have hsubzero : j.val - i.val = 0 := Nat.sub_eq_zero_of_le (by omega)\n        apply hcond\n        simp [hsubzero]\n      have hval_j_i : j.val \u2264 i.val := h'\n      have hval_eq : i.val = j.val := le_antisymm hval' hval_j_i\n      have hsubzero : j.val - i.val = 0 := by\n        rw [hval_eq]\n        simp\n      exfalso\n      apply hcond\n      simp [hsubzero]\n\n/-! ### Helper lemmas for reflection commutation -/"
+    },
+    {
+      "id": "next",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The successor function on Fin 2025 that wraps around: next i = i+1 for i<2024, next 2024 = 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The successor function on Fin 2025 that wraps around: next i = i+1 for i<2024, next 2024 = 0. -/)]\nnoncomputable def next (i : Fin 2025) : Fin 2025 :=\n  if h : i.val < 2024 then\n    \u27e8i.val + 1, by omega\u27e9\n  else\n    \u27e80, by omega\u27e9"
+    },
+    {
+      "id": "noncollinear_aux",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If v satisfies the unit\u2011norm, consecutive\u2011orthogonal, and non\u2011orthogonal\u2011for\u2011nonadjacent conditions, then non\u2011adjacent vectors are never collinear.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If v satisfies the unit\u2011norm, consecutive\u2011orthogonal, and non\u2011orthogonal\u2011for\u2011nonadjacent conditions, then non\u2011adjacent vectors are never collinear. -/)\n  (proof := /-- Case analysis using sub_one_fin and add_one_fin to find an index that forces a contradiction. -/)]\nlemma noncollinear_aux (v : Fin 2025 \u2192 (Fin 3 \u2192 \u211d)) (hunit : \u2200 i, dot (v i) (v i) = 1)\n    (horth : \u2200 i, dot (v i) (v (next i)) = 0)\n    (hnonorth : \u2200 (i j : Fin 2025), j.val - i.val \u2209 ({0,1,2024} : Set \u2115) \u2192 dot (v i) (v j) \u2260 0)\n    (i j : Fin 2025) (hval : j.val - i.val \u2209 ({0,1,2024} : Set \u2115)) : \u00ac\u2203 (c : \u211d), v i = c \u2022 v j := by\n  intro h_ex\n  rcases h_ex with \u27e8c, h_eq\u27e9\n  have hc_sq_eq_one : c ^ 2 = 1 := by\n    calc\n      c ^ 2 = c ^ 2 * 1 := by ring\n      _ = c ^ 2 * dot (v j) (v j) := by rw [hunit j]\n      _ = dot (c \u2022 v j) (c \u2022 v j) := by\n        calc\n          c ^ 2 * dot (v j) (v j) = c ^ 2 * (\u2211 k : Fin 3, v j k * v j k) := rfl\n          _ = \u2211 k : Fin 3, c ^ 2 * (v j k * v j k) := by simp [Finset.mul_sum]\n          _ = \u2211 k : Fin 3, (c * v j k) * (c * v j k) := by ring\n          _ = dot (c \u2022 v j) (c \u2022 v j) := by\n            simp [dot, smul_smul]\n      _ = dot (v i) (v i) := by rw [h_eq]\n      _ = 1 := hunit i\n  have hc_ne_zero : c \u2260 0 := by\n    intro hzero\n    have : c ^ 2 = 0 := by simpa [hzero] using rfl\n    rw [hc_sq_eq_one] at this\n    exact one_ne_zero this\n  have hi_lt_j : i.val < j.val := by\n    by_contra! hle\n    -- hle: j.val \u2264 i.val\n    have : j.val - i.val = 0 := by omega\n    have mem : (j.val - i.val) \u2208 ({0,1,2024} : Set \u2115) := by simp [this]\n    exact hval mem\n  have hival_lt_2024 : i.val < 2024 := by\n    by_contra! hge\n    -- hge: i.val \u2265 2024, i.e., i.val = 2024\n    have : j.val - i.val = 0 := by\n      have : j.val \u2264 i.val := by\n        have : j.val < 2025 := j.2\n        omega\n      omega\n    have mem : (j.val - i.val) \u2208 ({0,1,2024} : Set \u2115) := by simp [this]\n    exact hval mem\n  have hnext_val : (next i).val = i.val + 1 := by\n    dsimp [next]\n    simp [hival_lt_2024]\n  have hnext_val_le_jval : (next i).val \u2264 j.val := by\n    rw [hnext_val]\n    have : j.val - i.val \u2265 2 := by\n      have hpos : j.val - i.val \u2260 0 := by\n        intro hzero\n        have mem : (j.val - i.val) \u2208 ({0,1,2024} : Set \u2115) := by simp [hzero]\n        exact hval mem\n      have hnotone : j.val - i.val \u2260 1 := by\n        intro hone\n        have mem : (j.val - i.val) \u2208 ({0,1,2024} : Set \u2115) := by simp [hone]\n        exact hval mem\n      omega\n    omega\n  set d := j.val - i.val with hd_def\n  have hd_not_mem : d \u2209 ({0,1,2024} : Set \u2115) := hval\n  by_cases hd_eq2 : d = 2\n  \u00b7 -- case d = 2\n    have hd_eq2_val : j.val - i.val = 2 := hd_eq2\n    by_cases hj_val_lt_2024 : j.val < 2024\n    \u00b7 -- subcase j.val < 2024\n      have hnext_j_val : (next j).val = j.val + 1 := by\n        dsimp [next]\n        simp [hj_val_lt_2024]\n      have hnext_j_val_minus_i_val : (next j).val - i.val = 3 := by\n        rw [hnext_j_val]\n        omega\n      have h_three_not_mem : (next j).val - i.val \u2209 ({0,1,2024} : Set \u2115) := by\n        rw [hnext_j_val_minus_i_val]\n        simp\n      have hdot_i_nextj : dot (v i) (v (next j)) = 0 := by\n        calc\n          dot (v i) (v (next j)) = dot (c \u2022 v j) (v (next j)) := by rw [h_eq]\n          _ = \u2211 k : Fin 3, (c \u2022 v j) k * (v (next j)) k := rfl\n          _ = \u2211 k : Fin 3, (c * v j k) * (v (next j) k) := by simp\n          _ = c * \u2211 k : Fin 3, v j k * (v (next j) k) := by\n            simp [Finset.mul_sum, mul_comm, mul_left_comm, mul_assoc]\n          _ = c * dot (v j) (v (next j)) := rfl\n          _ = c * 0 := by rw [horth j]\n          _ = 0 := by ring\n      have h_contra := hnonorth i (next j) h_three_not_mem\n      exact h_contra hdot_i_nextj\n    \u00b7 -- else j.val = 2024\n      have hj_val_eq : j.val = 2024 := by\n        have : j.val \u2264 2024 := by omega\n        omega\n      have hi_val_eq : i.val = 2022 := by\n        omega\n      have hi_pos : i \u2260 0 := by\n        intro hzero\n        have : i.val = 0 := by simpa using hzero\n        rw [this] at hi_val_eq\n        omega\n      rcases sub_one_fin i hi_pos with \u27e8k, hk_val, hk_next\u27e9\n      have hk_val_eq : k.val = 2021 := by\n        rw [hi_val_eq] at hk_val\n        omega\n      have h_eq_inv : v j = (c\u207b\u00b9 : \u211d) \u2022 v i := by\n        calc\n          v j = (1 : \u211d) \u2022 v j := by simp\n          _ = ((c\u207b\u00b9 : \u211d) * c) \u2022 v j := by\n            field_simp [hc_ne_zero]\n          _ = (c\u207b\u00b9 : \u211d) \u2022 (c \u2022 v j) := by simp [smul_smul]\n          _ = (c\u207b\u00b9 : \u211d) \u2022 v i := by rw [h_eq]\n      have horth_k : dot (v k) (v i) = 0 := by\n        calc\n          dot (v k) (v i) = dot (v k) (v (next k)) := by rw [hk_next]\n          _ = 0 := horth k\n      have hdot_k_j : dot (v k) (v j) = 0 := by\n        calc\n          dot (v k) (v j) = dot (v k) ((c\u207b\u00b9 : \u211d) \u2022 v i) := by rw [h_eq_inv]\n          _ = \u2211 x : Fin 3, (v k x) * ((c\u207b\u00b9 : \u211d) \u2022 v i) x := rfl\n          _ = \u2211 x : Fin 3, (v k x) * (c\u207b\u00b9 * v i x) := by simp\n          _ = c\u207b\u00b9 * \u2211 x : Fin 3, (v k x) * (v i x) := by\n            simp [Finset.mul_sum, mul_comm, mul_left_comm, mul_assoc]\n          _ = c\u207b\u00b9 * dot (v k) (v i) := rfl\n          _ = c\u207b\u00b9 * 0 := by rw [horth_k]\n          _ = 0 := by ring\n      have h_j_minus_k_val : j.val - k.val = 3 := by\n        omega\n      have h_three_not_mem' : j.val - k.val \u2209 ({0,1,2024} : Set \u2115) := by\n        rw [h_j_minus_k_val]\n        simp\n      have h_contra2 := hnonorth k j h_three_not_mem'\n      exact h_contra2 hdot_k_j\n  \u00b7 -- case d \u2260 2\n    have h_dminus1_not_mem : j.val - (next i).val \u2209 ({0,1,2024} : Set \u2115) := by\n      have : j.val - (next i).val = d - 1 := by\n        rw [hnext_val, hd_def]\n        omega\n      rw [this]\n      intro hmem\n      have h_cases : d - 1 = 0 \u2228 d - 1 = 1 \u2228 d - 1 = 2024 := by\n        simpa using hmem\n      rcases h_cases with (h | h | h)\n      \u00b7 -- d-1 = 0 \u2192 d = 1\n        have hd_mem : d \u2208 ({0,1,2024} : Set \u2115) := by\n          have : d = 1 := by omega\n          simp [this]\n        exact hd_not_mem hd_mem\n      \u00b7 -- d-1 = 1 \u2192 d = 2, contradicts hd_eq2\n        have : d = 2 := by omega\n        exact hd_eq2 this\n      \u00b7 -- d-1 = 2024 \u2192 d = 2025, impossible\n        have : d = 2025 := by omega\n        have hd_le : d \u2264 2024 := by\n          rw [hd_def]\n          have : j.val \u2264 2024 := by omega\n          omega\n        omega\n    have hdot_j_nexti : dot (v j) (v (next i)) = 0 := by\n      have h_eq_inv : v j = (c\u207b\u00b9 : \u211d) \u2022 v i := by\n        calc\n          v j = (1 : \u211d) \u2022 v j := by simp\n          _ = ((c\u207b\u00b9 : \u211d) * c) \u2022 v j := by\n            field_simp [hc_ne_zero]\n          _ = (c\u207b\u00b9 : \u211d) \u2022 (c \u2022 v j) := by simp [smul_smul]\n          _ = (c\u207b\u00b9 : \u211d) \u2022 v i := by rw [h_eq]\n      calc\n        dot (v j) (v (next i)) = dot ((c\u207b\u00b9 : \u211d) \u2022 v i) (v (next i)) := by rw [h_eq_inv]\n        _ = \u2211 x : Fin 3, ((c\u207b\u00b9 : \u211d) \u2022 v i) x * (v (next i)) x := rfl\n        _ = \u2211 x : Fin 3, (c\u207b\u00b9 * v i x) * (v (next i) x) := by simp\n        _ = c\u207b\u00b9 * \u2211 x : Fin 3, (v i x) * (v (next i) x) := by\n          simp [Finset.mul_sum, mul_comm, mul_left_comm, mul_assoc]\n        _ = c\u207b\u00b9 * dot (v i) (v (next i)) := rfl\n        _ = c\u207b\u00b9 * 0 := by rw [horth i]\n        _ = 0 := by ring\n    have h_contra := hnonorth (next i) j h_dminus1_not_mem\n    -- h_contra : dot (v (next i)) (v j) \u2260 0\n    have h_dot_symm : dot (v (next i)) (v j) = dot (v j) (v (next i)) := by\n      simp [dot, mul_comm]\n    rw [h_dot_symm] at h_contra\n    exact h_contra hdot_j_nexti"
+    },
+    {
+      "id": "not_S_of_lt_3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural number k < 3, k \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural number $k < 3$, $k \\notin S$. -/)\n  (proof := /-- Since $k<3$, we have $k=0$, $k=1$ or $k=2$. In each case the conclusion follows from `not_S_zero`, `not_S_one` or `not_S_two` respectively. -/)]\nlemma not_S_of_lt_3 (k : \u2115) (hk : k < 3) : k \u2209 S := by\n  have hk2 : k \u2264 2 := Nat.le_of_lt_succ hk\n  have : k = 0 \u2228 k = 1 \u2228 k = 2 := by\n    omega\n  rcases this with (rfl|rfl|rfl)\n  \u00b7 exact not_S_zero\n  \u00b7 exact not_S_one\n  \u00b7 exact not_S_two"
+    },
+    {
+      "id": "not_S_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.74,
+      "proof_length": 53,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "1 \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $1 \\notin S$. -/)\n  (proof := /-- Suppose $1 \\in S$. Then there exists a family $A$ of $1 \\times 1$ real matrices (which are just scalars) satisfying the condition. Multiplication of $1 \\times 1$ matrices is commutative, so all $A_i$ pairwise commute. In particular $A_0$ and $A_2$ commute, but the condition requires that they do not commute because $2-0=2 \\notin \\{0,1,2024\\}$, a contradiction. -/)]\nlemma not_S_one : (1 : \u2115) \u2209 S := by\n  intro h\n  rcases h with \u27e8A, h\u27e9\n  have h02 : (0 : Fin 2025) \u2264 (2 : Fin 2025) := by decide\n  have hcomm : A (0 : Fin 2025) * A (2 : Fin 2025) = A (2 : Fin 2025) * A (0 : Fin 2025) := by\n    have hcomm_1x1 : \u2200 (A B : Matrix (Fin 1) (Fin 1) \u211d), A * B = B * A := by\n      intro A B\n      ext i j\n      fin_cases i <;> fin_cases j\n      simp [Matrix.mul_apply, mul_comm]\n    exact hcomm_1x1 (A (0 : Fin 2025)) (A (2 : Fin 2025))\n  have hmem : ((2 : Fin 2025).val - (0 : Fin 2025).val) \u2208 ({0, 1, 2024} : Set \u2115) :=\n    ((h (0 : Fin 2025) (2 : Fin 2025) h02).mp hcomm)\n  have sub_eq : ((2 : Fin 2025).val - (0 : Fin 2025).val) = 2 := by\n    decide\n  have not_mem : (2 : \u2115) \u2209 ({0, 1, 2024} : Set \u2115) := by decide\n  rw [sub_eq] at hmem\n  exact not_mem hmem"
+    },
+    {
+      "id": "not_S_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 20.3,
+      "proof_length": 105,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "2 \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $2 \\notin S$. -/)\n  (proof := /-- Suppose $2 \\in S$, so there exists $A \\colon \\operatorname{Fin} 2025 \\to \\operatorname{Mat}_{2\\times 2}(\\mathbb{R})$ with the stated property. Consider the three indices $0,1,2$. Because $1-0 = 1 \\in \\{0,1,2024\\}$, we have $A_0 A_1 = A_1 A_0$. Similarly $2-1 = 1 \\in \\{0,1,2024\\}$, so $A_1 A_2 = A_2 A_1$. If $A_1$ is not a scalar matrix, then by `centralizer_comm_of_non_scalar_2x2` the matrices $A_0$ and $A_2$ would commute. However $2-0=2 \\notin \\{0,1,2024\\}$, so the condition forces $A_0 A_2 \\neq A_2 A_0$, a contradiction. Hence $A_1$ must be a scalar matrix. Repeating the same argument with any consecutive triple shows that every $A_i$ is scalar. Consequently all $A_i$ commute, contradicting $A_0 A_2 \\neq A_2 A_0$. Therefore $2 \\notin S$. -/)]\nlemma not_S_two : (2 : \u2115) \u2209 S := by\n  intro hS\n  rcases hS with \u27e8A, hA\u27e9\n  have exists_adjacent (i : Fin 2025) : \u2203 (j k : Fin 2025), \n    (A j * A i = A i * A j) \u2227 (A k * A i = A i * A k) \u2227 \u00ac (A j * A k = A k * A j) := by\n    by_cases hi0 : i.val = 0\n    \u00b7 have hi0' : i = (0 : Fin 2025) := by\n        apply Fin.ext; exact hi0\n      subst hi0'\n      refine \u27e8(1 : Fin 2025), (2024 : Fin 2025), ?_, ?_, ?_\u27e9\n      \u00b7 -- A 1 * A 0 = A 0 * A 1\n        have hpos : (0 : Fin 2025) \u2264 (1 : Fin 2025) := by omega\n        have hmem : (1 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n        exact ((hA (0 : Fin 2025) (1 : Fin 2025) hpos).mpr hmem).symm\n      \u00b7 -- A 2024 * A 0 = A 0 * A 2024\n        have hpos : (0 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n        have hmem : (2024 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n        exact ((hA (0 : Fin 2025) (2024 : Fin 2025) hpos).mpr hmem).symm\n      \u00b7 -- \u00ac (A 1 * A 2024 = A 2024 * A 1)\n        intro h_eq\n        have hpos : (1 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n        have hmem' : (2024 : Fin 2025).val - (1 : Fin 2025).val \u2208 ({0,1,2024} : Set \u2115) :=\n          ((hA (1 : Fin 2025) (2024 : Fin 2025) hpos).mp h_eq)\n        have hdiff : (2024 : Fin 2025).val - (1 : Fin 2025).val = 2023 := by omega\n        rw [hdiff] at hmem'\n        have : (2023 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n        exact this hmem'\n    \u00b7 by_cases hi2024 : i.val = 2024\n      \u00b7 have hi2024' : i = (2024 : Fin 2025) := by\n          apply Fin.ext; exact hi2024\n        subst hi2024'\n        refine \u27e8(2023 : Fin 2025), (0 : Fin 2025), ?_, ?_, ?_\u27e9\n        \u00b7 -- A 2023 * A 2024 = A 2024 * A 2023\n          have hpos : (2023 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n          have hmem : (1 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n          exact ((hA (2023 : Fin 2025) (2024 : Fin 2025) hpos).mpr hmem)\n        \u00b7 -- A 0 * A 2024 = A 2024 * A 0\n          have hpos : (0 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n          have hmem : (2024 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n          exact ((hA (0 : Fin 2025) (2024 : Fin 2025) hpos).mpr hmem)\n        \u00b7 -- \u00ac (A 2023 * A 0 = A 0 * A 2023)\n          intro h_eq\n          have hpos : (0 : Fin 2025) \u2264 (2023 : Fin 2025) := by omega\n          have hmem' : (2023 : Fin 2025).val - (0 : Fin 2025).val \u2208 ({0,1,2024} : Set \u2115) :=\n            ((hA (0 : Fin 2025) (2023 : Fin 2025) hpos).mp h_eq.symm)\n          have hdiff : (2023 : Fin 2025).val - (0 : Fin 2025).val = 2023 := by omega\n          rw [hdiff] at hmem'\n          have : (2023 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n          exact this hmem'\n      \u00b7 -- generic case: i.val between 1 and 2023\n        let j : Fin 2025 := \u27e8i.val - 1, by\n          have : i.val - 1 < 2025 := by omega\n          exact this\u27e9\n        let k : Fin 2025 := \u27e8i.val + 1, by\n          have : i.val + 1 < 2025 := by omega\n          exact this\u27e9\n        refine \u27e8j, k, ?_, ?_, ?_\u27e9\n        \u00b7 -- A j * A i = A i * A j\n          have hpos : j \u2264 i := by\n            rw [Fin.le_iff_val_le_val]\n            dsimp [j]\n            omega\n          have : i.val - j.val \u2208 ({0,1,2024} : Set \u2115) := by\n            simp [j]\n            omega\n          exact ((hA j i hpos).mpr this)\n        \u00b7 -- A k * A i = A i * A k\n          have hpos : i \u2264 k := by\n            rw [Fin.le_iff_val_le_val]\n            dsimp [k]\n            omega\n          have : k.val - i.val \u2208 ({0,1,2024} : Set \u2115) := by\n            simp [k]\n          exact ((hA i k hpos).mpr this).symm\n        \u00b7 -- \u00ac (A j * A k = A k * A j)\n          intro h_eq\n          -- choose ordering. Since j.val < k.val (difference 2), we have j \u2264 k.\n          have hpos : j \u2264 k := by\n            rw [Fin.le_iff_val_le_val]\n            dsimp [j, k]\n            omega\n          have hmem' : k.val - j.val \u2208 ({0,1,2024} : Set \u2115) :=\n            ((hA j k hpos).mp h_eq)\n          have hdiff : k.val - j.val = 2 := by\n            dsimp [j, k]\n            omega\n          rw [hdiff] at hmem'\n          have : (2 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n          exact this hmem'\n  -- Now we have exists_adjacent.\n  have h_all_scalar (i : Fin 2025) : \u2203 (c : \u211d), A i = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := by\n    by_contra! h_not_scalar\n    -- h_not_scalar : \u2200 c, A i \u2260 c \u2022 1\n    have h_not_ex : \u00ac \u2203 (c : \u211d), A i = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := by\n      intro h\n      rcases h with \u27e8c, hc\u27e9\n      exact h_not_scalar c hc\n    rcases exists_adjacent i with \u27e8j, k, h_comm_ij, h_comm_ik, h_notcomm_jk\u27e9\n    have h_comm_jk : A j * A k = A k * A j :=\n      centralizer_comm_of_non_scalar_2x2 (A i) h_not_ex (A j) (A k) h_comm_ij h_comm_ik\n    exact h_notcomm_jk h_comm_jk\n  -- Now we have that each A i is a scalar multiple of identity.\n  -- Show a contradiction by choosing two indices that are not adjacent.\n  -- Pick i=0, j=2.\n  have h0_scalar : \u2203 (c : \u211d), A (0 : Fin 2025) = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := h_all_scalar 0\n  have h2_scalar : \u2203 (c : \u211d), A (2 : Fin 2025) = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := h_all_scalar 2\n  rcases h0_scalar with \u27e8c0, h0_eq\u27e9\n  rcases h2_scalar with \u27e8c2, h2_eq\u27e9\n  -- Then A 0 and A 2 commute because they are scalar multiples of identity (by scalar_commutes).\n  have h_comm : A (0 : Fin 2025) * A (2 : Fin 2025) = A (2 : Fin 2025) * A (0 : Fin 2025) := by\n    calc\n      A (0 : Fin 2025) * A (2 : Fin 2025) = (c0 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by rw [h0_eq, h2_eq]\n      _ = (c0 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := rfl\n      _ = (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * (c0 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by\n        rw [scalar_commutes c0 (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d))]\n      _ = A (2 : Fin 2025) * A (0 : Fin 2025) := by rw [h0_eq, h2_eq]\n  -- But the condition hA says that A 0 and A 2 do NOT commute because 2-0 = 2 \u2209 {0,1,2024}.\n  have hpos : (0 : Fin 2025) \u2264 (2 : Fin 2025) := by omega\n  have hdiff : (2 : Fin 2025).val - (0 : Fin 2025).val = 2 := by omega\n  have h_notmem : (2 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n  have h_notcomm : \u00ac (A (0 : Fin 2025) * A (2 : Fin 2025) = A (2 : Fin 2025) * A (0 : Fin 2025)) := by\n    intro h_eq\n    have hmem' : (2 : Fin 2025).val - (0 : Fin 2025).val \u2208 ({0,1,2024} : Set \u2115) :=\n      ((hA (0 : Fin 2025) (2 : Fin 2025) hpos).mp h_eq)\n    rw [hdiff] at hmem'\n    exact h_notmem hmem'\n  exact h_notcomm h_comm"
+    },
+    {
+      "id": "not_S_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.98,
+      "proof_length": 56,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "0 \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $0 \\notin S$. -/)\n  (proof := /-- Suppose $0 \\in S$. Then there exists a family $A$ of $0 \\times 0$ matrices satisfying the condition. The only $0 \\times 0$ matrix is the unique matrix, so all $A_i$ are equal. In particular $A_0 = A_2$, hence $A_0 A_2 = A_2 A_0$. But the condition for $i=0,j=2$ requires $A_0 A_2 \\neq A_2 A_0$ because $2-0=2 \\notin \\{0,1,2024\\}$, a contradiction. -/)]\nlemma not_S_zero : (0 : \u2115) \u2209 S := by\n  intro h\n  rcases h with \u27e8A, hA\u27e9\n  have h0 : (0 : Fin 2025) \u2264 (2 : Fin 2025) := by decide\n  have hdiff : ((2 : Fin 2025).val - (0 : Fin 2025).val) \u2209 ({0, 1, 2024} : Set \u2115) := by\n    decide\n  have hA0 : A 0 = (0 : Matrix (Fin 0) (Fin 0) \u211d) := Subsingleton.elim _ _\n  have hA2 : A 2 = (0 : Matrix (Fin 0) (Fin 0) \u211d) := Subsingleton.elim _ _\n  have hcomm : (A 0) * (A 2) = (A 2) * (A 0) := by\n    simp [hA0, hA2]\n  have hiff := hA 0 2 h0\n  -- hiff : (A 0 * A 2 = A 2 * A 0 \u2194 (2:Fin 2025).val - (0:Fin 2025).val \u2208 ({0, 1, 2024} : Set \u2115))\n  have hmem := hiff.mp hcomm\n  exact hdiff hmem"
+    },
+    {
+      "id": "one_minus_cos_theta_2025_ne_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "1 - cos(2024\u03c0/2025) \u2260 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- $1 - \\cos(2024\\pi/2025) \\neq 0$. -/)\n  (proof := /-- Immediate from `cos_theta_2025_ne_one`. -/)]\nlemma one_minus_cos_theta_2025_ne_zero : 1 - Real.cos theta_2025 \u2260 0 := by\n  intro h\n  apply cos_theta_2025_ne_one\n  linarith"
+    },
+    {
+      "id": "outer",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The outer product of a vector v \u2208 \u211d^3 as a 3\u00d73 matrix (v_i v_j).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- The outer product of a vector v \u2208 \u211d^3 as a 3\u00d73 matrix (v_i v_j). -/)]\ndef outer (v : Fin 3 \u2192 \u211d) : Matrix (Fin 3) (Fin 3) \u211d := fun i j => v i * v j"
+    },
+    {
+      "id": "outer_comm_iff_collinear",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For unit vectors v,w, v w^top = w v^top iff v and w are collinear.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For unit vectors $v,w$, $v w^\\top = w v^\\top$ iff $v$ and $w$ are collinear. -/)\n  (proof := /-- If $v$ is nonzero, pick an index where $v_k\\neq0$ and solve for $c$. -/)]\nlemma outer_comm_iff_collinear (v w : Fin 3 \u2192 \u211d) (hv : dot v v = 1) (hw : dot w w = 1) :\n    (fun i j => v i * w j) = (fun i j => w i * v j) \u2194 \u2203 (c : \u211d), v = c \u2022 w := by\n  constructor\n  \u00b7 intro h_eq\n    -- show v and w are collinear\n    have hw_nonzero : \u2203 k, w k \u2260 0 := by\n      by_contra h\n      push_neg at h\n      have hdot : dot w w = 0 := by\n        simp [dot, h]\n      linarith\n    rcases hw_nonzero with \u27e8k, hwk\u27e9\n    use v k / w k\n    ext i\n    -- need to show v i = (v k / w k) * w i\n    have h_eq_ik : v i * w k = w i * v k := by\n      calc\n        v i * w k = (fun i j => v i * w j) i k := rfl\n        _ = (fun i j => w i * v j) i k := by rw [h_eq]\n        _ = w i * v k := rfl\n    calc\n      v i = (v i * w k) / w k := by field_simp [hwk]\n      _ = (w i * v k) / w k := by rw [h_eq_ik]\n      _ = w i * (v k / w k) := by ring\n      _ = (v k / w k) * w i := by ring\n  \u00b7 intro \u27e8c, h\u27e9\n    ext i j\n    calc\n      v i * w j = (c \u2022 w) i * w j := by rw [h]\n      _ = (c * w i) * w j := rfl\n      _ = c * (w i * w j) := by ring\n      _ = w i * (c * w j) := by ring\n      _ = w i * ((c \u2022 w) j) := rfl\n      _ = w i * v j := by rw [h]"
+    },
+    {
+      "id": "outer_mul_outer",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For v,w\u2208\u211d^3, operatorname{outer}(v)*operatorname{outer}(w)=(\u27e8 v,w\u27e9) (v w^top).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For $v,w\\in\\mathbb{R}^3$, $\\operatorname{outer}(v)*\\operatorname{outer}(w)=(\\langle v,w\\rangle)\\,(v w^\\top)$. -/)\n  (proof := /-- Direct computation of the matrix product. -/)]\nlemma outer_mul_outer (v w : Fin 3 \u2192 \u211d) : outer v * outer w = (dot v w) \u2022 (fun i j => v i * w j) := by\n  ext i j\n  simp [outer, Matrix.mul_apply, dot, Matrix.smul_apply, Pi.smul_apply]\n  -- goal: \u2211 x, v i * v x * w x * w j = v i * w j * \u2211 x, v x * w x\n  simp [Finset.sum_mul, Finset.mul_sum, mul_comm, mul_left_comm, mul_assoc]"
+    },
+    {
+      "id": "putnam_2025_a4",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Find the minimal value of k such that there exist k-by-k real matrices A_1, \u2026, A_{2025} with the property that A_i A_j = A_j A_i if and only if |i - j| \u2208 {0, 1, 2024}.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Find the minimal value of $k$ such that there exist $k$-by-$k$ real matrices $A_1, \\ldots, A_{2025}$ with the property that $A_i A_j = A_j A_i$ if and only if $|i - j| \\in \\{0, 1, 2024\\}$. -/)\n  (proof := /-- By `S_contains_3` we have $3 \\in S$, and by `S_lower_bound` every element of $S$ is at least $3$. Therefore $3$ is the least element of $S$. -/)]\ntheorem putnam_2025_a4 :\n  IsLeast {k : \u2115 | \u2203 A : Fin 2025 \u2192 Matrix (Fin k) (Fin k) \u211d,\n    \u2200 i j : Fin 2025, i \u2264 j \u2192\n      (A i * A j = A j * A i \u2194 j.val - i.val \u2208 ({0, 1, 2024} : Set \u2115))}\n  ((3) : \u2115 ) := by\n  constructor\n  \u00b7 exact S_contains_3\n  \u00b7 intro k hk\n    exact S_lower_bound k hk"
+    },
+    {
+      "id": "reflection",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The reflection matrix across the plane orthogonal to a unit vector v in \u211d^3.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- The reflection matrix across the plane orthogonal to a unit vector v in \u211d^3. -/)]\ndef reflection (v : Fin 3 \u2192 \u211d) : Matrix (Fin 3) (Fin 3) \u211d :=\n  (1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 (outer v)\n\n/-! ### Helper definitions for orthogonal sequence -/"
+    },
+    {
+      "id": "reflection_commute_iff",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.24,
+      "proof_length": 27,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For unit vectors v,w, the reflections across them commute iff v and w are orthogonal or collinear.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For unit vectors $v,w$, the reflections across them commute iff $v$ and $w$ are orthogonal or collinear. -/)\n  (proof := /-- Use the formula for the commutator, `outer_comm_iff_collinear`, and the fact that a scalar multiple of a matrix is zero iff the scalar or the matrix is zero. -/)]\nlemma reflection_commute_iff (v w : Fin 3 \u2192 \u211d) (hv : dot v v = 1) (hw : dot w w = 1) :\n    reflection v * reflection w = reflection w * reflection v \u2194 dot v w = 0 \u2228 \u2203 (c : \u211d), v = c \u2022 w := by\n  constructor\n  \u00b7 intro hcomm\n    have hsub : reflection v * reflection w - reflection w * reflection v = 0 := by\n      rw [sub_eq_zero.mpr hcomm]\n    rw [reflection_mul_reflection_sub v w hv hw] at hsub\n    have hzero : (4 * dot v w) \u2022 (fun i j => v i * w j - w i * v j) = 0 := hsub\n    by_cases hdot : dot v w \u2260 0\n    \u00b7 have hMzero : (fun i j => v i * w j - w i * v j) = 0 := by\n        ext i j\n        have hzero_ij : ((4 * dot v w) \u2022 (fun i j => v i * w j - w i * v j)) i j = 0 := by rw [hzero, zero_apply]\n        have hprod : (4 * dot v w) * (v i * w j - w i * v j) = 0 := by\n          simpa [smul_apply] using hzero_ij\n        rcases eq_zero_or_eq_zero_of_mul_eq_zero hprod with (h | h)\n        \u00b7 -- h : 4 * dot v w = 0\n          have hzero_dot : dot v w = 0 := by linarith\n          exfalso; exact hdot hzero_dot\n        \u00b7 -- h : v i * w j - w i * v j = 0\n          exact h\n      have hcoll : (fun i j => v i * w j) = (fun i j => w i * v j) := by\n        ext i j\n        have hMzero_ij : v i * w j - w i * v j = 0 := by\n          simpa using congrArg (fun M : Matrix (Fin 3) (Fin 3) \u211d => M i j) hMzero\n        linarith\n      rcases (outer_comm_iff_collinear v w hv hw).mp hcoll with \u27e8c, hc\u27e9\n      right; exact \u27e8c, hc\u27e9\n    \u00b7 left; exact not_not.mp hdot\n  \u00b7 intro h\n    rcases h with (hdot | \u27e8c, hc\u27e9)\n    \u00b7 -- dot v w = 0\n      have hsub : reflection v * reflection w - reflection w * reflection v = 0 := by\n        rw [reflection_mul_reflection_sub v w hv hw]\n        simp [hdot]\n      exact sub_eq_zero.mp hsub\n    \u00b7 -- v = c \u2022 w\n      have hsub : reflection v * reflection w - reflection w * reflection v = 0 := by\n        rw [reflection_mul_reflection_sub v w hv hw]\n        have hMzero : (fun i j => v i * w j - w i * v j) = 0 := by\n          ext i j\n          simp [hc, mul_comm, mul_left_comm, mul_assoc, smul_apply]\n        simp [hMzero]\n      exact sub_eq_zero.mp hsub"
+    },
+    {
+      "id": "reflection_mul_reflection_sub",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.68,
+      "proof_length": 5,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For unit vectors v,w, the commutator of the reflections equals 4\u27e8 v,w\u27e9 (v w^top-w v^top).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For unit vectors $v,w$, the commutator of the reflections equals $4\\langle v,w\\rangle\\,(v w^\\top-w v^\\top)$. -/)\n  (proof := /-- Expand the product, use `outer_mul_outer`. -/)]\nlemma reflection_mul_reflection_sub (v w : Fin 3 \u2192 \u211d) (hv : dot v v = 1) (hw : dot w w = 1) :\n    reflection v * reflection w - reflection w * reflection v = (4 * dot v w) \u2022 (fun i j => v i * w j - w i * v j) := by\n  unfold reflection\n  have h_expand1 : ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer v) * ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer w) = \n      (1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer w - (2 : \u211d) \u2022 outer v + (4 : \u211d) \u2022 (outer v * outer w) := by\n    ext i j\n    simp [Matrix.mul_apply, Matrix.add_apply, Matrix.sub_apply, Matrix.smul_apply, Matrix.one_apply, outer, Fin.sum_univ_three]\n    fin_cases i <;> fin_cases j <;> simp <;> ring\n  have h_expand2 : ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer w) * ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer v) = \n      (1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer v - (2 : \u211d) \u2022 outer w + (4 : \u211d) \u2022 (outer w * outer v) := by\n    ext i j\n    simp [Matrix.mul_apply, Matrix.add_apply, Matrix.sub_apply, Matrix.smul_apply, Matrix.one_apply, outer, Fin.sum_univ_three]\n    fin_cases i <;> fin_cases j <;> simp <;> ring\n  calc\n    ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer v) * ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer w) -\n    ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer w) * ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer v) = \n      ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer w - (2 : \u211d) \u2022 outer v + (4 : \u211d) \u2022 (outer v * outer w)) -\n      ((1 : Matrix (Fin 3) (Fin 3) \u211d) - (2 : \u211d) \u2022 outer v - (2 : \u211d) \u2022 outer w + (4 : \u211d) \u2022 (outer w * outer v)) := by\n      rw [h_expand1, h_expand2]\n    _ = (4 : \u211d) \u2022 (outer v * outer w) - (4 : \u211d) \u2022 (outer w * outer v) := by\n      abel\n    _ = (4 : \u211d) \u2022 ((dot v w) \u2022 (fun i j => v i * w j)) - (4 : \u211d) \u2022 ((dot v w) \u2022 (fun i j => w i * v j)) := by\n      rw [outer_mul_outer v w, outer_mul_outer w v]\n      rw [dot_comm v w]\n    _ = (4 * dot v w) \u2022 (fun i j => v i * w j - w i * v j) := by\n      calc\n        (4 : \u211d) \u2022 ((dot v w) \u2022 (fun i j : Fin 3 => v i * w j)) - (4 : \u211d) \u2022 ((dot v w) \u2022 (fun i j : Fin 3 => w i * v j))\n            = ((4 : \u211d) * (dot v w)) \u2022 (fun i j : Fin 3 => v i * w j) - ((4 : \u211d) * (dot v w)) \u2022 (fun i j : Fin 3 => w i * v j) := by\n          simp [smul_smul]\n        _ = ((4 * dot v w) : \u211d) \u2022 ((fun i j : Fin 3 => v i * w j) - (fun i j : Fin 3 => w i * v j)) := by\n          rw [\u2190 smul_sub]\n        _ = (4 * dot v w) \u2022 (fun i j : Fin 3 => v i * w j - w i * v j) := rfl"
+    },
+    {
+      "id": "scalar_commutes",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any scalar c \u2208 \u211d and any 2 \u00d7 2 real matrix M, (c I_2) M = M (c I_2).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any scalar $c \\in \\mathbb{R}$ and any $2 \\times 2$ real matrix $M$, $(c I_2) M = M (c I_2)$. -/)\n  (proof := /-- Direct computation using the definition of scalar multiplication and matrix multiplication. -/)]\nlemma scalar_commutes (c : \u211d) (M : Matrix (Fin 2) (Fin 2) \u211d) : (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * M = M * (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by\n  calc\n    (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * M = c \u2022 (1 * M) := by\n      simp\n    _ = c \u2022 M := by simp\n    _ = c \u2022 (M * 1) := by simp\n    _ = M * (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by simp"
+    },
+    {
+      "id": "sub_one_fin",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.39,
+      "proof_length": 8,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any non\u2011zero i : Fin 2025, there exists k such that next k = i and k.val = i.val - 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For any non\u2011zero i : Fin 2025, there exists k such that next k = i and k.val = i.val - 1. -/)\n  (proof := /-- Construct k as Fin.mk (i.val-1) ... and verify. -/)]\nlemma sub_one_fin (i : Fin 2025) (hi : i \u2260 0) : \u2203 (k : Fin 2025), k.val = i.val - 1 \u2227 next k = i := by\n  have hi' : i.val \u2265 1 := by\n    have : i.val \u2260 0 := by\n      intro hzero\n      apply hi\n      exact Fin.ext hzero\n    omega\n  have hk : i.val - 1 < 2025 := by\n    have hi_bound : i.val < 2025 := i.2\n    omega\n  refine \u27e8\u27e8i.val - 1, hk\u27e9, ?_, ?_\u27e9\n  \u00b7 rfl\n  \u00b7 ext\n    have hlt : i.val - 1 < 2024 := by\n      have hi_bound : i.val < 2025 := i.2\n      omega\n    simp [next, hlt]\n    omega"
+    },
+    {
+      "id": "theta_2025",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The angle \u03b8 = 2024\u03c0/2025.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- The angle \u03b8 = 2024\u03c0/2025. -/)]\nnoncomputable def theta_2025 : \u211d := 2024 * \u03c0 / 2025"
+    },
+    {
+      "id": "v_2025",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The i\u2011th vector in \u211d^3 of the orthogonal sequence.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The i\u2011th vector in \u211d^3 of the orthogonal sequence. -/)]\nnoncomputable def v_2025 (i : Fin 2025) : Fin 3 \u2192 \u211d :=\n  fun k => match k with\n  | 0 => x_2025 * Real.cos (i.val * theta_2025)\n  | 1 => x_2025 * Real.sin (i.val * theta_2025)\n  | 2 => z_2025\n\n/-! ### Helper lemmas for cosine arithmetic -/"
+    },
+    {
+      "id": "x_2025",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "x = \u221a(x\u00b2).",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- x = \u221a(x\u00b2). -/)]\nnoncomputable def x_2025 : \u211d := Real.sqrt x_sq_2025"
+    },
+    {
+      "id": "x_sq_2025",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "x\u00b2 = 1 - z\u00b2.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- x\u00b2 = 1 - z\u00b2. -/)]\nnoncomputable def x_sq_2025 : \u211d := 1 - z_sq_2025"
+    },
+    {
+      "id": "x_sq_2025_ne_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "x_{mathrm{sq}} \u2260 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $x_{\\mathrm{sq}} \\neq 0$. -/)\n  (proof := /-- Because $x_{\\mathrm{sq}} = \\frac{1}{1-\\cos\\theta}$ and the denominator is nonzero. -/)]\nlemma x_sq_2025_ne_zero : x_sq_2025 \u2260 0 := by\n  intro hx\n  have h1 : 1 - cos_theta_2025 \u2260 0 := one_minus_cos_theta_2025_ne_zero\n  have h_eq : x_sq_2025 = 1 / (1 - cos_theta_2025) := by\n    dsimp [x_sq_2025, z_sq_2025]\n    field_simp [h1]\n    ring\n  have hzero : 1 / (1 - cos_theta_2025) = 0 := by\n    calc\n      1 / (1 - cos_theta_2025) = x_sq_2025 := by symm; exact h_eq\n      _ = 0 := hx\n  field_simp [h1] at hzero\n  linarith"
+    },
+    {
+      "id": "x_sq_add_z_sq_eq_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "x_{mathrm{sq}} + z_{mathrm{sq}} = 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $x_{\\mathrm{sq}} + z_{\\mathrm{sq}} = 1$. -/)\n  (proof := /-- Direct algebraic computation using the definitions. -/)]\nlemma x_sq_add_z_sq_eq_one : x_sq_2025 + z_sq_2025 = 1 := by\n  unfold x_sq_2025\n  ring"
+    },
+    {
+      "id": "x_sq_cos_theta_add_z_sq_eq_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "x_{mathrm{sq}}cos\u03b8 + z_{mathrm{sq}} = 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- $x_{\\mathrm{sq}}\\cos\\theta + z_{\\mathrm{sq}} = 0$. -/)\n  (proof := /-- Direct algebraic computation. -/)]\nlemma x_sq_cos_theta_add_z_sq_eq_zero : x_sq_2025 * Real.cos theta_2025 + z_sq_2025 = 0 := by\n  dsimp [x_sq_2025, z_sq_2025, cos_theta_2025]\n  set c := Real.cos theta_2025\n  have hc : 1 - c \u2260 0 := one_minus_cos_theta_2025_ne_zero\n  field_simp [hc]\n  ring"
+    },
+    {
+      "id": "z_2025",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "z = \u221a(z\u00b2).",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- z = \u221a(z\u00b2). -/)]\nnoncomputable def z_2025 : \u211d := Real.sqrt z_sq_2025"
+    },
+    {
+      "id": "z_sq_2025",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "z\u00b2 = -cos \u03b8 / (1 - cos \u03b8).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- z\u00b2 = -cos \u03b8 / (1 - cos \u03b8). -/)]\nnoncomputable def z_sq_2025 : \u211d := -cos_theta_2025 / (1 - cos_theta_2025)"
+    }
+  ],
+  "edges": [
+    {
+      "source": "reflection_commute_iff",
+      "target": "S_contains_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "dot",
+      "target": "S_contains_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "next",
+      "target": "S_contains_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "reflection",
+      "target": "S_contains_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "noncollinear_aux",
+      "target": "S_contains_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_orthogonal_sequence",
+      "target": "S_contains_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_S_of_lt_3",
+      "target": "S_lower_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "cos_2024_theta_eq_cos_theta",
+      "target": "adjacent_orthogonality",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "theta_2025",
+      "target": "adjacent_orthogonality",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "dot_product_formula",
+      "target": "adjacent_orthogonality",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "x_sq_2025",
+      "target": "adjacent_orthogonality",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "z_sq_2025",
+      "target": "adjacent_orthogonality",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "x_sq_cos_theta_add_z_sq_eq_zero",
+      "target": "adjacent_orthogonality",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "commute_of_both_commute",
+      "target": "centralizer_comm_of_non_scalar_2x2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_independent_vector",
+      "target": "centralizer_span",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "centralizer_span",
+      "target": "commute_of_both_commute",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "z_2025",
+      "target": "dot_product_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "cos_theta_2025",
+      "target": "dot_product_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "x_2025",
+      "target": "dot_product_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "x_sq_2025_ne_zero",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "theta_2025",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "dot_product_formula",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "cos_theta_non_eq",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "v_2025",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "x_sq_2025",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "z_sq_2025",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "x_sq_add_z_sq_eq_one",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "x_sq_cos_theta_add_z_sq_eq_zero",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "adjacent_orthogonality",
+      "target": "exists_orthogonal_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sub_one_fin",
+      "target": "noncollinear_aux",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_S_one",
+      "target": "not_S_of_lt_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_S_two",
+      "target": "not_S_of_lt_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_S_zero",
+      "target": "not_S_of_lt_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "scalar_commutes",
+      "target": "not_S_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "centralizer_comm_of_non_scalar_2x2",
+      "target": "not_S_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "cos_theta_2025_ne_one",
+      "target": "one_minus_cos_theta_2025_ne_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_contains_3",
+      "target": "putnam_2025_a4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_lower_bound",
+      "target": "putnam_2025_a4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "reflection_mul_reflection_sub",
+      "target": "reflection_commute_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "outer_comm_iff_collinear",
+      "target": "reflection_commute_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "outer_mul_outer",
+      "target": "reflection_mul_reflection_sub",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "outer",
+      "target": "reflection_mul_reflection_sub",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "dot_comm",
+      "target": "reflection_mul_reflection_sub",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "one_minus_cos_theta_2025_ne_zero",
+      "target": "x_sq_2025_ne_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "cos_theta_2025",
+      "target": "x_sq_2025_ne_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "one_minus_cos_theta_2025_ne_zero",
+      "target": "x_sq_cos_theta_add_z_sq_eq_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,1735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">IMO 2025 P5. 1,223 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item current">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item current">2</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "Q_gt_2k",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.65,
+      "proof_length": 52,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For \\(k \u2265 2\\) and real numbers \\(S, Q\\) with \\(Q \u2265 0\\), \\(S^2 \u2264 (k-1)Q\\), \\(Q \u2264 2(k-1)\\), if \\(l > (\u221a{2}k)/(2k-1)\\) and \\(S < (2k-1)l\\), then \\(Q + ((2k-1)l - S)^2 > 2k\\).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For \\(k \\ge 2\\) and real numbers \\(S, Q\\) with \\(Q \\ge 0\\), \\(S^2 \\le (k-1)Q\\), \\(Q \\le 2(k-1)\\), if \\(l > (\\sqrt{2}k)/(2k-1)\\) and \\(S < (2k-1)l\\), then \\(Q + ((2k-1)l - S)^2 > 2k\\). -/)\n  (proof := /-- Let \\(a = (2k-1)l - S\\). By Cauchy\u2013Schwarz, \\((S+a)^2 \\le k(S^2/(k-1) + a^2)\\). Since \\(Q \\ge S^2/(k-1)\\), we get \\(Q + a^2 \\ge (S+a)^2/k = ((2k-1)l)^2/k\\). Now from \\(l > (\\sqrt{2}k)/(2k-1)\\) we have \\((2k-1)l > \\sqrt{2}k\\), so squaring gives \\(((2k-1)l)^2 > 2k^2\\). Dividing by \\(k\\) yields \\(((2k-1)l)^2/k > 2k\\). Hence \\(Q + a^2 > 2k\\). -/)]\nlemma Q_gt_2k (k : \u2115) (hk2 : 2 \u2264 k) (S Q : \u211d) (hQ_nonneg : 0 \u2264 Q) (hS_sq_le_nQ : S^2 \u2264 ((k:\u211d)-1)*Q) (hQ_le_2n : Q \u2264 2*((k:\u211d)-1))\n    (l : \u211d) (hl_ineq : l > (Real.sqrt 2 * (k : \u211d)) / ((2 : \u211d)*k - 1)) (hS_lt : S < (2*k-1 : \u211d)*l) : Q + ((2*k-1 : \u211d)*l - S)^2 > 2*(k:\u211d) := by\n  have hk_nat_pos : 0 < k := by omega\n  have hk_pos : (0 : \u211d) < (k : \u211d) := by exact_mod_cast hk_nat_pos\n  have hk_minus_one_pos : (0 : \u211d) < (k:\u211d) - 1 := by\n    have : (2 : \u211d) \u2264 (k:\u211d) := by exact_mod_cast hk2\n    nlinarith\n  set a := ((2*k-1 : \u211d)*l - S) with ha_def\n  have h_sum : S + a = ((2*k-1 : \u211d)*l) := by\n    dsimp [a]\n    ring\n  have h_cauchy_mul : ((k:\u211d)-1) * (S + a)^2 \u2264 (k:\u211d) * (S^2 + ((k:\u211d)-1) * a^2) := by\n    nlinarith [sq_nonneg (S - ((k:\u211d)-1)*a)]\n  have h_temp : S^2 + ((k:\u211d)-1) * a^2 \u2264 ((k:\u211d)-1)*Q + ((k:\u211d)-1) * a^2 := by\n    nlinarith\n  have h_mul : (k:\u211d) * (S^2 + ((k:\u211d)-1) * a^2) \u2264 (k:\u211d) * (((k:\u211d)-1)*Q + ((k:\u211d)-1) * a^2) :=\n    mul_le_mul_of_nonneg_left h_temp (by positivity)\n  have h_combined : ((k:\u211d)-1) * (S + a)^2 \u2264 (k:\u211d)*(((k:\u211d)-1)*Q + ((k:\u211d)-1) * a^2) := by\n    calc\n      ((k:\u211d)-1) * (S + a)^2 \u2264 (k:\u211d) * (S^2 + ((k:\u211d)-1) * a^2) := h_cauchy_mul\n      _ \u2264 (k:\u211d) * (((k:\u211d)-1)*Q + ((k:\u211d)-1) * a^2) := h_mul\n  have h_cancel : (S + a)^2 \u2264 (k:\u211d)*(Q + a^2) := by\n    nlinarith\n  have h_main : ((2*k-1 : \u211d)*l)^2 \u2264 (k:\u211d)*(Q + a^2) := by\n    calc\n      ((2*k-1 : \u211d)*l)^2 = (S + a)^2 := by rw [h_sum]\n      _ \u2264 (k:\u211d)*(Q + a^2) := h_cancel\n  have h_den_pos : (0 : \u211d) < (2 : \u211d)*k - 1 := by\n    have hk2' : (2 : \u211d) \u2264 (k : \u211d) := by exact_mod_cast hk2\n    nlinarith\n  have h_mul_ineq : (2*k-1 : \u211d)*l > Real.sqrt 2 * (k : \u211d) := by\n    have h_temp' : l * ((2 : \u211d)*k - 1) > Real.sqrt 2 * (k : \u211d) := by\n      calc\n        l * ((2 : \u211d)*k - 1) > ((Real.sqrt 2 * (k : \u211d)) / ((2 : \u211d)*k - 1)) * ((2 : \u211d)*k - 1) :=\n          mul_lt_mul_of_pos_right hl_ineq h_den_pos\n        _ = Real.sqrt 2 * (k : \u211d) := by\n          field_simp [h_den_pos.ne']\n          apply div_self\n          simpa [mul_comm] using h_den_pos.ne'\n    simpa [mul_comm] using h_temp'\n  have h_sq_eq : (Real.sqrt 2 * (k : \u211d))^2 = 2*((k:\u211d)^2) := by\n    calc\n      (Real.sqrt 2 * (k : \u211d))^2 = (Real.sqrt 2)^2 * (k:\u211d)^2 := by ring\n      _ = 2 * (k:\u211d)^2 := by rw [Real.sq_sqrt (show (0:\u211d) \u2264 2 by norm_num)]\n  have h_sq_gt : ((2*k-1 : \u211d)*l)^2 > 2*((k:\u211d)^2) := by\n    have h_nonneg_left : 0 \u2264 (2*k-1 : \u211d)*l := by\n      have h_pos_left : 0 < (2*k-1 : \u211d)*l := by\n        have h_rhs_pos : 0 < Real.sqrt 2 * (k : \u211d) := by positivity\n        linarith\n      exact le_of_lt h_pos_left\n    have h_nonneg_right : 0 \u2264 Real.sqrt 2 * (k : \u211d) := by positivity\n    have h_sq_lt_sq : (Real.sqrt 2 * (k : \u211d))^2 < ((2*k-1 : \u211d)*l)^2 :=\n      (sq_lt_sq\u2080 h_nonneg_right h_nonneg_left).mpr h_mul_ineq\n    calc\n      ((2*k-1 : \u211d)*l)^2 > (Real.sqrt 2 * (k : \u211d))^2 := h_sq_lt_sq\n      _ = 2*((k:\u211d)^2) := h_sq_eq\n  have h_div_gt : ((2*k-1 : \u211d)*l)^2 / (k : \u211d) > 2*(k:\u211d) := by\n    field_simp [hk_pos.ne']\n    simpa [mul_comm, mul_left_comm, mul_assoc, pow_two] using h_sq_gt\n  have h_Q_add_a2_ge : ((2*k-1 : \u211d)*l)^2 / (k : \u211d) \u2264 Q + a^2 := by\n    calc\n      ((2*k-1 : \u211d)*l)^2 / (k : \u211d) \u2264 ((k:\u211d)*(Q + a^2)) / (k : \u211d) :=\n        (div_le_div_iff_of_pos_right hk_pos).2 h_main\n      _ = Q + a^2 := by field_simp [hk_pos.ne']\n  linarith"
+    },
+    {
+      "id": "S_lt_l_mul",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.68,
+      "proof_length": 31,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For \\(n \u2265 1\\) and real numbers \\(S, Q\\) with \\(Q \u2265 0\\), \\(S^2 \u2264 nQ\\), and \\(Q \u2264 2n\\), if \\(l > \u221a{2}/2\\), then \\(S < (2n+1)l\\).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For \\(n \\ge 1\\) and real numbers \\(S, Q\\) with \\(Q \\ge 0\\), \\(S^2 \\le nQ\\), and \\(Q \\le 2n\\), if \\(l > \\sqrt{2}/2\\), then \\(S < (2n+1)l\\). -/)\n  (proof := /-- From \\(S^2 \\le nQ\\) and \\(Q \\le 2n\\), we get \\(S^2 \\le 2n^2\\), so \\(S \\le \\sqrt{2}n\\) (if \\(S\\ge 0\\); otherwise trivial). Then \\(\\sqrt{2}n < (2n+1)l\\) because \\(l > \\sqrt{2}/2\\). Combining gives \\(S < (2n+1)l\\). -/)]\nlemma S_lt_l_mul (n : \u2115) (S Q : \u211d) (hQ_nonneg : 0 \u2264 Q) (hS_sq_le_nQ : S^2 \u2264 (n : \u211d)*Q) (hQ_le_2n : Q \u2264 2*(n:\u211d))\n    (l : \u211d) (hl : l > Real.sqrt 2 / 2) (hl0 : l > 0) (hnpos : 0 < n) : S < (2*n+1 : \u211d)*l := by\n  have hnpos' : 0 \u2264 (n : \u211d) := by exact_mod_cast hnpos.le\n  have hS_sq_le_2n_sq : S^2 \u2264 2*(n:\u211d)^2 := by\n    calc\n      S^2 \u2264 (n : \u211d)*Q := hS_sq_le_nQ\n      _ \u2264 (n : \u211d)*(2*(n:\u211d)) := mul_le_mul_of_nonneg_left hQ_le_2n hnpos'\n      _ = 2*(n:\u211d)^2 := by ring\n  by_cases hS_nonneg : 0 \u2264 S\n  \u00b7 -- case S \u2265 0\n    have h_sqrt2_n_nonneg : 0 \u2264 Real.sqrt 2 * (n : \u211d) := mul_nonneg (by positivity : 0 \u2264 Real.sqrt 2) hnpos'\n    have hS_sq_le_sq : S^2 \u2264 (Real.sqrt 2 * (n : \u211d)) ^ 2 := by\n      calc\n        S^2 \u2264 2*(n:\u211d)^2 := hS_sq_le_2n_sq\n        _ = (Real.sqrt 2 * (n : \u211d))^2 := by\n          calc\n            2*(n:\u211d)^2 = ((Real.sqrt 2)^2) * (n:\u211d)^2 := by simp [Real.sq_sqrt (by norm_num : (0 : \u211d) \u2264 2)]\n            _ = (Real.sqrt 2 * (n : \u211d))^2 := by ring\n    have hS_le_sqrt2_n : S \u2264 Real.sqrt 2 * (n : \u211d) := (sq_le_sq\u2080 hS_nonneg h_sqrt2_n_nonneg).mp hS_sq_le_sq\n    have h_sqrt2_div2_pos : 0 < Real.sqrt 2 / 2 := by positivity\n    have hpos_2np1 : 0 < (2*n+1 : \u211d) := by\n      have : 0 < (n:\u211d) := by exact_mod_cast hnpos\n      nlinarith\n    have h_temp : Real.sqrt 2 * (n : \u211d) < ((2*n+1 : \u211d) * (Real.sqrt 2 / 2)) := by\n      have h_sqrt2_pos : 0 < Real.sqrt 2 := Real.sqrt_pos.mpr (by norm_num : (0 : \u211d) < 2)\n      have h_npos : 0 \u2264 (n : \u211d) := hnpos'\n      nlinarith\n    calc\n      S \u2264 Real.sqrt 2 * (n : \u211d) := hS_le_sqrt2_n\n      _ < ((2*n+1 : \u211d) * (Real.sqrt 2 / 2)) := h_temp\n      _ < ((2*n+1 : \u211d) * l) := mul_lt_mul_of_pos_left hl hpos_2np1\n      _ = (2*n+1 : \u211d)*l := rfl\n  \u00b7 -- case S < 0\n    have hS_neg : S < 0 := by linarith\n    have hpos_2np1 : 0 < (2*n+1 : \u211d) := by\n      have : 0 < (n:\u211d) := by exact_mod_cast hnpos\n      nlinarith\n    have hpos_prod : 0 < (2*n+1 : \u211d)*l := mul_pos hpos_2np1 hl0\n    linarith"
+    },
+    {
+      "id": "exists_k",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.4,
+      "proof_length": 38,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There exists an integer \\(k \u2265 2\\) such that \\(l > (\u221a{2}k)/(2k-1)\\).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- There exists an integer \\(k \\ge 2\\) such that \\(l > (\\sqrt{2}k)/(2k-1)\\). -/)\n  (proof := /-- Since \\(l > \\sqrt{2}/2\\), the number \\(t = l/(2l - \\sqrt{2})\\) is positive. Choose any integer \\(k > t\\) and then take \\(k' = \\max(k,2)\\). Then \\(k' \\ge 2\\) and \\((k':\\mathbb{R}) > t\\), so by `k_ineq`, the inequality holds. -/)]\nlemma exists_k (l : \u211d) (hl : l > Real.sqrt 2 / 2) : \u2203 (k : \u2115), (k \u2265 2) \u2227 (l > (Real.sqrt 2 * (k : \u211d)) / ((2 : \u211d)*k - 1)) := by\n  have hsqrt2_pos : Real.sqrt 2 > 0 := Real.sqrt_pos.mpr (by norm_num : (0 : \u211d) < 2)\n  have hhalf_pos : Real.sqrt 2 / 2 > 0 := div_pos hsqrt2_pos (by norm_num : (0 : \u211d) < 2)\n  have hlpos : 0 < l := by linarith\n  have hden_pos : 2*l - Real.sqrt 2 > 0 := two_l_sub_sqrt2_pos l hl\n  set t := l / (2*l - Real.sqrt 2) with ht\n  have ht_pos : 0 < t := div_pos hlpos hden_pos\n  rcases exists_nat_gt t with \u27e8n, hn\u27e9\n  set k' := Nat.max n 2 with hk'\n  have hk'_ge2 : k' \u2265 2 := Nat.le_max_right n 2\n  have hkt' : (k' : \u211d) > l / (2*l - Real.sqrt 2) := by\n    have hn' : (n : \u211d) > t := hn\n    have h_cast : (n : \u211d) \u2264 (k' : \u211d) := by\n      simpa [hk'] using Nat.cast_le.mpr (Nat.le_max_left n 2)\n    linarith\n  have hineq : l > (Real.sqrt 2 * (k' : \u211d)) / ((2 : \u211d)*k' - 1) := k_ineq l hl k' hkt'\n  refine \u27e8k', hk'_ge2, hineq\u27e9"
+    },
+    {
+      "id": "imo2025_p5_algebra_A",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 40.49,
+      "proof_length": 123,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the given conditions, Alice has a winning strategy from the initial position: \\( operatorname{WinA}(0,0,0) \\).",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Under the given conditions, Alice has a winning strategy from the initial position: \\( \\operatorname{WinA}(0,0,0) \\). -/)\n  (proof := /-- Choose an integer \\(k \\ge 2\\) such that \\(l > (\\sqrt{2}k)/(2k-1)\\) (possible by `exists_k`). We prove by strong induction on \\(m = k - n\\) that for every \\(n < k\\) and every state \\((S,Q)\\) satisfying \\(0 \\le Q\\), \\(S^2 \\le nQ\\), and \\(Q \\le 2n\\), Alice wins from \\((n,S,Q)\\). For \\(n = k-1\\), Alice plays \\(a = (2k-1)l - S\\); then `Q_gt_2k` shows that any Bazza move would violate the constraint, so the required universal implication holds vacuously. For \\(n < k-1\\), Alice plays \\(a = 0\\); the precondition \\(S < (2n+1)l\\) follows from `S_lt_l_mul`, and after any Bazza move \\(b\\), the new state \\((n+1, S+b, Q+b^2)\\) still satisfies the invariants by `sq_sum_sq_ineq`, so the induction hypothesis applies. Applying this to \\(n=0\\), \\(S=Q=0\\) gives the result. -/)]\ntheorem imo2025_p5_algebra_A (l : \u211d) (hl0 : l > 0) (WinA : \u2115 \u2192 \u211d \u2192 \u211d \u2192 Prop)\n    (winA_iff : \u2200 (n : \u2115) (sum1 sum2 : \u211d), WinA n sum1 sum2 \u2194\n      \u2203 a : \u211d, a \u2265 0 \u2227 sum1 + a \u2264 (2 * n + 1) * l \u2227\n        \u2200 b : \u211d, b \u2265 0 \u2192 sum2 + a ^ 2 + b ^ 2 \u2264 2 * n + 2 \u2192\n          WinA (n + 1) (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2))\n    (hl : l > \u221a2 / 2) : WinA 0 0 0 := by\n  -- choose k\n  have hk_exists := exists_k l hl\n  rcases hk_exists with \u27e8k, hk2, hk_ineq\u27e9\n  -- define P(n) as the invariant for states\n  let P (n : \u2115) : Prop := \u2200 (S Q : \u211d), 0 \u2264 Q \u2192 S^2 \u2264 (n : \u211d)*Q \u2192 Q \u2264 2*(n : \u211d) \u2192 WinA n S Q\n  have hkpos : 1 \u2264 k := by omega\n  have hk1 : 1 \u2264 k := hkpos\n  have hP_all : \u2200 n, n < k \u2192 P n := by\n    have h_base : P (k-1) := by\n      intro S Q hQ_nonneg hS_sq hQ_le\n      set a := (2*k-1 : \u211d)*l - S with ha_def\n      have ha_nonneg : 0 \u2264 a := by\n        have hnpos : 0 < k-1 := by omega\n        have htemp : S < (2*(k-1 : \u2115) + 1 : \u211d)*l :=\n          S_lt_l_mul (k-1) S Q hQ_nonneg (by simpa using hS_sq) (by simpa using hQ_le) l hl hl0 hnpos\n        have htemp2 : (2*(k-1 : \u2115) + 1 : \u211d) = (2*k-1 : \u211d) := by\n          simp [Nat.cast_sub hk1]\n          ring\n        have hS_lt : S < (2*k-1 : \u211d)*l := by\n          simpa [htemp2] using htemp\n        linarith\n      have h_sum : S + a \u2264 (2 * ((k-1 : \u2115) : \u211d) + 1) * l := by\n        have h_eq_inner : (2*k-1 : \u211d) = (2*((k-1 : \u2115) : \u211d) + 1) := by\n          simp [Nat.cast_sub hk1]\n          ring\n        have h_eq' : S + a = (2*((k-1 : \u2115) : \u211d) + 1)*l := by\n          calc\n            S + a = (2*k-1 : \u211d)*l := by\n              dsimp [a]; ring\n            _ = (2*((k-1 : \u2115) : \u211d) + 1)*l := by\n              simp [h_eq_inner]\n        rw [h_eq']\n      have h_forall : \u2200 b : \u211d, b \u2265 0 \u2192 Q + a ^ 2 + b ^ 2 \u2264 2 * ((k-1 : \u2115) : \u211d) + 2 \u2192 WinA (k-1 + 1) (S + a + b) (Q + a ^ 2 + b ^ 2) := by\n        intro b hb_nonneg h_bound\n        have h_gt : Q + a^2 > 2*(k:\u211d) := by\n          have hS_sq2 : S^2 \u2264 ((k:\u211d)-1)*Q := by\n            have h_cast : ((k-1 : \u2115) : \u211d) = (k:\u211d) - 1 := by\n              simp [Nat.cast_sub hk1]\n            simpa [h_cast] using hS_sq\n          have hQ_le2 : Q \u2264 2*((k:\u211d)-1) := by\n            have h_cast : 2*((k-1 : \u2115) : \u211d) = 2*((k:\u211d)-1) := by\n              simp [Nat.cast_sub hk1]\n            simpa [h_cast] using hQ_le\n          have hS_lt2 : S < (2*k-1 : \u211d)*l := by\n            have hnpos : 0 < k-1 := by omega\n            have htemp : S < (2*(k-1 : \u2115) + 1 : \u211d)*l :=\n              S_lt_l_mul (k-1) S Q hQ_nonneg (by simpa using hS_sq) (by simpa using hQ_le) l hl hl0 hnpos\n            have htemp2 : (2*(k-1 : \u2115) + 1 : \u211d) = (2*k-1 : \u211d) := by\n              simp [Nat.cast_sub hk1]\n              ring\n            simpa [htemp2] using htemp\n          exact Q_gt_2k k hk2 S Q hQ_nonneg hS_sq2 hQ_le2 l hk_ineq hS_lt2\n        have hk_eq : (2*((k-1 : \u2115) : \u211d)+2) = (2*k : \u211d) := by\n          push_cast\n          simp [Nat.cast_sub hk1]\n          ring\n        exfalso\n        nlinarith\n      rw [winA_iff (k-1) S Q]\n      refine \u27e8a, ha_nonneg, h_sum, h_forall\u27e9\n    have h_step : \u2200 n, n < k-1 \u2192 P (n+1) \u2192 P n := by\n      intro n hn_lt hP_n1\n      intro S Q hQ_nonneg hS_sq hQ_le\n      set a := (0 : \u211d) with ha_def\n      have ha_nonneg : 0 \u2264 a := by norm_num\n      have h_sum : S + a \u2264 (2*n+1 : \u211d)*l := by\n        by_cases hn0 : n = 0\n        \u00b7 subst hn0\n          have hS0 : S = 0 := by\n            have : S^2 \u2264 (0 : \u211d) := by\n              simpa using hS_sq\n            nlinarith\n          have hQ0 : Q = 0 := by\n            have : Q \u2264 (0 : \u211d) := by\n              simpa using hQ_le\n            nlinarith\n          subst hS0; subst hQ0\n          nlinarith\n        \u00b7 have hnpos : 0 < n := Nat.pos_of_ne_zero hn0\n          have hS_lt : S < (2*n+1 : \u211d)*l :=\n            S_lt_l_mul n S Q hQ_nonneg hS_sq hQ_le l hl hl0 hnpos\n          linarith\n      have h_forall : \u2200 b : \u211d, b \u2265 0 \u2192 Q + a ^ 2 + b ^ 2 \u2264 2 * n + 2 \u2192 WinA (n + 1) (S + a + b) (Q + a ^ 2 + b ^ 2) := by\n        intro b hb_nonneg h_bound\n        have hQb_nonneg : 0 \u2264 Q + b^2 := by nlinarith\n        have h_sq : (S + b)^2 \u2264 ((n+1 : \u2115) : \u211d)*(Q + b^2) := by\n          have := sq_sum_sq_ineq n S Q b hQ_nonneg hS_sq\n          simpa [Nat.cast_add, Nat.cast_one] using this\n        have hQb_le : Q + b^2 \u2264 2*((n+1 : \u2115) : \u211d) := by\n          push_cast\n          nlinarith\n        simpa [a] using hP_n1 (S + b) (Q + b^2) hQb_nonneg h_sq hQb_le\n      rw [winA_iff n S Q]\n      refine \u27e8a, ha_nonneg, h_sum, h_forall\u27e9\n    -- Now use the induction scheme\n    intro n hn\n    have h_scheme : \u2200 n, n < k \u2192 P n := by\n      intro n' hn'\n      -- define Q(d) = \u2200 n', n' < k \u2192 k - n' = d \u2192 P n'\n      have hQ : \u2200 d : \u2115, (\u2200 n'', n'' < k \u2192 k - n'' = d \u2192 P n'') := by\n        intro d\n        induction' d using Nat.strong_induction_on with d ih\n        intro n'' hn'' h_eq\n        by_cases h_eq' : n'' = k-1\n        \u00b7 subst h_eq'\n          exact h_base\n        \u00b7 have h_lt' : n'' < k-1 := by\n            omega\n          have h_eq2 : k - (n''+1) = d-1 := by\n            omega\n          have h_lt_n1 : n''+1 < k := by omega\n          have hP_n1 : P (n''+1) := ih (d-1) (by\n            have : d-1 < d := by omega\n            exact this) (n''+1) h_lt_n1 h_eq2\n          exact h_step n'' h_lt' hP_n1\n      have hd : k - n' = k - n' := rfl\n      exact hQ (k - n') n' hn' hd\n    exact h_scheme n hn\n  -- Now apply to n=0, S=0, Q=0\n  have hP0 : P 0 := hP_all 0 (by\n    have hkpos' : 0 < k := by omega\n    exact hkpos')\n  have hS0 : (0 : \u211d)^2 \u2264 ((0 : \u2115) : \u211d)*(0 : \u211d) := by norm_num\n  have hQ0 : (0 : \u211d) \u2264 2*((0 : \u2115) : \u211d) := by norm_num\n  exact hP0 0 0 (by norm_num) hS0 hQ0"
+    },
+    {
+      "id": "k_ineq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.0,
+      "proof_length": 34,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If \\(l > \u221a{2}/2\\) and \\((k:\u211d) > l/(2l - \u221a{2})\\), then \\(l > (\u221a{2}k)/(2k-1)\\).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If \\(l > \\sqrt{2}/2\\) and \\((k:\u211d) > l/(2l - \\sqrt{2})\\), then \\(l > (\\sqrt{2}k)/(2k-1)\\). -/)\n  (proof := /-- From \\((k:\u211d) > l/(2l - \\sqrt{2})\\) and positivity of \\(2l - \\sqrt{2}\\), multiply to get \\(k(2l - \\sqrt{2}) > l\\). Then rearrange to get \\(l(2k-1) > \\sqrt{2}k\\), which is equivalent to the desired inequality. -/)]\nlemma k_ineq (l : \u211d) (hl : l > Real.sqrt 2 / 2) (k : \u2115) (hk : (k : \u211d) > l / (2*l - Real.sqrt 2)) :\n    l > (Real.sqrt 2 * (k : \u211d)) / ((2 : \u211d)*k - 1) := by\n  have hpos_denom : 2*l - Real.sqrt 2 > 0 := two_l_sub_sqrt2_pos l hl\n  have hlpos : l > 0 := by\n    have : Real.sqrt 2 / 2 > 0 := by positivity\n    linarith\n  have hpos_ratio : l / (2*l - Real.sqrt 2) > 0 := div_pos hlpos hpos_denom\n  have hk_pos_nat : 1 \u2264 k := by\n    by_contra! H\n    have hk_zero : k = 0 := by omega\n    have hk_zero' : (k : \u211d) = 0 := by exact_mod_cast hk_zero\n    linarith\n  have hpos_d : (2 : \u211d)*k - 1 > 0 := by\n    have hk_one : (1 : \u211d) \u2264 (k : \u211d) := by exact_mod_cast hk_pos_nat\n    nlinarith\n  have h1 : (k : \u211d) * (2*l - Real.sqrt 2) > l := by\n    have hpos_denom' : (l*2 - Real.sqrt 2) \u2260 0 := by\n      simpa [mul_comm] using hpos_denom.ne.symm\n    calc\n      (k : \u211d) * (2*l - Real.sqrt 2) > (l / (2*l - Real.sqrt 2)) * (2*l - Real.sqrt 2) := by\n        exact mul_lt_mul_of_pos_right hk hpos_denom\n      _ = l := by\n        field_simp [hpos_denom']\n  have h2 : l * ((2 : \u211d)*k - 1) > Real.sqrt 2 * (k : \u211d) := by\n    have h1' : 2*(k : \u211d)*l - (k : \u211d) * Real.sqrt 2 > l := by\n      calc\n        2*(k : \u211d)*l - (k : \u211d) * Real.sqrt 2 = (k : \u211d) * (2*l - Real.sqrt 2) := by ring\n        _ > l := h1\n    nlinarith\n  calc\n    l = (l * ((2 : \u211d)*k - 1)) / ((2 : \u211d)*k - 1) := by field_simp [hpos_d.ne.symm]\n    _ > (Real.sqrt 2 * (k : \u211d)) / ((2 : \u211d)*k - 1) := by\n      have htemp : Real.sqrt 2 * (k : \u211d) < l * ((2 : \u211d)*k - 1) := h2\n      have hdiv : (Real.sqrt 2 * (k : \u211d)) / ((2 : \u211d)*k - 1) < (l * ((2 : \u211d)*k - 1)) / ((2 : \u211d)*k - 1) :=\n        div_lt_div_of_pos_right htemp hpos_d\n      have h_eq : (l * ((2 : \u211d)*k - 1)) / ((2 : \u211d)*k - 1) = l := by field_simp [hpos_d.ne.symm]\n      linarith"
+    },
+    {
+      "id": "sq_sum_sq_ineq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.06,
+      "proof_length": 57,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any \\(n \u2208 \u2115\\) and real numbers \\(S, Q, b\\) with \\(Q \u2265 0\\) and \\(S^2 \u2264 nQ\\), we have \\((S+b)^2 \u2264 (n+1)(Q+b^2)\\).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For any \\(n \\in \\mathbb{N}\\) and real numbers \\(S, Q, b\\) with \\(Q \\ge 0\\) and \\(S^2 \\le nQ\\), we have \\((S+b)^2 \\le (n+1)(Q+b^2)\\). -/)\n  (proof := /-- If \\(n=0\\), then \\(S=0\\) and the inequality reduces to \\(b^2 \\le Q+b^2\\), which holds because \\(Q \\ge 0\\). For \\(n>0\\), we compute \\((n+1)(Q+b^2)-(S+b)^2 = (nQ - S^2) + (Q + n b^2 - 2Sb)\\). The first term is nonnegative by hypothesis; the second is nonnegative because it can be written as \\(((nQ - S^2) + (n b - S)^2)/n\\). -/)]\nlemma sq_sum_sq_ineq (n : \u2115) (S Q b : \u211d) (hQ_nonneg : 0 \u2264 Q) (hS_sq_le_nQ : S^2 \u2264 (n : \u211d)*Q) : (S + b)^2 \u2264 ((n : \u211d) + 1)*(Q + b^2) := by\n  by_cases hn : n = 0\n  \u00b7 subst hn\n    have hS_sq_nonpos : S^2 \u2264 0 := by simpa using hS_sq_le_nQ\n    have hS_sq_zero : S^2 = 0 := by\n      nlinarith\n    have hS_zero : S = 0 := by\n      nlinarith\n    simp [hS_zero, hQ_nonneg]\n  \u00b7 have hnpos' : (0 : \u211d) < (n : \u211d) := by\n      exact_mod_cast Nat.pos_of_ne_zero hn\n    have h_mul_eq : (n : \u211d) * (((n : \u211d) + 1)*(Q + b^2) - (S + b)^2) = (n : \u211d)*((n : \u211d)*Q - S^2) + ((n : \u211d)*Q - S^2) + ((n : \u211d)*b - S)^2 := by\n      ring\n    have h_nonneg_mul : 0 \u2264 (n : \u211d) * (((n : \u211d) + 1)*(Q + b^2) - (S + b)^2) := by\n      rw [h_mul_eq]\n      nlinarith\n    have h_nonneg_diff : 0 \u2264 ((n : \u211d) + 1)*(Q + b^2) - (S + b)^2 := by\n      nlinarith\n    linarith"
+    },
+    {
+      "id": "two_l_sub_sqrt2_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If \\(l > \u221a{2}/2\\), then \\(2l - \u221a{2} > 0\\).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If \\(l > \\sqrt{2}/2\\), then \\(2l - \\sqrt{2} > 0\\). -/)\n  (proof := /-- From \\(l > \\sqrt{2}/2\\), we have \\(2l > \\sqrt{2}\\), so \\(2l - \\sqrt{2} > 0\\). -/)]\nlemma two_l_sub_sqrt2_pos (l : \u211d) (hl : l > Real.sqrt 2 / 2) : 2*l - Real.sqrt 2 > 0 := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "P",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Predicate P(k): for any state with mathit{sum2} = 2k and mathit{sum1} \u2265 k\u221a{2}, W_k(mathit{sum1},mathit{sum2}) holds.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- Predicate $P(k)$: for any state with $\\mathit{sum2} = 2k$ and $\\mathit{sum1} \\ge k\\sqrt{2}$, $W_k(\\mathit{sum1},\\mathit{sum2})$ holds. -/)]\ndef P (WinB : \u2115 \u2192 \u211d \u2192 \u211d \u2192 Prop) (l : \u211d) (k : \u2115) : Prop :=\n  \u2200 (sum1 sum2 : \u211d), sum2 = 2*(k : \u211d) \u2192 sum1 \u2265 (k : \u211d) * \u221a2 \u2192 WinB k sum1 sum2"
+    },
+    {
+      "id": "P_base",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.46,
+      "proof_length": 29,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any k such that k\u221a{2} > (2k+1)l, P(k) holds.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For any $k$ such that $k\\sqrt{2} > (2k+1)l$, $P(k)$ holds. -/)\n  (proof := /-- Because the premise of the $\\forall a$ condition of $\\mathit{WinB}\\,k$ is false: no $a\\ge0$ can satisfy $\\mathit{sum1}+a \\le (2k+1)l$ since $\\mathit{sum1} \\ge k\\sqrt{2} > (2k+1)l$. Thus the condition is vacuously true. -/)]\nlemma P_base (l : \u211d) (WinB : \u2115 \u2192 \u211d \u2192 \u211d \u2192 Prop) (winB_iff : \u2200 (n : \u2115) (sum1 sum2 : \u211d), WinB n sum1 sum2 \u2194\n      \u2200 a : \u211d, a \u2265 0 \u2192 sum1 + a \u2264 (2 * n + 1) * l \u2192\n        \u2203 b : \u211d, b \u2265 0 \u2227 sum2 + a ^ 2 + b ^ 2 \u2264 2 * n + 2 \u2227\n          WinB (n + 1) (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2))\n    (hl : l < \u221a2 / 2) (k : \u2115) (hineq : (k : \u211d) * \u221a2 > (2*(k : \u211d) + 1) * l) : P WinB l k := by\n  intro sum1 sum2 hsum2 hsum1_ge\n  rw [winB_iff k sum1 sum2]\n  intro a ha hle\n  exfalso\n  have hge' : sum1 + a \u2265 (k : \u211d) * \u221a2 := by\n    nlinarith\n  have hgt : sum1 + a > (2*(k : \u211d) + 1) * l := by\n    calc\n      sum1 + a \u2265 (k : \u211d) * \u221a2 := hge'\n      _ > (2*(k : \u211d) + 1) * l := hineq\n  nlinarith"
+    },
+    {
+      "id": "P_step",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.88,
+      "proof_length": 24,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If P(k+1) holds, then P(k) holds.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $P(k+1)$ holds, then $P(k)$ holds. -/)\n  (proof := /-- For any $a$ allowed by the hypothesis, set $b = \\sqrt{2-a^2}$. Using `a_bound`, `sum_ineq`, `S_inductive_step` and the induction hypothesis we satisfy the $\\mathit{WinB}\\,k$ condition. -/)]\nlemma P_step (l : \u211d) (hl0 : l > 0) (WinB : \u2115 \u2192 \u211d \u2192 \u211d \u2192 Prop)\n    (winB_iff : \u2200 (n : \u2115) (sum1 sum2 : \u211d), WinB n sum1 sum2 \u2194\n      \u2200 a : \u211d, a \u2265 0 \u2192 sum1 + a \u2264 (2 * n + 1) * l \u2192\n        \u2203 b : \u211d, b \u2265 0 \u2227 sum2 + a ^ 2 + b ^ 2 \u2264 2 * n + 2 \u2227\n          WinB (n + 1) (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2))\n    (hl : l < \u221a2 / 2) (k : \u2115) (hPnext : P WinB l (k+1)) : P WinB l k := by\n  intro sum1 sum2 hsum2 hsum1\n  -- hsum2: sum2 = 2*(k : \u211d)\n  -- hsum1: sum1 \u2265 (k : \u211d) * \u221a2\n  -- goal: WinB k sum1 sum2\n  apply (winB_iff k sum1 sum2).mpr\n  intro a ha_nonneg hineq\n  -- hineq: sum1 + a \u2264 (2*k+1)*l\n  -- need to produce b, with conditions.\n  have ha_lt : a < 1 / \u221a2 := by\n    have hpos_sqrt2 : \u221a2 > 0 := by positivity\n    have h_eq : (2*(k : \u211d) + 1)*(\u221a2/2) = (k : \u211d)*\u221a2 + 1/\u221a2 := by\n      field_simp [show \u221a2 \u2260 0 from by positivity]\n      nlinarith [Real.sq_sqrt (show (0:\u211d) \u2264 2 by norm_num)]\n    have hineq' : sum1 + a \u2264 ((2 : \u211d)*k + 1)*l := by\n      simpa using hineq\n    have h_a_le : a \u2264 ((2 : \u211d)*k + 1)*l - (k : \u211d)*\u221a2 := by\n      linarith\n    have h_bound : ((2 : \u211d)*k + 1)*l - (k : \u211d)*\u221a2 < 1 / \u221a2 := by\n      have h_l_lt : l < \u221a2 / 2 := hl\n      have h_mul : ((2 : \u211d)*k + 1)*l < ((2 : \u211d)*k + 1)*(\u221a2/2) := by\n        nlinarith\n      nlinarith\n    linarith\n  have ha_sq_lt_half : a^2 < 1/2 := a_sq_lt_half a ha_nonneg ha_lt\n  have h_sq_sqrt : (\u221a(2 - a^2))^2 = 2 - a^2 :=\n    Real.sq_sqrt (show 0 \u2264 2 - a^2 by nlinarith)\n  set b := \u221a(2 - a^2) with hb_def\n  have hb_nonneg : b \u2265 0 := Real.sqrt_nonneg _\n  have hsum2_eq : sum2 + a ^ 2 + b ^ 2 = 2*(k : \u211d) + 2 := by\n    rw [hsum2, hb_def]\n    rw [h_sq_sqrt]\n    ring\n  by_cases hk0 : k = 0\n  \u00b7 subst hk0\n    -- k = 0\n    have hsum2_eq0 : sum2 + a ^ 2 + b ^ 2 = 2 := by\n      rw [hsum2_eq]\n      norm_num\n    have hsum2_eq' : sum2 + a ^ 2 + b ^ 2 = 2*(((0 : \u2115)+1 : \u2115) : \u211d) := by\n      rw [hsum2_eq0]\n      norm_num\n    have hWinB_next : WinB 1 (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2) := by\n      apply hPnext (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2) hsum2_eq' ?_\n      \u00b7 -- need sum1 + a + b \u2265 (1 : \u211d) * \u221a2\n        have hSprev : sum1 \u2265 (((1 : \u2115) : \u211d) - 1) * \u221a2 := by\n          have : (((1 : \u2115) : \u211d) - 1) * \u221a2 = (0 : \u211d) := by\n            push_cast\n            ring\n          rw [this]\n          -- from hsum1 when k=0, we have sum1 \u2265 0\n          simpa using hsum1\n        have hS_ind : sum1 + a + \u221a(2 - a^2) \u2265 ((1 : \u2115) : \u211d) * \u221a2 :=\n          S_inductive_step 1 sum1 a hSprev ha_nonneg ha_lt\n        simpa [hb_def] using hS_ind\n    refine \u27e8b, hb_nonneg, ?_, hWinB_next\u27e9\n    simpa [hsum2_eq0] using le_refl (2 : \u211d)\n  \u00b7 -- k \u2260 0, so k \u2265 1\n    have hkpos : 0 < k := Nat.pos_of_ne_zero hk0\n    have hsum2_eq' : sum2 + a ^ 2 + b ^ 2 = 2*((k+1 : \u2115) : \u211d) := by\n      rw [hsum2_eq]\n      push_cast\n      ring\n    have hWinB_next : WinB (k+1) (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2) := by\n      apply hPnext (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2) hsum2_eq' ?_\n      \u00b7 -- need sum1 + a + b \u2265 ((k+1 : \u2115) : \u211d) * \u221a2\n        have hSprev : sum1 \u2265 (((k+1 : \u2115) : \u211d) - 1) * \u221a2 := by\n          have : (((k+1 : \u2115) : \u211d) - 1) = (k : \u211d) := by\n            push_cast\n            ring\n          rw [this]\n          exact hsum1\n        have hS_ind : sum1 + a + \u221a(2 - a^2) \u2265 ((k+1 : \u2115) : \u211d) * \u221a2 :=\n          S_inductive_step (k+1 : \u2115) sum1 a hSprev ha_nonneg ha_lt\n        simpa [hb_def] using hS_ind\n    refine \u27e8b, hb_nonneg, ?_, hWinB_next\u27e9\n    simpa [hsum2_eq] using le_refl (2*(k : \u211d) + 2)"
+    },
+    {
+      "id": "S_inductive_step",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If S_{text{prev}} \u2265 (k-1)\u221a{2} and 0 \u2264 a < 1/\u221a{2}, then S_{text{prev}} + a + \u221a{2 - a^2} \u2265 k\u221a{2}.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If $S_{\\text{prev}} \\ge (k-1)\\sqrt{2}$ and $0 \\le a < 1/\\sqrt{2}$, then $S_{\\text{prev}} + a + \\sqrt{2 - a^2} \\ge k\\sqrt{2}$. -/)\n  (proof := /-- By `sum_ineq`, $a+\\sqrt{2-a^2} \\ge \\sqrt{2}$; add $S_{\\text{prev}}$ and use the hypothesis. -/)]\nlemma S_inductive_step (k : \u2115) (Sprev a : \u211d) (hSprev : Sprev \u2265 ((k : \u211d) - 1) * \u221a2)\n    (ha_nonneg : a \u2265 0) (ha_lt : a < 1 / \u221a2) : Sprev + a + \u221a(2 - a^2) \u2265 (k : \u211d) * \u221a2 := by\n  have h_sum_ge : a + \u221a(2 - a^2) \u2265 \u221a2 := sum_ineq a ha_nonneg ha_lt\n  have h_add_ge : Sprev + a + \u221a(2 - a^2) \u2265 Sprev + \u221a2 := by\n    have hh : \u221a2 \u2264 a + \u221a(2 - a^2) := h_sum_ge\n    have hh2 : Sprev + \u221a2 \u2264 Sprev + (a + \u221a(2 - a^2)) := add_le_add_right hh Sprev\n    simpa [add_assoc] using hh2.ge\n  have hSprev_add_ge : Sprev + \u221a2 \u2265 ((k : \u211d) - 1) * \u221a2 + \u221a2 := by\n    have htemp : ((k : \u211d) - 1) * \u221a2 \u2264 Sprev := hSprev\n    have htemp2 : ((k : \u211d) - 1) * \u221a2 + \u221a2 \u2264 Sprev + \u221a2 := add_le_add_left htemp (\u221a2)\n    exact htemp2.ge\n  have h_eq : ((k : \u211d) - 1) * \u221a2 + \u221a2 = (k : \u211d) * \u221a2 := by ring\n  calc\n    Sprev + a + \u221a(2 - a^2) \u2265 Sprev + \u221a2 := h_add_ge\n    _ \u2265 ((k : \u211d) - 1) * \u221a2 + \u221a2 := hSprev_add_ge\n    _ = (k : \u211d) * \u221a2 := h_eq"
+    },
+    {
+      "id": "a_sq_lt_half",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If 0 \u2264 a < 1/\u221a{2}, then a^2 < 1/2.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If $0 \\le a < 1/\\sqrt{2}$, then $a^2 < 1/2$. -/)\n  (proof := /-- Square the inequality and use `one_div_sqrt2_sq`. -/)]\nlemma a_sq_lt_half (a : \u211d) (ha_nonneg : a \u2265 0) (ha_lt : a < 1 / \u221a2) : a^2 < 1/2 := by\n  have hpos_sqrt2 : \u221a2 > 0 := by\n    exact Real.sqrt_pos.mpr (by norm_num : (0 : \u211d) < 2)\n  have hb_nonneg : 0 \u2264 1 / \u221a2 := by\n    positivity\n  have hsq : a^2 < (1 / \u221a2)^2 := by\n    exact ((sq_lt_sq\u2080 ha_nonneg hb_nonneg).mpr ha_lt)\n  have h_eq : (1 / \u221a2)^2 = 1/2 := one_div_sqrt2_sq\n  calc\n    a^2 < (1 / \u221a2)^2 := hsq\n    _ = 1/2 := h_eq"
+    },
+    {
+      "id": "exists_N",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.89,
+      "proof_length": 33,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There exists a natural number N such that N\u221a{2} > (2N+1)l.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- There exists a natural number $N$ such that $N\\sqrt{2} > (2N+1)l$. -/)\n  (proof := /-- Because $l < \\sqrt{2}/2$, we have $c := \\sqrt{2} - 2l > 0$. By the Archimedean property there is $N$ with $N > l/c$. Then $Nc > l$, which rearranges to $N\\sqrt{2} > (2N+1)l$. -/)]\nlemma exists_N (l : \u211d) (hl : l < \u221a2 / 2) (hl0 : l > 0) : \u2203 N : \u2115, (N : \u211d) * \u221a2 > (2*(N : \u211d) + 1) * l := by\n  let c := \u221a2 - 2*l\n  have hcpos : c > 0 := by\n    linarith\n  have h_arch : \u2203 N : \u2115, (l / c) < (N : \u211d) := by\n    exact exists_nat_gt (l / c)\n  rcases h_arch with \u27e8N, hN\u27e9\n  have h_mul : (N : \u211d) * c > l := by\n    have hpos : c > 0 := hcpos\n    have hN_div : l / c < (N : \u211d) := hN\n    have h_mul' : (l / c) * c < (N : \u211d) * c := mul_lt_mul_of_pos_right hN_div hpos\n    have h_simp : (l / c) * c = l := by field_simp [ne_of_gt hpos]\n    calc\n      l = (l / c) * c := by symm; exact h_simp\n      _ < (N : \u211d) * c := h_mul'\n  have hgoal : (N : \u211d) * \u221a2 > (2*(N : \u211d) + 1) * l := by\n    calc\n      (N : \u211d) * \u221a2 = (N : \u211d) * ((\u221a2 - 2*l) + 2*l) := by ring\n      _ = (N : \u211d) * (c + 2*l) := by rfl\n      _ = (N : \u211d) * c + (N : \u211d) * (2*l) := by ring\n      _ = (N : \u211d) * c + 2*(N : \u211d) * l := by ring\n      _ > l + 2*(N : \u211d) * l := by\n        nlinarith\n      _ = (2*(N : \u211d) + 1) * l := by ring\n  exact \u27e8N, hgoal\u27e9"
+    },
+    {
+      "id": "imo2025_p5_algebra_B",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Main theorem: Bazza has a winning strategy.",
+      "is_main": true,
+      "col": 1,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Main theorem: Bazza has a winning strategy. -/)\n  (proof := /-- Choose $N$ by `exists_N` such that $(N)\\sqrt{2} > (2N+1)l$. Then `P_base` gives $P(N)$. Using `P_step` and descending induction (`Nat.decreasingInduction`) we obtain $P(0)$, which directly implies $W_0(0,0)$. -/)]\ntheorem imo2025_p5_algebra_B (l : \u211d) (hl0 : l > 0) (WinB : \u2115 \u2192 \u211d \u2192 \u211d \u2192 Prop)\n    (winB_iff : \u2200 (n : \u2115) (sum1 sum2 : \u211d), WinB n sum1 sum2 \u2194\n      \u2200 a : \u211d, a \u2265 0 \u2192 sum1 + a \u2264 (2 * n + 1) * l \u2192\n        \u2203 b : \u211d, b \u2265 0 \u2227 sum2 + a ^ 2 + b ^ 2 \u2264 2 * n + 2 \u2227\n          WinB (n + 1) (sum1 + a + b) (sum2 + a ^ 2 + b ^ 2))\n    (hl : l < \u221a2 / 2) : WinB 0 0 0 := by\n  rcases exists_N l hl hl0 with \u27e8N, hN\u27e9\n  have hPN : P WinB l N := P_base l WinB winB_iff hl N hN\n  have h_step : \u2200 (k : \u2115), P WinB l (k+1) \u2192 P WinB l k := by\n    intro k hPnext\n    exact P_step l hl0 WinB winB_iff hl k hPnext\n  have hP0 : P WinB l 0 :=\n    Nat.decreasingInduction (motive := fun m hm => P WinB l m) (fun k hk => h_step k) hPN (Nat.zero_le N)\n  unfold P at hP0\n  have hzero' : (0 : \u211d) = 2*((0 : \u2115) : \u211d) := by norm_num\n  have hsum1' : (0 : \u211d) \u2265 ((0 : \u2115) : \u211d) * \u221a2 := by\n    simp\n  exact hP0 (0 : \u211d) (0 : \u211d) hzero' hsum1'"
+    },
+    {
+      "id": "one_div_sqrt2_sq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.39,
+      "proof_length": 8,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "(1/\u221a{2})^2 = 1/2.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $(1/\\sqrt{2})^2 = 1/2$. -/)\n  (proof := /-- Compute $(1/\\sqrt{2})^2 = 1/((\\sqrt{2})^2) = 1/2$, using `sqrt2_sq`. -/)]\nlemma one_div_sqrt2_sq : (1 / \u221a2) ^ 2 = 1/2 := by\n  calc\n    (1 / \u221a2) ^ 2 = (1 ^ 2) / ((\u221a2) ^ 2) := by exact div_pow (1 : \u211d) (\u221a2) 2\n    _ = 1 / ((\u221a2) ^ 2) := by norm_num\n    _ = 1 / 2 := by rw [sqrt2_sq]\n    _ = 1/2 := rfl"
+    },
+    {
+      "id": "sqrt2_sq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "(\u221a{2})^2 = 2.",
+      "is_main": false,
+      "col": 1,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- $(\\sqrt{2})^2 = 2$. -/)\n  (proof := /-- By `Real.sq_sqrt` with the non\u2011negativity of $2$. -/)]\nlemma sqrt2_sq : (\u221a2) ^ 2 = 2 := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "sum_ineq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.23,
+      "proof_length": 19,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For 0 \u2264 a < 1/\u221a{2}, we have a + \u221a{2 - a^2} \u2265 \u221a{2}.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $0 \\le a < 1/\\sqrt{2}$, we have $a + \\sqrt{2 - a^2} \\ge \\sqrt{2}$. -/)\n  (proof := /-- Square both sides, using that both sides are non\u2011negative, and compute $(a+\\sqrt{2-a^2})^2 = 2 + 2a\\sqrt{2-a^2} \\ge 2 = (\\sqrt{2})^2$. -/)]\nlemma sum_ineq (a : \u211d) (ha_nonneg : a \u2265 0) (ha_lt : a < 1 / \u221a2) : a + \u221a(2 - a^2) \u2265 \u221a2 := by\n  have hpos_sqrt2 : \u221a2 > 0 := by positivity\n  have h_nonneg_sqrt2 : \u221a2 \u2265 0 := by positivity\n  have ha_sq_lt : a^2 < 1/2 := by\n    have h_mul_lt : a * \u221a2 < 1 := by\n      calc\n        a * \u221a2 < (1 / \u221a2) * \u221a2 := by\n          nlinarith\n        _ = 1 := by field_simp [ne_of_gt hpos_sqrt2]\n    have h_nonneg_mul : a * \u221a2 \u2265 0 := mul_nonneg ha_nonneg (by positivity)\n    have h_one_nonneg : (1 : \u211d) \u2265 0 := by norm_num\n    have h_sq : (a * \u221a2)^2 < 1^2 := by\n      -- using sq_lt_sq\u2080\n      have := sq_lt_sq\u2080 h_nonneg_mul h_one_nonneg\n      -- Actually sq_lt_sq\u2080 returns equivalence, we need direction.\n      -- `sq_lt_sq\u2080 ha hb : a^2 < b^2 \u2194 a < b`\n      rcases this with \u27e8h, _\u27e9\n      -- Wait, sq_lt_sq\u2080 gives equivalence, we can use `.mpr` or `.mp`.\n      exact (sq_lt_sq\u2080 h_nonneg_mul h_one_nonneg).mpr h_mul_lt\n    have h_eq_sq : (a * \u221a2)^2 = a^2 * ((\u221a2)^2) := by ring\n    have h_sqrt2_sq : (\u221a2)^2 = 2 := sqrt2_sq\n    have h_ineq : a^2 * 2 < 1 := by\n      nlinarith\n    nlinarith\n  have h_nonneg_sub : 0 \u2264 2 - a^2 := by\n    nlinarith\n  have h_nonneg_sum : a + \u221a(2 - a^2) \u2265 0 := by positivity\n  have h_sq_ineq : (a + \u221a(2 - a^2))^2 \u2265 (\u221a2)^2 := by\n    calc\n      (a + \u221a(2 - a^2))^2 = a^2 + 2*a*\u221a(2 - a^2) + (\u221a(2 - a^2))^2 := by ring\n      _ = a^2 + 2*a*\u221a(2 - a^2) + (2 - a^2) := by\n        rw [Real.sq_sqrt h_nonneg_sub]\n      _ = 2 + 2*a*\u221a(2 - a^2) := by ring\n      _ \u2265 2 := by\n        nlinarith [ha_nonneg, Real.sqrt_nonneg (2 - a^2)]\n      _ = (\u221a2)^2 := by rw [sqrt2_sq]\n  -- Now from h_sq_ineq and nonnegativity, deduce the original inequality.\n  nlinarith"
+    },
+    {
+      "id": "hl_sq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For l = \u221a2/2, we have l^2 = 1/2.",
+      "is_main": false,
+      "col": 2,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For l = \u221a2/2, we have l^2 = 1/2. -/)\n  (proof := /-- By algebra: (\u221a2/2)^2 = 2/4 = 1/2. -/)]\nlemma hl_sq (l : \u211d) (hl : l = \u221a2 / 2) : l ^ 2 = 1/2 := by\n  rw [hl]\n  have h_sq : (Real.sqrt 2) ^ 2 = 2 := Real.sq_sqrt (show (0 : \u211d) \u2264 2 from by norm_num)\n  calc\n    (Real.sqrt 2 / 2) ^ 2 = ((Real.sqrt 2)^2) / 4 := by ring\n    _ = 2 / 4 := by rw [h_sq]\n    _ = 1/2 := by norm_num"
+    },
+    {
+      "id": "imo2025_p5_draw_a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The full theorem statement.",
+      "is_main": true,
+      "col": 2,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The full theorem statement. -/)\n  (proof := /-- Use sb_nonneg_strategy as the witness, with sb_nonneg_strategy_nonneg for nonnegativity and strategy_works for the implication. -/)]\ntheorem imo2025_p5_draw_a (l : \u211d) (hl0 : l > 0) (hl : l = \u221a2 / 2) :\n  \u2203 sb : (n : \u2115) \u2192 (Fin (n + 1) \u2192 \u211d) \u2192 \u211d, (\u2200 i x, sb i x \u2265 0) \u2227\n    \u2200 a : \u2115 \u2192 \u211d, (\u2200 i : \u2115, a i \u2265 0) \u2192\n    \u2200 b : \u2115 \u2192 \u211d, (\u2200 i : \u2115, b i = sb i (fun j \u21a6 a (j : \u2115))) \u2192\n      \u2200 n : \u2115,\n        (\u2200 k, k < n \u2192\n          (\u2211 i \u2208 Finset.range k, (a i + b i)) + a k \u2264 (2 * k + 1) * l \u2227\n          (\u2211 i \u2208 Finset.range k, (a i ^ 2 + b i ^ 2)) + a k ^ 2 + b k ^ 2 \u2264 2 * k + 2) \u2192\n        (\u2211 i \u2208 Finset.range n, (a i + b i)) + a n \u2264 (2 * n + 1) * l \u2192\n        (\u2211 i \u2208 Finset.range n, (a i ^ 2 + b i ^ 2)) + a n ^ 2 + b n ^ 2 \u2264 2 * n + 2 := by\n  refine \u27e8sb_nonneg_strategy l, ?_, ?_\u27e9\n  \u00b7 exact sb_nonneg_strategy_nonneg l\n  \u00b7 intro a ha_nonneg b hb_def n h_prev h_linear\n    exact strategy_works l hl hl0 a ha_nonneg b hb_def n h_prev h_linear"
+    },
+    {
+      "id": "sb_nonneg_strategy",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A simple nonnegative strategy for Bazza: at turn 0, play max(0, l - a_0). At turn n > 0, play max(0, 2*l - a_n).",
+      "is_main": false,
+      "col": 2,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- A simple nonnegative strategy for Bazza: at turn 0, play max(0, l - a_0). At turn n > 0, play max(0, 2*l - a_n). -/)]\nnoncomputable def sb_nonneg_strategy (l : \u211d) (n : \u2115) (f : Fin (n+1) \u2192 \u211d) : \u211d :=\n  if h : n = 0 then\n    max 0 (l - f 0)\n  else\n    max 0 (2*l - f \u27e8n, Nat.lt_succ_self n\u27e9)"
+    },
+    {
+      "id": "sb_nonneg_strategy_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "sb_nonneg_strategy always returns a nonnegative value.",
+      "is_main": false,
+      "col": 2,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- sb_nonneg_strategy always returns a nonnegative value. -/)\n  (proof := /-- By definition, it's max 0 (...). -/)]\nlemma sb_nonneg_strategy_nonneg (l : \u211d) (n : \u2115) (f : Fin (n+1) \u2192 \u211d) : sb_nonneg_strategy l n f \u2265 0 := by\n  unfold sb_nonneg_strategy\n  split\n  \u00b7 -- case n = 0\n    exact le_max_left 0 (l - f 0)\n  \u00b7 -- case n \u2260 0\n    exact le_max_left 0 (2*l - f \u27e8n, Nat.lt_succ_self n\u27e9)"
+    },
+    {
+      "id": "strategy_works",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.87,
+      "proof_length": 43,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The key lemma: for the strategy sb_nonneg_strategy, under the given hypotheses, the quadratic bound at n follows from the linear bound at n and the bounds for all k < n.",
+      "is_main": false,
+      "col": 2,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- The key lemma: for the strategy sb_nonneg_strategy, under the given hypotheses, the quadratic bound at n follows from the linear bound at n and the bounds for all k < n. -/)\n  (proof := /-- Prove by induction that for all m \u2264 n, the cumulative sum R(m+1) = (2*m+1)*l, and a_m \u2264 2*l (a_0 \u2264 l), and b_m = 2*l - a_m (b_0 = l - a_0). Then the quadratic bound follows from these facts and hl_sq. -/)]\nlemma strategy_works (l : \u211d) (hl : l = \u221a2 / 2) (hl0 : l > 0) (a : \u2115 \u2192 \u211d) (ha_nonneg : \u2200 i, a i \u2265 0)\n  (b : \u2115 \u2192 \u211d) (hb_def : \u2200 i, b i = sb_nonneg_strategy l i (fun j \u21a6 a (j : \u2115))) (n : \u2115)\n  (h_prev : \u2200 k, k < n \u2192\n    (\u2211 i \u2208 Finset.range k, (a i + b i)) + a k \u2264 (2 * k + 1) * l \u2227\n    (\u2211 i \u2208 Finset.range k, (a i ^ 2 + b i ^ 2)) + a k ^ 2 + b k ^ 2 \u2264 2 * k + 2)\n  (h_linear : (\u2211 i \u2208 Finset.range n, (a i + b i)) + a n \u2264 (2 * n + 1) * l) :\n  (\u2211 i \u2208 Finset.range n, (a i ^ 2 + b i ^ 2)) + a n ^ 2 + b n ^ 2 \u2264 2 * n + 2 := by\n  have ha0_le_l : a 0 \u2264 l := by\n    by_cases hn0 : n = 0\n    \u00b7 subst hn0\n      simpa [Finset.sum_range_zero] using h_linear\n    \u00b7 have hn_pos : 0 < n := by omega\n      have h0 := (h_prev 0 hn_pos).1\n      simpa [Finset.sum_range_zero] using h0\n  have hb0_expr : b 0 = l - a 0 := by\n    rw [hb_def 0, sb_nonneg_strategy]\n    have hzero : (0 : \u2115) = 0 := rfl\n    have h_nonneg : 0 \u2264 l - a 0 := by linarith\n    simp [hzero, h_nonneg]\n  have h0_quad : a 0 ^ 2 + b 0 ^ 2 \u2264 1/2 := by\n    rw [hb0_expr]\n    have ha0_nonneg : a 0 \u2265 0 := ha_nonneg 0\n    nlinarith [hl_sq l hl]\n  -- helper to get ha1_le_2l for m=1 case\n  have hsum1 : (\u2211 i \u2208 Finset.range 1, (a i + b i)) = l := by\n    simp [Finset.sum_range_one, ha0_le_l, hb0_expr, add_comm, add_left_comm, add_assoc]\n  have h_aux : \u2200 m, 1 \u2264 m \u2192 m \u2264 n \u2192 (a m \u2264 2*l) \u2227 (b m = 2*l - a m) \u2227 (\u2211 i \u2208 Finset.range (m+1), (a i + b i) = (2*m+1)*l) := by\n    intro m hm1 hm\n    induction' m using Nat.strong_induction_on with m ih\n    have hm_pos : m \u2260 0 := by omega\n    rcases Nat.exists_eq_succ_of_ne_zero hm_pos with \u27e8k, hm_eq\u27e9\n    subst hm_eq\n    -- now m = k.succ\n    have hk_lt_n : k < n := by omega\n    rcases h_prev k hk_lt_n with \u27e8h_lin_k, h_quad_k\u27e9\n    by_cases hk0 : k = 0\n    \u00b7 subst hk0\n      -- m = 1\n      by_cases hn1 : n = 1\n      \u00b7 subst hn1\n        have ha1_le_2l : a 1 \u2264 2*l := by\n          rw [hsum1] at h_linear\n          norm_num at h_linear\n          linarith\n        have hb1_expr : b 1 = 2*l - a 1 := by\n          rw [hb_def 1, sb_nonneg_strategy]\n          simp\n          exact ha1_le_2l\n        have hsum2 : (\u2211 i \u2208 Finset.range (1+1), (a i + b i)) = (2*(1:\u2115)+1)*l := by\n          calc\n            (\u2211 i \u2208 Finset.range 2, (a i + b i)) = ((a 0 + b 0) + (a 1 + b 1)) := by\n              simp [Finset.sum_range_succ, add_assoc]\n            _ = l + (a 1 + (2*l - a 1)) := by\n              simp [hsum1, hb1_expr, Finset.sum_range_one, ha0_le_l, hb0_expr, add_comm, add_left_comm, add_assoc]\n            _ = l + 2*l := by ring\n            _ = 3*l := by ring\n            _ = (2*(1:\u2115)+1)*l := by norm_num\n        exact \u27e8ha1_le_2l, hb1_expr, hsum2\u27e9\n      \u00b7 have h1_lt_n : 1 < n := by omega\n        rcases h_prev 1 h1_lt_n with \u27e8h_lin_1, h_quad_1\u27e9\n        have ha1_le_2l : a 1 \u2264 2*l := by\n          rw [hsum1] at h_lin_1\n          norm_num at h_lin_1\n          linarith\n        have hb1_expr : b 1 = 2*l - a 1 := by\n          rw [hb_def 1, sb_nonneg_strategy]\n          simp\n          exact ha1_le_2l\n        have hsum2 : (\u2211 i \u2208 Finset.range (1+1), (a i + b i)) = (2*(1:\u2115)+1)*l := by\n          calc\n            (\u2211 i \u2208 Finset.range 2, (a i + b i)) = ((a 0 + b 0) + (a 1 + b 1)) := by\n              simp [Finset.sum_range_succ, add_assoc]\n            _ = l + (a 1 + (2*l - a 1)) := by\n              simp [hsum1, hb1_expr, Finset.sum_range_one, ha0_le_l, hb0_expr, add_comm, add_left_comm, add_assoc]\n            _ = l + 2*l := by ring\n            _ = 3*l := by ring\n            _ = (2*(1:\u2115)+1)*l := by norm_num\n        exact \u27e8ha1_le_2l, hb1_expr, hsum2\u27e9\n    \u00b7 -- k \u2265 1\n      have hk_pos : 1 \u2264 k := by omega\n      have hk_prop := ih k (by omega) hk_pos (by omega)\n      rcases hk_prop with \u27e8hak_le_2l, hbk_expr, hsum_k\u27e9\n      by_cases hk1_lt_n : k.succ < n\n      \u00b7 rcases h_prev (k.succ) hk1_lt_n with \u27e8h_lin_kp1, h_quad_kp1\u27e9\n        have ha_kp1_le_2l : a (k.succ) \u2264 2*l := by\n          have hsum_eq : (\u2211 i \u2208 Finset.range (k.succ), (a i + b i)) = (2*k+1)*l := by\n            simpa using hsum_k\n          have htemp : (2*k+1)*l + a (k.succ) \u2264 (2*(k.succ : \u211d)+1)*l := by\n            simpa [hsum_eq] using h_lin_kp1\n          have RHS_simp : (2*(k.succ : \u211d)+1)*l = (2*k+3)*l := by\n            push_cast\n            ring\n          rw [RHS_simp] at htemp\n          linarith\n        have hb_kp1_expr : b (k.succ) = 2*l - a (k.succ) := by\n          rw [hb_def (k.succ), sb_nonneg_strategy]\n          simp\n          exact ha_kp1_le_2l\n        have hsum_kp1 : (\u2211 i \u2208 Finset.range (k.succ + 1), (a i + b i)) = (2*(k.succ : \u211d)+1)*l := by\n          calc\n            (\u2211 i \u2208 Finset.range (k.succ + 1), (a i + b i)) = ((\u2211 i \u2208 Finset.range (k.succ), (a i + b i)) + (a (k.succ) + b (k.succ))) := by\n              simp [Finset.sum_range_succ, add_assoc]\n            _ = ((2*k+1)*l + (a (k.succ) + (2*l - a (k.succ)))) := by rw [hsum_k, hb_kp1_expr]\n            _ = ((2*k+1)*l + 2*l) := by ring\n            _ = (2*(k.succ : \u211d)+1)*l := by\n              push_cast\n              ring\n        exact \u27e8ha_kp1_le_2l, hb_kp1_expr, hsum_kp1\u27e9\n      \u00b7 -- k.succ = n\n        have h_eq : k.succ = n := by omega\n        have hn_pos : n \u2260 0 := by omega\n        have hsum_n : (\u2211 i \u2208 Finset.range n, (a i + b i)) = (2*n-1 : \u211d)*l := by\n          calc\n            (\u2211 i \u2208 Finset.range n, (a i + b i)) = (\u2211 i \u2208 Finset.range (k.succ), (a i + b i)) := by rw [h_eq]\n            _ = (2*k+1)*l := hsum_k\n            _ = (2*n-1 : \u211d)*l := by\n              rw [\u2190 h_eq]\n              push_cast\n              ring\n        have ha_n_le_2l : a n \u2264 2*l := by\n          have htemp : (2*n-1 : \u211d)*l + a n \u2264 (2*n+1)*l := by\n            simpa [hsum_n] using h_linear\n          linarith\n        have hb_n_expr : b n = 2*l - a n := by\n          rw [hb_def n, sb_nonneg_strategy]\n          simp [hn_pos]\n          exact ha_n_le_2l\n        have hsum_np1 : (\u2211 i \u2208 Finset.range (n+1), (a i + b i)) = (2*n+1)*l := by\n          calc\n            (\u2211 i \u2208 Finset.range (n+1), (a i + b i)) = ((\u2211 i \u2208 Finset.range n, (a i + b i)) + (a n + b n)) := by\n              simp [Finset.sum_range_succ, add_assoc]\n            _ = ((2*n-1 : \u211d)*l + (a n + (2*l - a n))) := by rw [hsum_n, hb_n_expr]\n            _ = ((2*n-1 : \u211d)*l + 2*l) := by ring\n            _ = (2*n+1)*l := by ring\n        have ha_n_le_2l' : a (k.succ) \u2264 2*l := by\n          simpa [h_eq.symm] using ha_n_le_2l\n        have hb_n_expr' : b (k.succ) = 2*l - a (k.succ) := by\n          simpa [h_eq.symm] using hb_n_expr\n        have hsum_np1' : (\u2211 i \u2208 Finset.range (k.succ+1), (a i + b i)) = (2*(k.succ : \u211d)+1)*l := by\n          simpa [h_eq.symm] using hsum_np1\n        exact \u27e8ha_n_le_2l', hb_n_expr', hsum_np1'\u27e9\n  have hi_quad2 (i : \u2115) (hi : i \u2264 n) : a i ^ 2 + b i ^ 2 \u2264 2 := by\n    by_cases hi0 : i = 0\n    \u00b7 subst hi0; nlinarith [h0_quad]\n    \u00b7 have hi_pos : 1 \u2264 i := by omega\n      rcases h_aux i hi_pos hi with \u27e8ha_i_le_2l, hb_i_expr, _\u27e9\n      rw [hb_i_expr]\n      nlinarith [hl_sq l hl, ha_i_le_2l, ha_nonneg i]\n  have h_sum_bound : (\u2211 i \u2208 Finset.range n, (a i ^ 2 + b i ^ 2)) \u2264 (2 : \u211d)*n := by\n    calc\n      (\u2211 i \u2208 Finset.range n, (a i ^ 2 + b i ^ 2)) \u2264 (\u2211 i \u2208 Finset.range n, (2 : \u211d)) :=\n        Finset.sum_le_sum (fun i hi => hi_quad2 i (by\n          have hi' := Finset.mem_range.1 hi\n          omega))\n      _ = (2 : \u211d)*n := by simp [mul_comm]\n  have h_last : a n ^ 2 + b n ^ 2 \u2264 2 := hi_quad2 n (le_refl n)\n  nlinarith"
+    },
+    {
+      "id": "alice_move_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.63,
+      "proof_length": 22,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a is defined from b via Alice's strategy, then a_0 = 1/\u221a{2} = l and a_i = 0 for all i > 0.",
+      "is_main": false,
+      "col": 3,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If $a$ is defined from $b$ via Alice's strategy, then $a_0 = 1/\\sqrt{2} = l$ and $a_i = 0$ for all $i > 0$. -/)\n  (proof := /-- From `ha_def`, `a i = alice_strategy i ...`. Unfolding `alice_strategy` gives the stated values. The equality $1/\\sqrt{2} = l$ follows from `hl`. -/)]\nlemma alice_move_zero (l : \u211d) (hl : l = \u221a2 / 2) (b : \u2115 \u2192 \u211d) (a : \u2115 \u2192 \u211d) (ha_def : \u2200 i, a i = alice_strategy i (fun j : Fin i => b (j.val))) :\n  a 0 = l \u2227 \u2200 i, i > 0 \u2192 a i = 0 := by\n  have h0 : a 0 = 1 / Real.sqrt 2 := by\n    simpa [alice_strategy] using ha_def 0\n  have h0l : 1 / Real.sqrt 2 = l := by\n    calc\n      1 / Real.sqrt 2 = (Real.sqrt 2) / 2 := by\n        field_simp [Real.sqrt_ne_zero'.mpr (by norm_num : (0 : \u211d) < 2)]\n        nlinarith [Real.sq_sqrt (show (0:\u211d) \u2264 2 by norm_num)]\n      _ = l := by\n        symm; exact hl\n  have h_and : a 0 = l \u2227 \u2200 i, i > 0 \u2192 a i = 0 := by\n    constructor\n    \u00b7 calc\n        a 0 = 1 / Real.sqrt 2 := h0\n        _ = l := h0l\n    \u00b7 intro i hi\n      have : alice_strategy i (fun j : Fin i => b (j.val)) = 0 := by\n        dsimp [alice_strategy]\n        -- i > 0, so i \u2260 0\n        have hi' : i \u2260 0 := by omega\n        simp [hi']\n      rw [ha_def i, this]\n  exact h_and"
+    },
+    {
+      "id": "alice_strategy",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Alice's strategy: on the first turn (index 0) she plays 1/\u221a{2}; on every later turn she plays 0.",
+      "is_main": false,
+      "col": 3,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Alice's strategy: on the first turn (index 0) she plays $1/\\sqrt{2}$; on every later turn she plays $0$. -/)]\nnoncomputable def alice_strategy (n : \u2115) (x : Fin n \u2192 \u211d) : \u211d :=\n  if h : n = 0 then 1 / Real.sqrt 2 else 0"
+    },
+    {
+      "id": "all_n_valid",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.46,
+      "proof_length": 29,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all b, a compatible with Alice's strategy, the conclusion of the theorem holds for every n.",
+      "is_main": false,
+      "col": 3,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all $b, a$ compatible with Alice's strategy, the conclusion of the theorem holds for every $n$. -/)\n  (proof := /-- By strong induction on $n$. For each $n$, if $n$ is odd, use `odd_turn_valid`; if $n$ is even, use `even_turn_valid`. The induction hypothesis is exactly the premise of `odd_turn_valid`/`even_turn_valid`. -/)]\nlemma all_n_valid (l : \u211d) (hl0 : l > 0) (hl : l = \u221a2 / 2) (b : \u2115 \u2192 \u211d) (hb_nonneg : \u2200 i, b i \u2265 0)\n  (a : \u2115 \u2192 \u211d) (ha_def : \u2200 i, a i = alice_strategy i (fun j : Fin i => b (j.val))) :\n  \u2200 n : \u2115,\n    (\u2200 k, k < n \u2192\n      ((\u2211 i \u2208 Finset.range k, (a i + b i)) + a k \u2264 (2*k + 1) * l \u2227\n       (\u2211 i \u2208 Finset.range k, (a i ^ 2 + b i ^ 2)) + a k ^ 2 + b k ^ 2 \u2264 2*k + 2)) \u2192\n    (\u2211 i \u2208 Finset.range n, (a i + b i)) + a n \u2264 (2*n + 1) * l := by\n  intro n\n  intro h_ind\n  have ho := (alice_move_zero l hl b a ha_def)\n  have ha0 : a 0 = l := ho.1\n  have ha_pos : \u2200 i, i > 0 \u2192 a i = 0 := ho.2\n  by_cases hn0 : n = 0\n  \u00b7 subst hn0\n    simp [ha0]\n  \u00b7 by_cases hn1 : n = 1\n    \u00b7 subst hn1\n      have h0 := h_ind 0 (by omega)\n      have hsum : (\u2211 i \u2208 Finset.range 1, (a i + b i)) + a 1 = l + b 0 := by\n        simp [ha0, ha_pos 1 (by omega), Finset.sum_range_one]\n      rw [hsum]\n      have hl_sq : l^2 = 1/2 := by\n        calc\n          l^2 = ((Real.sqrt 2)/2)^2 := by rw [hl]\n          _ = (Real.sqrt 2)^2 / 4 := by ring\n          _ = 2 / 4 := by rw [Real.sq_sqrt (show (0:\u211d) \u2264 2 from by norm_num)]\n          _ = 1/2 := by norm_num\n      have h2l_sq : (2*l)^2 = 2 := by\n        calc\n          (2*l)^2 = 4*l^2 := by ring\n          _ = 4*(1/2) := by rw [hl_sq]\n          _ = 2 := by ring\n      have h_nonneg_b0 : 0 \u2264 b 0 := hb_nonneg 0\n      have h_nonneg_2l : 0 \u2264 2*l := by nlinarith\n      have h0sq_simp : a 0 ^ 2 + b 0 ^ 2 \u2264 2 := by\n        have htemp := h0.2\n        simp at htemp\n        exact htemp\n      have htemp : b 0 ^ 2 \u2264 3/2 := by\n        nlinarith\n      have hb0sq' : b 0 ^ 2 \u2264 (2*l)^2 := by\n        calc\n          b 0 ^ 2 \u2264 3/2 := htemp\n          _ \u2264 2 := by norm_num\n          _ = (2*l)^2 := by symm; exact h2l_sq\n      have hb0le2l : b 0 \u2264 2*l := by\n        nlinarith\n      have hgoal : l + b 0 \u2264 ((2:\u211d)*1+1)*l := by\n        nlinarith\n      simpa using hgoal\n    \u00b7 have hn2 : n \u2265 2 := by omega\n      by_cases h_even : n % 2 = 0\n      \u00b7 -- n even\n        let k := n / 2\n        have hn_eq : n = 2*k := by\n          omega\n        have hk_ge_one : k \u2265 1 := by\n          omega\n        have h_even_turn := even_turn_valid l hl0 hl k hk_ge_one b hb_nonneg a ha_def (by\n          intro k' hk'lt\n          apply h_ind\n          omega)\n        simpa [hn_eq] using h_even_turn\n      \u00b7 -- n odd\n        have h_odd : n % 2 = 1 := by\n          have := Nat.mod_two_eq_zero_or_one n\n          rcases this with (h | h)\n          \u00b7 exfalso; exact h_even h\n          \u00b7 exact h\n        let k := n / 2\n        have hn_eq : n = 2*k+1 := by\n          omega\n        have hk_ge_one : k \u2265 1 := by\n          omega\n        have h_odd_turn := odd_turn_valid l hl0 hl k hk_ge_one b hb_nonneg a ha_def (by\n          intro k' hk'lt\n          apply h_ind\n          omega)\n        simpa [hn_eq] using h_odd_turn"
+    },
+    {
+      "id": "even_turn_valid",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.35,
+      "proof_length": 28,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let k \u2265 1. Assume the induction hypothesis for all k' < 2k. Under Alice's strategy, the sum bound for n = 2k holds.",
+      "is_main": false,
+      "col": 3,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Let $k \\ge 1$. Assume the induction hypothesis for all $k' < 2k$. Under Alice's strategy, the sum bound for $n = 2k$ holds. -/)\n  (proof := /-- This case is not covered in the proof sketch; we need to adapt the Cauchy\u2013Schwarz argument for even $n$. For now the lemma is left as a gap. -/)]\nlemma even_turn_valid (l : \u211d) (hl0 : l > 0) (hl : l = \u221a2 / 2) (k : \u2115) (hk : k \u2265 1) (b : \u2115 \u2192 \u211d) (hb_nonneg : \u2200 i, b i \u2265 0)\n  (a : \u2115 \u2192 \u211d) (ha_def : \u2200 i, a i = alice_strategy i (fun j : Fin i => b (j.val)))\n  (h_induction : \u2200 (k' : \u2115), k' < 2*k \u2192\n    ((\u2211 i \u2208 Finset.range k', (a i + b i)) + a k' \u2264 (2*k' + 1) * l \u2227\n     (\u2211 i \u2208 Finset.range k', (a i ^ 2 + b i ^ 2)) + a k' ^ 2 + b k' ^ 2 \u2264 2*k' + 2)) :\n  (\u2211 i \u2208 Finset.range (2*k), (a i + b i)) + a (2*k) \u2264 (2*(2*k) + 1) * l := by\n  have hl_sq : l^2 = 1/2 := by\n    calc\n      l^2 = ((Real.sqrt 2)/2)^2 := by rw [hl]\n      _ = ((Real.sqrt 2)^2)/4 := by ring\n      _ = 2/4 := by rw [Real.sq_sqrt (show (0:\u211d) \u2264 2 from by norm_num)]\n      _ = 1/2 := by norm_num\n  have ha0 : a 0 = l := (alice_move_zero l hl b a ha_def).1\n  have ha_pos : \u2200 i, i > 0 \u2192 a i = 0 := (alice_move_zero l hl b a ha_def).2\n  have h0mem : (0 : \u2115) \u2208 Finset.range (2*k-1) := by\n    have hpos : 0 < 2*k-1 := by\n      omega\n    exact Finset.mem_range.2 (by omega)\n  have ha_sq_sum_range : \u2211 i \u2208 Finset.range (2*k-1), a i ^ 2 = l^2 := by\n    have h_eq_single : \u2211 i \u2208 Finset.range (2*k-1), a i ^ 2 = a 0 ^ 2 :=\n      Finset.sum_eq_single (f := \u03bb i => a i ^ 2) 0 (\u03bb b hb hbne => ?_) (\u03bb h0not => ?_)\n    calc\n      \u2211 i \u2208 Finset.range (2*k-1), a i ^ 2 = a 0 ^ 2 := h_eq_single\n      _ = l^2 := by rw [ha0]\n    \u00b7 have hb_pos : b > 0 := by\n        have hb_range : b < 2*k-1 := Finset.mem_range.1 hb\n        omega\n      simp [ha_pos b hb_pos]\n    \u00b7 exfalso; exact h0not h0mem\n  have ha_2k1_sq : a (2*k-1) ^ 2 = 0 := by\n    have hpos : 2*k-1 > 0 := by\n      omega\n    simp [ha_pos (2*k-1) hpos]\n  have hsum_sq_bound' : l^2 + \u2211 i \u2208 Finset.range (2*k), b i ^ 2 \u2264 4*k := by\n    have hk' : 2*k-1 < 2*k := by omega\n    have hpair := h_induction (2*k-1) hk'\n    rcases hpair with \u27e8h1, h2\u27e9\n    have h2' : (\u2211 i \u2208 Finset.range (2*k-1), (a i ^ 2 + b i ^ 2)) + a (2*k-1) ^ 2 + b (2*k-1) ^ 2 \u2264 (4*k : \u211d) := by\n      have hle : 1 \u2264 2*k := by omega\n      calc\n        (\u2211 i \u2208 Finset.range (2*k-1), (a i ^ 2 + b i ^ 2)) + a (2*k-1) ^ 2 + b (2*k-1) ^ 2 \u2264 2 * ((2*k-1 : \u2115) : \u211d) + 2 := h2\n        _ = (4*k : \u211d) := by\n          have : (\u2191(2*k - 1 : \u2115) : \u211d) = (2*k : \u211d) - 1 := by\n            rw [Nat.cast_sub hle, Nat.cast_mul, Nat.cast_ofNat]\n            ring\n          rw [this]\n          ring\n    have hsum_range_succ : \u2211 i \u2208 Finset.range (2*k), b i ^ 2 = (\u2211 i \u2208 Finset.range (2*k-1), b i ^ 2) + b (2*k-1) ^ 2 := by\n      calc\n        \u2211 i \u2208 Finset.range (2*k), b i ^ 2 = \u2211 i \u2208 Finset.range ((2*k-1)+1), b i ^ 2 := by\n          congr; omega\n        _ = (\u2211 i \u2208 Finset.range (2*k-1), b i ^ 2) + b (2*k-1) ^ 2 := by rw [Finset.sum_range_succ]\n    calc\n      l^2 + \u2211 i \u2208 Finset.range (2*k), b i ^ 2 = l^2 + ((\u2211 i \u2208 Finset.range (2*k-1), b i ^ 2) + b (2*k-1) ^ 2) := by rw [hsum_range_succ]\n      _ = (l^2 + (\u2211 i \u2208 Finset.range (2*k-1), b i ^ 2)) + b (2*k-1) ^ 2 := by ring\n      _ = ((\u2211 i \u2208 Finset.range (2*k-1), a i ^ 2) + (\u2211 i \u2208 Finset.range (2*k-1), b i ^ 2)) + b (2*k-1) ^ 2 := by rw [ha_sq_sum_range]\n      _ = (\u2211 i \u2208 Finset.range (2*k-1), a i ^ 2) + (\u2211 i \u2208 Finset.range (2*k-1), b i ^ 2) + 0 + b (2*k-1) ^ 2 := by ring\n      _ = (\u2211 i \u2208 Finset.range (2*k-1), a i ^ 2) + (\u2211 i \u2208 Finset.range (2*k-1), b i ^ 2) + a (2*k-1) ^ 2 + b (2*k-1) ^ 2 := by rw [ha_2k1_sq, add_zero]\n      _ = (\u2211 i \u2208 Finset.range (2*k-1), (a i ^ 2 + b i ^ 2)) + a (2*k-1) ^ 2 + b (2*k-1) ^ 2 := by\n        simp [Finset.sum_add_distrib, add_assoc]\n      _ \u2264 (4*k : \u211d) := h2'\n  have hsum_sq_bound : \u2211 i \u2208 Finset.range (2*k), b i ^ 2 \u2264 4*k - l^2 := by\n    linarith\n  have hsq_sum_sq' : (\u2211 i \u2208 Finset.range (2*k), b i) ^ 2 \u2264 (2*k : \u211d) * (\u2211 i \u2208 Finset.range (2*k), b i ^ 2) := by\n    have htemp := sq_sum_le_card_mul_sum_sq (s := Finset.range (2*k)) (f := b)\n    have card_range : (Finset.range (2*k)).card = 2*k := Finset.card_range (2*k)\n    simpa [card_range] using htemp\n  have h_sq_goal : (\u2211 i \u2208 Finset.range (2*k), b i) ^ 2 \u2264 ((4*k : \u211d) * l) ^ 2 := by\n    calc\n      (\u2211 i \u2208 Finset.range (2*k), b i) ^ 2 \u2264 (2*k : \u211d) * (\u2211 i \u2208 Finset.range (2*k), b i ^ 2) := hsq_sum_sq'\n      _ \u2264 (2*k : \u211d) * (4*k - l^2) := by\n        nlinarith\n      _ = 8*(k:\u211d)^2 - 2*(k:\u211d)*l^2 := by ring\n      _ \u2264 8*(k:\u211d)^2 := by\n        have hk_nonneg : (0 : \u211d) \u2264 k := by exact_mod_cast (by omega : 0 \u2264 k)\n        nlinarith [hl_sq, hk_nonneg]\n      _ = ((4*k : \u211d) * l) ^ 2 := by\n        calc\n          8*(k:\u211d)^2 = 16*(k:\u211d)^2*(1/2) := by ring\n          _ = 16*(k:\u211d)^2*l^2 := by rw [hl_sq]\n          _ = ((4*k : \u211d) * l) ^ 2 := by ring\n  have h_nonneg_sum : 0 \u2264 \u2211 i \u2208 Finset.range (2*k), b i :=\n    Finset.sum_nonneg (\u03bb i hi => hb_nonneg i)\n  have h_nonneg_target : 0 \u2264 (4*k : \u211d) * l := by\n    have hk_nonneg : (0 : \u211d) \u2264 k := by exact_mod_cast (by omega : 0 \u2264 k)\n    have hl_nonneg : 0 \u2264 l := by linarith\n    nlinarith\n  have hgoal : \u2211 i \u2208 Finset.range (2*k), b i \u2264 (4*k : \u211d) * l := by\n    nlinarith\n  have ha_sum_range : \u2211 i \u2208 Finset.range (2*k), a i = l := by\n    have h0mem' : (0 : \u2115) \u2208 Finset.range (2*k) := by\n      have hpos' : 0 < 2*k := by omega\n      exact Finset.mem_range.2 (by omega)\n    have h_eq_single' : \u2211 i \u2208 Finset.range (2*k), a i = a 0 :=\n      Finset.sum_eq_single (f := \u03bb i => a i) 0 (\u03bb b hb hbne => ?_) (\u03bb h0not => ?_)\n    calc\n      \u2211 i \u2208 Finset.range (2*k), a i = a 0 := h_eq_single'\n      _ = l := ha0\n    \u00b7 have hb_pos : b > 0 := by\n        have hb_range : b < 2*k := Finset.mem_range.1 hb\n        omega\n      simp [ha_pos b hb_pos]\n    \u00b7 exfalso; exact h0not h0mem'\n  have ha_2k : a (2*k) = 0 := by\n    have hpos : 2*k > 0 := by\n      have hk1 : k \u2265 1 := hk\n      omega\n    exact ha_pos (2*k) hpos\n  have h_sum : (\u2211 i \u2208 Finset.range (2*k), (a i + b i)) + a (2*k) = l + (\u2211 i \u2208 Finset.range (2*k), b i) := by\n    calc\n      (\u2211 i \u2208 Finset.range (2*k), (a i + b i)) + a (2*k) = ((\u2211 i \u2208 Finset.range (2*k), a i) + (\u2211 i \u2208 Finset.range (2*k), b i)) + a (2*k) := by\n        rw [Finset.sum_add_distrib]\n      _ = (l + (\u2211 i \u2208 Finset.range (2*k), b i)) + 0 := by rw [ha_sum_range, ha_2k]\n      _ = l + (\u2211 i \u2208 Finset.range (2*k), b i) := by ring\n  calc\n    (\u2211 i \u2208 Finset.range (2*k), (a i + b i)) + a (2*k) = l + (\u2211 i \u2208 Finset.range (2*k), b i) := h_sum\n    _ \u2264 l + ((4*k : \u211d) * l) := by\n      gcongr\n    _ = (2*(2*k) + 1) * l := by ring"
+    },
+    {
+      "id": "imo2025_p5_draw_b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 16,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There exists a strategy sa for Alice (satisfying the given conditions) such that for any nonnegative b, any a consistent with sa, and any n, if all previous moves satisfy the two inequalities, then the sum bound holds for n.",
+      "is_main": true,
+      "col": 3,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- There exists a strategy $sa$ for Alice (satisfying the given conditions) such that for any nonnegative $b$, any $a$ consistent with $sa$, and any $n$, if all previous moves satisfy the two inequalities, then the sum bound holds for $n$. -/)\n  (proof := /-- Take $sa$ to be `alice_strategy`. Then `sa_nonneg` gives the nonnegativity. The second condition follows from `all_n_valid`. -/)]\ntheorem imo2025_p5_draw_b (l : \u211d) (hl0 : l > 0) (hl : l = \u221a2 / 2) :\n  \u2203 sa : (n : \u2115) \u2192 (Fin n \u2192 \u211d) \u2192 \u211d, (\u2200 i x, sa i x \u2265 0) \u2227\n    \u2200 b : \u2115 \u2192 \u211d, (\u2200 i : \u2115, b i \u2265 0) \u2192\n    \u2200 a : \u2115 \u2192 \u211d, (\u2200 i : \u2115, a i = sa i (fun j \u21a6 b (j : \u2115))) \u2192\n      \u2200 n : \u2115,\n        (\u2200 k, k < n \u2192\n          (\u2211 i \u2208 Finset.range k, (a i + b i)) + a k \u2264 (2 * k + 1) * l \u2227\n          (\u2211 i \u2208 Finset.range k, (a i ^ 2 + b i ^ 2)) + a k ^ 2 + b k ^ 2 \u2264 2 * k + 2) \u2192\n        (\u2211 i \u2208 Finset.range n, (a i + b i)) + a n \u2264 (2 * n + 1) * l := by\n  refine \u27e8alice_strategy, sa_nonneg, ?_\u27e9\n  intro b hb_nonneg a ha_def n hprev\n  exact all_n_valid l hl0 hl b hb_nonneg a ha_def n hprev"
+    },
+    {
+      "id": "odd_turn_valid",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 19.82,
+      "proof_length": 97,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let k \u2265 1. Assume the induction hypothesis for all k' < 2k+1. Under Alice's strategy, the sum bound for n = 2k+1 holds.",
+      "is_main": false,
+      "col": 3,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Let $k \\ge 1$. Assume the induction hypothesis for all $k' < 2k+1$. Under Alice's strategy, the sum bound for $n = 2k+1$ holds. -/)\n  (proof := /-- By `alice_move_zero`, $a_{2i+1}=0$ for $i\\ge 1$ and $a_0 = l$. The sum $\\sum_{i=0}^{2k} (a_i + b_i) + a_{2k+1}$ simplifies to $l + \\sum_{i=1}^{k} b_{2i}$. The hypothesis for $k' = 2k$ gives $\\sum_{i=0}^{2k-1} (a_i^2+b_i^2) + a_{2k}^2 + b_{2k}^2 \\le 4k+2$. Using $a_i=0$ for $i>0$, we obtain $\\sum_{i=1}^{k} b_{2i}^2 \\le 4k + 3/2$. Then Cauchy\u2013Schwarz (`sq_sum_le_card_mul_sum_sq`) yields $\\left(\\sum_{i=1}^{k} b_{2i}\\right)^2 \\le k \\cdot \\sum_{i=1}^{k} b_{2i}^2 \\le k(4k+3/2) = 4k^2 + 3k/2$. Taking square roots and using $k\\ge 1$, we get $\\sum_{i=1}^{k} b_{2i} < \\sqrt{4k^2} = 2k$. Hence $l + \\sum b_{2i} < l + 2k = \\frac{1}{\\sqrt{2}} + 2k = \\frac{2k+1}{\\sqrt{2}} = (2k+1)l$. The required inequality follows. -/)]\nlemma odd_turn_valid (l : \u211d) (hl0 : l > 0) (hl : l = \u221a2 / 2) (k : \u2115) (hk : k \u2265 1) (b : \u2115 \u2192 \u211d) (hb_nonneg : \u2200 i, b i \u2265 0)\n  (a : \u2115 \u2192 \u211d) (ha_def : \u2200 i, a i = alice_strategy i (fun j : Fin i => b (j.val)))\n  (h_induction : \u2200 (k' : \u2115), k' < 2*k+1 \u2192\n    ((\u2211 i \u2208 Finset.range k', (a i + b i)) + a k' \u2264 (2*k' + 1) * l \u2227\n     (\u2211 i \u2208 Finset.range k', (a i ^ 2 + b i ^ 2)) + a k' ^ 2 + b k' ^ 2 \u2264 2*k' + 2)) :\n  (\u2211 i \u2208 Finset.range (2*k+1), (a i + b i)) + a (2*k+1) \u2264 (2*(2*k+1) + 1) * l := by\n  have ha_move := alice_move_zero l hl b a ha_def\n  rcases ha_move with \u27e8ha0, ha_pos\u27e9\n  have hpair := h_induction (2*k) (by exact Nat.lt_succ_self _)\n  rcases hpair with \u27e8hsum, hsq\u27e9\n  have hl_sq : l^2 = 1/2 := by\n    calc\n      l^2 = ((Real.sqrt 2)/2)^2 := by rw [hl]\n      _ = ((Real.sqrt 2)^2)/4 := by ring\n      _ = 2/4 := by rw [Real.sq_sqrt (show 0 \u2264 2 by norm_num)]\n      _ = 1/2 := by norm_num\n  have ha_2k_sq : a (2*k)^2 = 0 := by\n    have hpos : 2*k > 0 := by omega\n    simpa using ha_pos (2*k) hpos\n  have hsum_a_sq : (\u2211 i \u2208 Finset.range (2*k), a i ^ 2) = l^2 := by\n    have h0mem : (0 : \u2115) \u2208 Finset.range (2*k) := by\n      rw [Finset.mem_range]\n      omega\n    calc\n      (\u2211 i \u2208 Finset.range (2*k), a i ^ 2) = (\u2211 i \u2208 Finset.range (2*k), ((if i = 0 then l else 0 : \u211d))^2) := by\n        refine Finset.sum_congr rfl fun i hi => ?_\n        by_cases hi0 : i = 0\n        \u00b7 subst hi0; simp [ha0]\n        \u00b7 have hi_pos : i > 0 := by\n            have := Finset.mem_range.1 hi\n            omega\n          rw [ha_pos i hi_pos, if_neg hi0]\n      _ = l^2 := by\n        simp [Finset.sum_ite_eq, h0mem]\n  have hsum_sq_b : (\u2211 i \u2208 Finset.range (2*k+1), b i ^ 2) \u2264 4*k + 3/2 := by\n    have htemp : (\u2211 i \u2208 Finset.range (2*k), (a i ^ 2 + b i ^ 2)) + a (2*k)^2 + b (2*k)^2 = l^2 + (\u2211 i \u2208 Finset.range (2*k+1), b i ^ 2) := by\n      calc\n        (\u2211 i \u2208 Finset.range (2*k), (a i ^ 2 + b i ^ 2)) + a (2*k)^2 + b (2*k)^2\n            = ((\u2211 i \u2208 Finset.range (2*k), a i ^ 2) + (\u2211 i \u2208 Finset.range (2*k), b i ^ 2)) + a (2*k)^2 + b (2*k)^2 := by\n          rw [Finset.sum_add_distrib]\n        _ = (l^2 + (\u2211 i \u2208 Finset.range (2*k), b i ^ 2)) + 0 + b (2*k)^2 := by rw [hsum_a_sq, ha_2k_sq]\n        _ = l^2 + ((\u2211 i \u2208 Finset.range (2*k), b i ^ 2) + b (2*k)^2) := by ring\n        _ = l^2 + (\u2211 i \u2208 Finset.range (2*k+1), b i ^ 2) := by rw [Finset.sum_range_succ]\n    rw [htemp] at hsq\n    have hRHS : 2 * (Nat.cast (2*k) : \u211d) + 2 = 4*(k:\u211d) + 2 := by\n      norm_num\n      ring\n    rw [hRHS] at hsq\n    have htemp3 : (\u2211 i \u2208 Finset.range (2*k+1), b i ^ 2) \u2264 4*(k:\u211d) + 2 - l^2 := by\n      nlinarith\n    have htemp4 : 4*(k:\u211d) + 2 - l^2 = 4*k + 3/2 := by\n      rw [hl_sq]\n      ring\n    rw [htemp4] at htemp3\n    exact htemp3\n  have hsum_b_nonneg : 0 \u2264 \u2211 i \u2208 Finset.range (2*k+1), b i := by\n    apply Finset.sum_nonneg\n    intro i hi\n    exact hb_nonneg i\n  have h_cauchy : (\u2211 i \u2208 Finset.range (2*k+1), b i)^2 \u2264 (2*k+1) * (\u2211 i \u2208 Finset.range (2*k+1), b i ^ 2) := by\n    calc\n      (\u2211 i \u2208 Finset.range (2*k+1), b i)^2\n          \u2264 (Finset.card (Finset.range (2*k+1))) * (\u2211 i \u2208 Finset.range (2*k+1), b i ^ 2) :=\n        sq_sum_le_card_mul_sum_sq (s := Finset.range (2*k+1)) (f := b)\n      _ = (2*k+1) * (\u2211 i \u2208 Finset.range (2*k+1), b i ^ 2) := by simp\n  have h_bound_sq : (\u2211 i \u2208 Finset.range (2*k+1), b i)^2 \u2264 (2*k+1)*(4*k+3/2) := by\n    nlinarith\n  have h_target_sq : (\u2211 i \u2208 Finset.range (2*k+1), b i)^2 \u2264 ((4*k+2)*l)^2 := by\n    have h_rhs_sq : ((4*k+2)*l)^2 = 2*((2*(k:\u211d)+1)^2) := by\n      nlinarith\n    have h_intermediate : (2*k+1)*(4*k+3/2) \u2264 2*((2*(k:\u211d)+1)^2) := by\n      nlinarith\n    nlinarith\n  have hsum_b_bound : \u2211 i \u2208 Finset.range (2*k+1), b i \u2264 (4*k+2)*l := by\n    have hpos_rhs : 0 \u2264 (4*k+2)*l := by\n      nlinarith\n    nlinarith\n  have ha_2kp1 : a (2*k+1) = 0 := by\n    have hpos : 2*k+1 > 0 := by omega\n    exact ha_pos (2*k+1) hpos\n  have hsum_a : (\u2211 i \u2208 Finset.range (2*k+1), a i) = l := by\n    have h0mem' : (0 : \u2115) \u2208 Finset.range (2*k+1) := by\n      rw [Finset.mem_range]\n      omega\n    calc\n      (\u2211 i \u2208 Finset.range (2*k+1), a i) = (\u2211 i \u2208 Finset.range (2*k+1), (if i = 0 then l else 0 : \u211d)) := by\n        refine Finset.sum_congr rfl fun i hi => ?_\n        by_cases hi0 : i = 0\n        \u00b7 subst hi0; simp [ha0]\n        \u00b7 have hi_pos : i > 0 := by\n            have := Finset.mem_range.1 hi\n            omega\n          rw [ha_pos i hi_pos, if_neg hi0]\n      _ = l := by\n        simp [Finset.sum_ite_eq, h0mem']\n  calc\n    (\u2211 i \u2208 Finset.range (2*k+1), (a i + b i)) + a (2*k+1) = (\u2211 i \u2208 Finset.range (2*k+1), a i) + (\u2211 i \u2208 Finset.range (2*k+1), b i) + a (2*k+1) := by\n      rw [Finset.sum_add_distrib]\n    _ = ((\u2211 i \u2208 Finset.range (2*k+1), a i) + a (2*k+1)) + (\u2211 i \u2208 Finset.range (2*k+1), b i) := by ring\n    _ = (l + 0) + (\u2211 i \u2208 Finset.range (2*k+1), b i) := by rw [hsum_a, ha_2kp1]\n    _ = l + (\u2211 i \u2208 Finset.range (2*k+1), b i) := by ring\n    _ \u2264 l + (4*k+2)*l := by nlinarith\n    _ = (4*k+3)*l := by ring\n    _ = (2*(2*k+1) + 1)*l := by ring"
+    },
+    {
+      "id": "sa_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.23,
+      "proof_length": 19,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all n \u2208 \u2115 and x : operatorname{Fin} n \u2192 \u211d, the value of Alice's strategy is nonnegative.",
+      "is_main": false,
+      "col": 3,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all $n \\in \\mathbb{N}$ and $x : \\operatorname{Fin} n \\to \\mathbb{R}$, the value of Alice's strategy is nonnegative. -/)\n  (proof := /-- By definition, `alice_strategy n x` is either $1/\\sqrt{2}$ (if $n=0$) or $0$; both are nonnegative because $\\sqrt{2} > 0$. -/)]\nlemma sa_nonneg (n : \u2115) (x : Fin n \u2192 \u211d) : alice_strategy n x \u2265 0 := by\n  unfold alice_strategy\n  split\n  \u00b7 have : Real.sqrt 2 > 0 := by positivity\n    positivity\n  \u00b7 norm_num"
+    }
+  ],
+  "edges": [
+    {
+      "source": "k_ineq",
+      "target": "exists_k",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "two_l_sub_sqrt2_pos",
+      "target": "exists_k",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_k",
+      "target": "imo2025_p5_algebra_A",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_lt_l_mul",
+      "target": "imo2025_p5_algebra_A",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "Q_gt_2k",
+      "target": "imo2025_p5_algebra_A",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sq_sum_sq_ineq",
+      "target": "imo2025_p5_algebra_A",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "two_l_sub_sqrt2_pos",
+      "target": "k_ineq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_inductive_step",
+      "target": "P_step",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_sq_lt_half",
+      "target": "P_step",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_ineq",
+      "target": "S_inductive_step",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "one_div_sqrt2_sq",
+      "target": "a_sq_lt_half",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "P_step",
+      "target": "imo2025_p5_algebra_B",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_N",
+      "target": "imo2025_p5_algebra_B",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "P",
+      "target": "imo2025_p5_algebra_B",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "P_base",
+      "target": "imo2025_p5_algebra_B",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sqrt2_sq",
+      "target": "one_div_sqrt2_sq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sqrt2_sq",
+      "target": "sum_ineq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sb_nonneg_strategy",
+      "target": "imo2025_p5_draw_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "strategy_works",
+      "target": "imo2025_p5_draw_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sb_nonneg_strategy_nonneg",
+      "target": "imo2025_p5_draw_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "hl_sq",
+      "target": "strategy_works",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "odd_turn_valid",
+      "target": "all_n_valid",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "even_turn_valid",
+      "target": "all_n_valid",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alice_move_zero",
+      "target": "all_n_valid",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alice_move_zero",
+      "target": "even_turn_valid",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "all_n_valid",
+      "target": "imo2025_p5_draw_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alice_strategy",
+      "target": "imo2025_p5_draw_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sa_nonneg",
+      "target": "imo2025_p5_draw_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alice_move_zero",
+      "target": "odd_turn_valid",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

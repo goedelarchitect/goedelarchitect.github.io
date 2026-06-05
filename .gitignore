@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Build tooling and chart sources — local only, not part of the published site.
+# (They contain internal absolute paths / repo names; keep them off the public repo.)
+_generator/
+figures_fonts/
+benchmarks_bar.py
+benchmarks_bar.pdf

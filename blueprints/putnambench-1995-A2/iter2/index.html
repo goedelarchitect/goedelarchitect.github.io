@@ -1,0 +1,2044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">PutnamBench 1995-A2. 1,059 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item current">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item current">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+<a href="../iter7/" class="nav-item">8</a>
+<a href="../iter8/" class="nav-item">9</a>
+<a href="../iter9/" class="nav-item">10</a>
+<a href="../iter10/" class="nav-item">11</a>
+<a href="../iter11/" class="nav-item">12</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "A_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For t>0, \u221a{t/2} > 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- For $t>0$, $\\sqrt{t/2} > 0$. -/)\n  (proof := /-- Since $t/2>0$, $\\sqrt{t/2} > 0$ by `Real.sqrt_pos.mpr`. -/)]\nlemma A_pos (t : \u211d) (ht : t > 0) : 0 < Real.sqrt (t/2) := by\n  have ht2 : 0 < t/2 := by linarith\n  exact Real.sqrt_pos.mpr ht2"
+    },
+    {
+      "id": "C",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "C(a,b) = \u221a{a/2} - \u221a{b/2}.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- $C(a,b) = \\sqrt{a/2} - \\sqrt{b/2}$. -/)]\nnoncomputable def C (a b : \u211d) : \u211d := Real.sqrt (a/2) - Real.sqrt (b/2)"
+    },
+    {
+      "id": "C_eq_zero_iff",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a,b>0, \u221a{a/2} = \u221a{b/2} iff a=b.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b>0$, $\\sqrt{a/2} = \\sqrt{b/2}$ iff $a=b$. -/)\n  (proof := /-- Since sqrt is injective on $[0,\\infty)$, $\\sqrt{a/2}=\\sqrt{b/2}$ implies $a/2=b/2$, so $a=b$. The converse is immediate. -/)]\nlemma C_eq_zero_iff (a b : \u211d) (ha : a > 0) (hb : b > 0) : C a b = 0 \u2194 a = b := by\n  have ha2_nonneg : 0 \u2264 a / 2 := by positivity\n  have hb2_nonneg : 0 \u2264 b / 2 := by positivity\n  have h_eq_iff : Real.sqrt (a/2) = Real.sqrt (b/2) \u2194 a/2 = b/2 :=\n    Real.sqrt_inj ha2_nonneg hb2_nonneg\n  constructor\n  \u00b7 intro hC\n    have h_sqrt_eq : Real.sqrt (a/2) = Real.sqrt (b/2) := by\n      dsimp [C] at hC\n      linarith\n    have h_div_eq : a/2 = b/2 := (h_eq_iff.mp h_sqrt_eq)\n    linarith\n  \u00b7 intro h_eq\n    dsimp [C]\n    subst h_eq\n    simp\n\n-- Divergence of \u222b c * x^{-1/4} for c \u2260 0"
+    },
+    {
+      "id": "K",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "K(a,b) = M(a) + N(b).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $K(a,b) = M(a) + N(b)$. -/)]\nnoncomputable def K (a b : \u211d) : \u211d := M a + N b"
+    },
+    {
+      "id": "M",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "M(a) = a^{3/2} \u221a{2} / 8.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $M(a) = a^{3/2} \\sqrt{2} / 8$. -/)]\nnoncomputable def M (a : \u211d) : \u211d := a ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8"
+    },
+    {
+      "id": "N",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "N(b) = b^{3/2} \u221a{2} / 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $N(b) = b^{3/2} \\sqrt{2} / 2$. -/)]\nnoncomputable def N (b : \u211d) : \u211d := b ^ ((3/2 : \u211d)) * Real.sqrt 2 / 2"
+    },
+    {
+      "id": "R",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "R_{a,b}(x) = (\u221a{\u221a{x+a}-\u221a{x}} - \u221a{a/2} x^{-1/4}) - (\u221a{\u221a{x}-\u221a{x-b}} - \u221a{b/2} x^{-1/4}) for x\u2265 b.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- $R_{a,b}(x) = (\\sqrt{\\sqrt{x+a}-\\sqrt{x}} - \\sqrt{a/2}\\,x^{-1/4}) - (\\sqrt{\\sqrt{x}-\\sqrt{x-b}} - \\sqrt{b/2}\\,x^{-1/4})$ for $x\\ge b$. -/)]\nnoncomputable def R (a b : \u211d) (x : \u211d) : \u211d :=\n  (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) -\n  (Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d)))\n\n-- Helper lemmas for lemma1"
+    },
+    {
+      "id": "aux_ineq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For 1\u2264 v<\u221a{2}, \u221a{2}-v \u2264 v^3(2-v^2).",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint\n  (statement := /-- For $1\\le v<\\sqrt{2}$, $\\sqrt{2}-v \\le v^3(2-v^2)$. -/)\n  (proof := /-- Algebraic manipulation. -/)]\nlemma aux_ineq (v : \u211d) (hv1 : 1 \u2264 v) (hv2 : v < Real.sqrt 2) : Real.sqrt 2 - v \u2264 v^3*(2 - v^2) := by\n  set s := Real.sqrt 2 with hs_def\n  have hs_pos : 0 < s := Real.sqrt_pos.mpr (by norm_num : (0:\u211d) < 2)\n  have hs_sq : s ^ 2 = 2 := Real.sq_sqrt (by norm_num : 0 \u2264 (2 : \u211d))\n  have hpos : s - v > 0 := sub_pos.mpr hv2\n  have h3 : 1 \u2264 v^3 := by\n    have h_nonneg : 0 \u2264 v - 1 := sub_nonneg.mpr hv1\n    have h_sq_nonneg : 0 \u2264 v^2 + v + 1 := by\n      have : 0 \u2264 v^2 := pow_two_nonneg v\n      nlinarith\n    have h_factor : v^3 - 1 = (v - 1)*(v^2 + v + 1) := by ring\n    have h_nonneg_diff : 0 \u2264 v^3 - 1 := by\n      rw [h_factor]\n      nlinarith\n    linarith\n  have h_sv_ge_one : 1 \u2264 s + v := by\n    calc\n      1 \u2264 v := hv1\n      _ \u2264 s + v := by nlinarith [hs_pos]\n  have h_nonneg_v3 : 0 \u2264 v^3 := by nlinarith\n  have hpos_nonneg : 0 \u2264 s - v := hpos.le\n  calc\n    s - v = (s - v) * 1 := by ring\n    _ \u2264 (s - v) * (v^3*(s+v)) := mul_le_mul_of_nonneg_left (by\n      calc\n        1 \u2264 v^3*(s+v) := by\n          calc\n            (1 : \u211d) = (1 : \u211d) * (1 : \u211d) := by norm_num\n            _ \u2264 v^3 * (s+v) := mul_le_mul h3 h_sv_ge_one (by norm_num : (0:\u211d) \u2264 1) h_nonneg_v3\n      ) hpos_nonneg\n    _ = (s - v) * v^3 * (s+v) := by ring\n    _ = v^3 * ((s - v) * (s+v)) := by ring\n    _ = v^3 * (s^2 - v^2) := by ring\n    _ = v^3 * (2 - v^2) := by rw [hs_sq]"
+    },
+    {
+      "id": "aux_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For t>0, \u221a{t/2} - \u221a{\u221a{1+t}-1} \u2265 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For $t>0$, $\\sqrt{t/2} - \\sqrt{\\sqrt{1+t}-1} \\ge 0$. -/)\n  (proof := /-- Show $\\sqrt{\\sqrt{1+t}-1} \\le \\sqrt{t/2}$ using $\\sqrt{1+t} \\le 1 + t/2$. -/)]\nlemma aux_nonneg (t : \u211d) (ht : t > 0) : 0 \u2264 Real.sqrt (t/2) - Real.sqrt (Real.sqrt (1+t)-1) := by\n  have hpos_sqrt : 0 < Real.sqrt (1+t) - 1 := by\n    have hsqrt_gt_one : 1 < Real.sqrt (1+t) := by\n      have hpos_one : (0:\u211d) \u2264 1 := by norm_num\n      have hlt : (1:\u211d) < 1 + t := by linarith\n      simpa using Real.sqrt_lt_sqrt hpos_one hlt\n    linarith\n  have hineq1 : Real.sqrt (1+t) - 1 \u2264 t/2 := by\n    have hineq_sq : (Real.sqrt (1+t)) ^ 2 \u2264 (1 + t/2) ^ 2 := by\n      nlinarith [Real.sq_sqrt (by positivity : 0 \u2264 1 + t)]\n    have hx : 0 \u2264 Real.sqrt (1+t) := Real.sqrt_nonneg _\n    have hy : 0 \u2264 1 + t/2 := by nlinarith\n    have h_sqrt_le : Real.sqrt (1+t) \u2264 1 + t/2 := by\n      nlinarith\n    linarith\n  have hle_sqrt : Real.sqrt (Real.sqrt (1+t)-1) \u2264 Real.sqrt (t/2) := by\n    apply (Real.sqrt_le_sqrt_iff' hpos_sqrt).mpr\n    exact hineq1\n  exact sub_nonneg.mpr hle_sqrt"
+    },
+    {
+      "id": "comparison_test",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If |f(x)|\u2264 g(x) for all x\u2265 b, g is integrable on [b,t] for all t, and int_b^\u221e g(x) dx converges, then int_b^\u221e f(x) dx converges.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If $|f(x)|\\le g(x)$ for all $x\\ge b$, $g$ is integrable on $[b,t]$ for all $t$, and $\\int_b^\\infty g(x)\\,dx$ converges, then $\\int_b^\\infty f(x)\\,dx$ converges. -/)\n  (proof := /-- Standard comparison test for improper integrals; use the bound to show the integral of $f$ is Cauchy. -/)]\nlemma comparison_test (f : \u211d \u2192 \u211d) (g : \u211d \u2192 \u211d) (b : \u211d) (hb : b > 0)\n    (hbound : \u2200 x, x \u2265 b \u2192 |f x| \u2264 g x)\n    (hg_int : \u2200 t, MeasureTheory.IntegrableOn g (Set.Icc b t) MeasureTheory.volume)\n    (hconv_g : \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, g x) atTop (\ud835\udcdd L)) :\n    \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, f x) atTop (\ud835\udcdd L) := by\n  sorry_using []\n\n-- Convergence of integral of R"
+    },
+    {
+      "id": "continuousOn_R",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a,b>0, R_{a,b}(x) is continuous on [b,\u221e).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b>0$, $R_{a,b}(x)$ is continuous on $[b,\\infty)$. -/)\n  (proof := /-- $R$ is built from continuous functions; each term is continuous for $x\\ge b$. -/)]\nlemma continuousOn_R (a b : \u211d) (ha : a > 0) (hb : b > 0) : ContinuousOn (R a b) (Set.Ici b) := by\n  have hxpos : \u2200 x, b \u2264 x \u2192 0 < x := by\n    intro x hx\n    exact lt_of_lt_of_le hb hx\n  have hx_nonzero : \u2200 x, b \u2264 x \u2192 x \u2260 0 := by\n    intro x hx\n    linarith\n  have hsqrt_cont : Continuous Real.sqrt := Real.continuous_sqrt\n  have hsqrt_cont_on : ContinuousOn Real.sqrt (Set.Ici b) := hsqrt_cont.continuousOn\n  -- f1 = sqrt(sqrt(x+a) - sqrt(x))\n  have h_add_cont_on : ContinuousOn (fun x : \u211d => x + a) (Set.Ici b) :=\n    (continuous_add_right a).continuousOn\n  have h_sqrt_add_cont_on : ContinuousOn (fun x : \u211d => Real.sqrt (x + a)) (Set.Ici b) :=\n    hsqrt_cont.comp_continuousOn h_add_cont_on\n  have h_sqrt_x_cont_on : ContinuousOn (fun x : \u211d => Real.sqrt x) (Set.Ici b) := hsqrt_cont_on\n  have h_inner1_cont_on : ContinuousOn (fun x : \u211d => Real.sqrt (x + a) - Real.sqrt x) (Set.Ici b) :=\n    h_sqrt_add_cont_on.sub h_sqrt_x_cont_on\n  have hf1 : ContinuousOn (fun x : \u211d => Real.sqrt (Real.sqrt (x + a) - Real.sqrt x)) (Set.Ici b) :=\n    hsqrt_cont.comp_continuousOn h_inner1_cont_on\n  -- g1 = sqrt(sqrt(x) - sqrt(x-b))\n  have h_sub_cont_on : ContinuousOn (fun x : \u211d => x - b) (Set.Ici b) :=\n    (continuous_sub_right b).continuousOn\n  have h_sqrt_sub_cont_on : ContinuousOn (fun x : \u211d => Real.sqrt (x - b)) (Set.Ici b) :=\n    hsqrt_cont.comp_continuousOn h_sub_cont_on\n  have h_inner2_cont_on : ContinuousOn (fun x : \u211d => Real.sqrt x - Real.sqrt (x - b)) (Set.Ici b) :=\n    h_sqrt_x_cont_on.sub h_sqrt_sub_cont_on\n  have hg1 : ContinuousOn (fun x : \u211d => Real.sqrt (Real.sqrt x - Real.sqrt (x - b))) (Set.Ici b) :=\n    hsqrt_cont.comp_continuousOn h_inner2_cont_on\n  -- f2 = sqrt(a/2) * x ^ (-1/4)\n  have h_id_cont_on : ContinuousOn (fun x : \u211d => x) (Set.Ici b) := continuous_id.continuousOn\n  have hx_nonzero_condition : \u2200 x, x \u2208 Set.Ici b \u2192 x \u2260 0 \u2228 (0 \u2264 (-1/4 : \u211d)) := by\n    intro x hx\n    left\n    have hxpos' : 0 < x := hxpos x hx\n    linarith\n  have h_pow_cont_on : ContinuousOn (fun x : \u211d => x ^ ((-1/4 : \u211d))) (Set.Ici b) :=\n    h_id_cont_on.rpow_const hx_nonzero_condition\n  have h_sqrt_a2_cont_on : ContinuousOn (fun _ : \u211d => Real.sqrt (a/2)) (Set.Ici b) :=\n    continuousOn_const\n  have hf2 : ContinuousOn (fun x : \u211d => Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) (Set.Ici b) :=\n    h_sqrt_a2_cont_on.mul h_pow_cont_on\n  -- g2 = sqrt(b/2) * x ^ (-1/4)\n  have h_sqrt_b2_cont_on : ContinuousOn (fun _ : \u211d => Real.sqrt (b/2)) (Set.Ici b) :=\n    continuousOn_const\n  have hg2 : ContinuousOn (fun x : \u211d => Real.sqrt (b/2) * x ^ ((-1/4 : \u211d))) (Set.Ici b) :=\n    h_sqrt_b2_cont_on.mul h_pow_cont_on\n  have hR : R a b = (fun x => (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) - (Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d)))) := by\n    ext x; rfl\n  -- Actually easier: we can rewrite using the defined f1,f2,g1,g2\n  have hR' : R a b = ((fun x => Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) - (fun x => Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d)))) := by\n    ext x; rfl\n  -- but we already have hf1, hf2, hg1, hg2 as continuousOn; we can combine.\n  -- Let's define term1 = f1 - f2, term2 = g1 - g2, and R = term1 - term2.\n  have hterm1 : ContinuousOn (fun x : \u211d => Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) (Set.Ici b) :=\n    hf1.sub hf2\n  have hterm2 : ContinuousOn (fun x : \u211d => Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d))) (Set.Ici b) :=\n    hg1.sub hg2\n  have hR'' : R a b = (fun x => (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) - (Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d)))) := by\n    ext x; rfl\n  rw [hR'']\n  exact hterm1.sub hterm2\n\n-- Case a = b"
+    },
+    {
+      "id": "diff_sq_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For t>0, (\u221a{t/2})^2 - (\u221a{\u221a{1+t}-1})^2 = 1 + t/2 - \u221a{1+t}.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- For $t>0$, $(\\sqrt{t/2})^2 - (\\sqrt{\\sqrt{1+t}-1})^2 = 1 + t/2 - \\sqrt{1+t}$. -/)\n  (proof := /-- Expand squares using `Real.sq_sqrt`. -/)]\nlemma diff_sq_eq (t : \u211d) (ht : t > 0) : (Real.sqrt (t/2))^2 - (Real.sqrt (Real.sqrt (1+t)-1))^2 = 1 + t/2 - Real.sqrt (1+t) := by\n  have ht_nonneg : 0 \u2264 t := by linarith\n  have hsq1 : 0 \u2264 t/2 := by nlinarith\n  have hsq2 : 0 \u2264 Real.sqrt (1+t) - 1 := by\n    have : 1 \u2264 Real.sqrt (1+t) := by\n      calc\n        (1 : \u211d) = Real.sqrt (1 : \u211d) := by norm_num\n        _ \u2264 Real.sqrt (1+t) := Real.sqrt_le_sqrt (by nlinarith)\n    linarith\n  calc\n    (Real.sqrt (t/2))^2 - (Real.sqrt (Real.sqrt (1+t)-1))^2\n        = (t/2) - ((Real.sqrt (1+t)-1)) := by\n      rw [Real.sq_sqrt hsq1, Real.sq_sqrt hsq2]\n    _ = 1 + t/2 - Real.sqrt (1+t) := by ring"
+    },
+    {
+      "id": "f_decomposition",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a,b>0 and x\u2265 b, f(x) = C(a,b) x^{-1/4} + R_{a,b}(x).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b>0$ and $x\\ge b$, $f(x) = C(a,b)\\,x^{-1/4} + R_{a,b}(x)$. -/)\n  (proof := /-- Expand $f(x)$ and $R_{a,b}(x)$ and cancel the terms involving $\\sqrt{a/2}\\,x^{-1/4}$ and $\\sqrt{b/2}\\,x^{-1/4}$. -/)]\nlemma f_decomposition (a b x : \u211d) (hx : x \u2265 b) (hb : b > 0) (ha : a > 0) :\n    (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - b))) =\n    C a b * x ^ ((-1/4 : \u211d)) + R a b x := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (simp_all only [C, R]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [C, R]; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (unfold C R; first | (rfl; done) | (decide; done) | (omega; done) | (norm_num; done) | (ring; done) | (linarith; done) | (nlinarith; done); done) | (simp only [C, R]; field_simp; ring; done) | (unfold C R; field_simp; ring; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))\n\n-- Continuity of R on [b, \u221e)"
+    },
+    {
+      "id": "factor_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For t>0, 1 + t/2 + \u221a{1+t} > 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- For $t>0$, $1 + t/2 + \\sqrt{1+t} > 0$. -/)\n  (proof := /-- By `positivity` because each term is nonnegative and $t>0$. -/)]\nlemma factor_pos (t : \u211d) (ht : t > 0) : 0 < 1 + t/2 + Real.sqrt (1+t) := by\n  positivity"
+    },
+    {
+      "id": "hLHS_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Decomposition of the LHS of lemma1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Decomposition of the LHS of lemma1. -/)\n  (proof := /-- Subtract the two identities from `sqrt_xc_sub_sqrt_x_eq` and `sqrt_c_div_two_mul_x_pow_eq`. -/)]\nlemma hLHS_eq (c x : \u211d) (hc : c > 0) (hx : x > 0) (t : \u211d) (ht : t = c/x) :\n    Real.sqrt (Real.sqrt (x + c) - Real.sqrt x) - Real.sqrt (c/2) * x ^ ((-1/4 : \u211d)) = x ^ ((1/4 : \u211d)) * (Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2)) := by\n  have h1 : Real.sqrt (Real.sqrt (x + c) - Real.sqrt x) = x ^ ((1/4 : \u211d)) * Real.sqrt (Real.sqrt (1 + t) - 1) :=\n    sqrt_xc_sub_sqrt_x_eq c x hc hx t ht\n  have h2 : Real.sqrt (c/2) * x ^ ((-1/4 : \u211d)) = x ^ ((1/4 : \u211d)) * Real.sqrt (t/2) :=\n    sqrt_c_div_two_mul_x_pow_eq c x hc hx t ht\n  calc\n    Real.sqrt (Real.sqrt (x + c) - Real.sqrt x) - Real.sqrt (c/2) * x ^ ((-1/4 : \u211d))\n        = (x ^ ((1/4 : \u211d)) * Real.sqrt (Real.sqrt (1 + t) - 1)) - (x ^ ((1/4 : \u211d)) * Real.sqrt (t/2)) := by\n          rw [h1, h2]\n    _ = x ^ ((1/4 : \u211d)) * (Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2)) := by\n      rw [mul_sub]"
+    },
+    {
+      "id": "hRHS_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Rewriting the RHS of lemma1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Rewriting the RHS of lemma1. -/)\n  (proof := /-- Use $c=t x$ and exponent laws. -/)]\nlemma hRHS_eq (c x : \u211d) (hc : c > 0) (hx : x > 0) (t : \u211d) (ht : t = c/x) :\n    (c ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * x ^ ((-5/4 : \u211d)) = x ^ ((1/4 : \u211d)) * (t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) := by\n  rw [ht]\n  have hc_nonneg : 0 \u2264 c := le_of_lt hc\n  have hx_nonneg : 0 \u2264 x := le_of_lt hx\n  have hdiv : (c / x) ^ ((3/2 : \u211d)) = c ^ ((3/2 : \u211d)) / x ^ ((3/2 : \u211d)) := by\n    rw [Real.div_rpow hc_nonneg hx_nonneg]\n  rw [hdiv]\n  calc\n    (c ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * x ^ ((-5/4 : \u211d))\n        = (Real.sqrt 2 / 8) * (c ^ ((3/2 : \u211d)) * x ^ ((-5/4 : \u211d))) := by ring\n    _ = (Real.sqrt 2 / 8) * (c ^ ((3/2 : \u211d)) * (x ^ ((1/4 : \u211d)) * x ^ ((-3/2 : \u211d)))) := by\n      have hx_pow : x ^ ((-5/4 : \u211d)) = x ^ ((1/4 : \u211d)) * x ^ ((-3/2 : \u211d)) := by\n        calc\n          x ^ ((-5/4 : \u211d)) = x ^ (((1/4 : \u211d) + (-3/2 : \u211d))) := by ring\n          _ = x ^ ((1/4 : \u211d)) * x ^ ((-3/2 : \u211d)) := by rw [Real.rpow_add hx]\n      rw [hx_pow]\n    _ = (Real.sqrt 2 / 8) * ((c ^ ((3/2 : \u211d)) * x ^ ((1/4 : \u211d))) * x ^ ((-3/2 : \u211d))) := by ring\n    _ = (Real.sqrt 2 / 8) * (x ^ ((1/4 : \u211d)) * (c ^ ((3/2 : \u211d)) * x ^ ((-3/2 : \u211d)))) := by ring\n    _ = x ^ ((1/4 : \u211d)) * ((Real.sqrt 2 / 8) * (c ^ ((3/2 : \u211d)) * x ^ ((-3/2 : \u211d)))) := by ring\n    _ = x ^ ((1/4 : \u211d)) * ((Real.sqrt 2 / 8) * (c ^ ((3/2 : \u211d)) * (x ^ ((3/2 : \u211d)))\u207b\u00b9)) := by\n      have hx_neg : x ^ ((-3/2 : \u211d)) = (x ^ ((3/2 : \u211d)))\u207b\u00b9 := by\n        calc\n          x ^ ((-3/2 : \u211d)) = x ^ (-(3/2 : \u211d)) := by ring\n          _ = (x ^ ((3/2 : \u211d)))\u207b\u00b9 := by rw [Real.rpow_neg hx_nonneg ((3/2 : \u211d))]\n      rw [hx_neg]\n    _ = x ^ ((1/4 : \u211d)) * ((Real.sqrt 2 / 8) * (c ^ ((3/2 : \u211d)) / x ^ ((3/2 : \u211d)))) := by ring\n    _ = x ^ ((1/4 : \u211d)) * ((c ^ ((3/2 : \u211d)) / x ^ ((3/2 : \u211d))) * Real.sqrt 2 / 8) := by ring\n\n-- Lemma 1"
+    },
+    {
+      "id": "key_identity",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For t>0, 1 + t/2 - \u221a{1+t} = (t^2/4)/(1 + t/2 + \u221a{1+t}).",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- For $t>0$, $1 + t/2 - \\sqrt{1+t} = (t^2/4)/(1 + t/2 + \\sqrt{1+t})$. -/)\n  (proof := /-- Multiply both sides by the denominator and use $(1+t/2)^2 - (1+t) = t^2/4$. -/)]\nlemma key_identity (t : \u211d) (ht : t > 0) : 1 + t/2 - Real.sqrt (1+t) = (t^2/4) / (1 + t/2 + Real.sqrt (1+t)) := by\n  have hpos : 1 + t/2 + Real.sqrt (1+t) \u2260 0 := by\n    have hpos' : 0 < 1 + t/2 + Real.sqrt (1+t) := factor_pos t ht\n    exact ne_of_gt hpos'\n  have h_nonneg : 0 \u2264 1 + t := by linarith\n  have hcalc : (1 + t/2 - Real.sqrt (1+t)) * (1 + t/2 + Real.sqrt (1+t)) = t^2/4 := by\n    calc\n      (1 + t/2 - Real.sqrt (1+t)) * (1 + t/2 + Real.sqrt (1+t)) = (1 + t/2)^2 - (Real.sqrt (1+t))^2 := by ring\n      _ = (1 + t/2)^2 - (1 + t) := by simp [Real.sq_sqrt h_nonneg]\n      _ = t^2/4 := by ring\n  apply ((div_eq_iff_mul_eq hpos).mpr hcalc).symm"
+    },
+    {
+      "id": "lemma1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For every c>0 and all x>0, bigl|\u221a{\u221a{x+c}-\u221a{x}} - \u221a{c/2} x^{-1/4}bigr| \u2264 frac{c^{3/2}\u221a{2}}{8}x^{-5/4}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For every $c>0$ and all $x>0$,\n    $\\bigl|\\sqrt{\\sqrt{x+c}-\\sqrt{x}} - \\sqrt{c/2}\\,x^{-1/4}\\bigr| \\le \\frac{c^{3/2}\\sqrt{2}}{8}x^{-5/4}$. -/)\n  (proof := /-- Compute $A=\\sqrt{x+c}-\\sqrt{x}$, $L=\\sqrt{c/2}\\,x^{-1/4}$, use $|\\sqrt{A}-L| = |A-L^2|/(\\sqrt{A}+L)$, bound $|A-L^2|$ and $\\sqrt{A}+L$ to obtain the estimate. -/)]\nlemma lemma1 (c : \u211d) (hc : c > 0) (x : \u211d) (hx : x > 0) :\n    |Real.sqrt (Real.sqrt (x + c) - Real.sqrt x) - Real.sqrt (c/2) * x ^ ((-1/4 : \u211d))|\n    \u2264 (c ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * x ^ ((-5/4 : \u211d)) := by\n  set t := c / x with ht_def\n  have ht_pos : t > 0 := div_pos hc hx\n  calc\n    |Real.sqrt (Real.sqrt (x + c) - Real.sqrt x) - Real.sqrt (c/2) * x ^ ((-1/4 : \u211d))|\n        = |x ^ ((1/4 : \u211d)) * (Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2))| := by\n      rw [hLHS_eq c x hc hx t ht_def]\n    _ = x ^ ((1/4 : \u211d)) * |Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2)| := by\n      rw [abs_mul, abs_of_pos (by positivity : x ^ ((1/4 : \u211d)) > 0)]\n    _ \u2264 x ^ ((1/4 : \u211d)) * (t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) := by\n      apply mul_le_mul_of_nonneg_left (lemma1_core t ht_pos)\n      positivity\n    _ = (c ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * x ^ ((-5/4 : \u211d)) := by\n      rw [\u2190 hRHS_eq c x hc hx t ht_def]\n\n-- Helper lemmas for lemma2"
+    },
+    {
+      "id": "lemma1_core",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For t>0, |\u221a{\u221a{1+t}-1} - \u221a{t/2}| \u2264 t^{3/2}\u221a{2}/8.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- For $t>0$, $|\\sqrt{\\sqrt{1+t}-1} - \\sqrt{t/2}| \\le t^{3/2}\\sqrt{2}/8$. -/)\n  (proof := /-- Combine `aux_nonneg` and `main_bound`. -/)]\nlemma lemma1_core (t : \u211d) (ht : t > 0) : |Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2)| \u2264 t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8 := by\n  have h_nonneg : Real.sqrt (t/2) - Real.sqrt (Real.sqrt (1 + t) - 1) \u2265 0 := aux_nonneg t ht\n  have h_bound : Real.sqrt (t/2) - Real.sqrt (Real.sqrt (1 + t) - 1) \u2264 t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8 := main_bound t ht\n  have h_nonpos : Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2) \u2264 0 := by\n    linarith\n  calc\n    |Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2)| = -(Real.sqrt (Real.sqrt (1 + t) - 1) - Real.sqrt (t/2)) := by\n      rw [abs_of_nonpos h_nonpos]\n    _ = Real.sqrt (t/2) - Real.sqrt (Real.sqrt (1 + t) - 1) := by ring\n    _ \u2264 t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8 := h_bound"
+    },
+    {
+      "id": "lemma2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For every d>0 and all x\u2265 d, bigl|\u221a{\u221a{x}-\u221a{x-d}} - \u221a{d/2} x^{-1/4}bigr| \u2264 frac{d^{3/2}\u221a{2}}{2}x^{-5/4}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For every $d>0$ and all $x\\ge d$,\n    $\\bigl|\\sqrt{\\sqrt{x}-\\sqrt{x-d}} - \\sqrt{d/2}\\,x^{-1/4}\\bigr| \\le \\frac{d^{3/2}\\sqrt{2}}{2}x^{-5/4}$. -/)\n  (proof := /-- Similar to Lemma 1, using $B=\\sqrt{x}-\\sqrt{x-d}$. -/)]\nlemma lemma2 (d : \u211d) (hd : d > 0) (x : \u211d) (hx : x \u2265 d) :\n    |Real.sqrt (Real.sqrt x - Real.sqrt (x - d)) - Real.sqrt (d/2) * x ^ ((-1/4 : \u211d))|\n    \u2264 (d ^ ((3/2 : \u211d)) * Real.sqrt 2 / 2) * x ^ ((-5/4 : \u211d)) := by\n  have hxpos : x > 0 := by linarith\n  have hx_nonneg : 0 \u2264 x := by linarith\n  have hxd_nonneg : 0 \u2264 x - d := by linarith\n  have h_div_nonneg : 0 \u2264 (x-d)/x := div_nonneg hxd_nonneg hxpos.le\n  set u := Real.sqrt ((x-d)/x) with hu_def\n  have hu_nonneg : 0 \u2264 u := Real.sqrt_nonneg _\n  have hu_lt_one : u < 1 := by\n    have htmp : (x-d)/x < 1 := by\n      have hpos : d/x > 0 := div_pos hd hxpos\n      have : (x-d)/x = 1 - d/x := by\n        field_simp [hxpos.ne.symm]\n      rw [this]\n      nlinarith\n    calc\n      u = Real.sqrt ((x-d)/x) := rfl\n      _ < Real.sqrt 1 := Real.sqrt_lt_sqrt (by positivity) htmp\n      _ = 1 := by norm_num\n  have hu_sq : u^2 = (x-d)/x := by\n    rw [hu_def, Real.sq_sqrt h_div_nonneg]\n  have h_one_minus_u_sq : 1 - u^2 = d/x := by\n    rw [hu_sq]\n    field_simp [hxpos.ne.symm]\n    ring\n  have h_one_minus_u_nonneg : 0 \u2264 1 - u := by nlinarith\n  have h_sqrt_sqrt_x_eq_xpow : Real.sqrt (Real.sqrt x) = x ^ (1/4 : \u211d) := by\n    calc\n      Real.sqrt (Real.sqrt x) = (Real.sqrt x) ^ (1/2 : \u211d) := by rw [Real.sqrt_eq_rpow]\n      _ = (x ^ (1/2 : \u211d)) ^ (1/2 : \u211d) := by rw [Real.sqrt_eq_rpow x]\n      _ = x ^ ((1/2 : \u211d) * (1/2 : \u211d)) := by rw [Real.rpow_mul hx_nonneg (1/2 : \u211d) (1/2 : \u211d)]\n      _ = x ^ (1/4 : \u211d) := by norm_num\n  have h_sqrt_xd_eq_s_mul_u : Real.sqrt (x - d) = Real.sqrt x * u := by\n    calc\n      Real.sqrt (x - d) = Real.sqrt (x * ((x-d)/x)) := by\n        field_simp [hxpos.ne.symm]\n      _ = Real.sqrt x * Real.sqrt ((x-d)/x) := by rw [Real.sqrt_mul hx_nonneg]\n      _ = Real.sqrt x * u := by rw [hu_def]\n  have h_diff_eq : Real.sqrt x - Real.sqrt (x-d) = Real.sqrt x * (1 - u) := by\n    rw [h_sqrt_xd_eq_s_mul_u]\n    ring\n  have h_sqrt_diff_eq : Real.sqrt (Real.sqrt x - Real.sqrt (x-d)) = x ^ (1/4 : \u211d) * Real.sqrt (1 - u) := by\n    calc\n      Real.sqrt (Real.sqrt x - Real.sqrt (x-d)) = Real.sqrt (Real.sqrt x * (1 - u)) := by rw [h_diff_eq]\n      _ = Real.sqrt (Real.sqrt x) * Real.sqrt (1 - u) := by rw [Real.sqrt_mul (Real.sqrt_nonneg _)]\n      _ = x ^ (1/4 : \u211d) * Real.sqrt (1 - u) := by rw [h_sqrt_sqrt_x_eq_xpow]\n  have h_x_pow_neg_quarter : x ^ ((-1/4 : \u211d)) = x ^ (1/4 : \u211d) / x ^ (1/2 : \u211d) := by\n    calc\n      x ^ ((-1/4 : \u211d)) = x ^ ((1/4 : \u211d) - (1/2 : \u211d)) := by norm_num\n      _ = x ^ (1/4 : \u211d) / x ^ (1/2 : \u211d) := by rw [Real.rpow_sub hxpos]\n  have h_factor_aux : Real.sqrt (d/2) / x ^ (1/2 : \u211d) = Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) := by\n    calc\n      Real.sqrt (d/2) / x ^ (1/2 : \u211d) = Real.sqrt (d/2) / Real.sqrt x := by rw [Real.sqrt_eq_rpow x]\n      _ = Real.sqrt (d/(2*x)) := by\n        calc\n          Real.sqrt (d/2) / Real.sqrt x = (Real.sqrt d / Real.sqrt 2) / Real.sqrt x := by rw [Real.sqrt_div (by linarith : 0 \u2264 d) 2]\n          _ = Real.sqrt d / (Real.sqrt 2 * Real.sqrt x) := by ring\n          _ = Real.sqrt d / Real.sqrt (2*x) := by rw [Real.sqrt_mul (by norm_num : 0 \u2264 (2:\u211d)) x]\n          _ = Real.sqrt (d/(2*x)) := by rw [Real.sqrt_div (by linarith : 0 \u2264 d) (2*x)]\n      _ = Real.sqrt ((d/x)/2) := by ring_nf\n      _ = Real.sqrt (1/2 * (d/x)) := by ring_nf\n      _ = Real.sqrt (1/2 : \u211d) * Real.sqrt (d/x) := by rw [Real.sqrt_mul (by norm_num : 0 \u2264 (1/2 : \u211d))]\n      _ = Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) := by rw [h_one_minus_u_sq]\n  have h_factor_eq : Real.sqrt (d/2) * x ^ ((-1/4 : \u211d)) = x ^ (1/4 : \u211d) * (Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)) := by\n    calc\n      Real.sqrt (d/2) * x ^ ((-1/4 : \u211d)) = Real.sqrt (d/2) * (x ^ (1/4 : \u211d) / x ^ (1/2 : \u211d)) := by rw [h_x_pow_neg_quarter]\n      _ = x ^ (1/4 : \u211d) * (Real.sqrt (d/2) / x ^ (1/2 : \u211d)) := by ring\n      _ = x ^ (1/4 : \u211d) * (Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)) := by rw [h_factor_aux]\n  have h_LHS_eq : Real.sqrt (Real.sqrt x - Real.sqrt (x - d)) - Real.sqrt (d/2) * x ^ ((-1/4 : \u211d)) = x ^ (1/4 : \u211d) * (Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)) := by\n    rw [h_sqrt_diff_eq, h_factor_eq]\n    ring\n  have h_abs_LHS_eq : |Real.sqrt (Real.sqrt x - Real.sqrt (x - d)) - Real.sqrt (d/2) * x ^ ((-1/4 : \u211d))| = x ^ (1/4 : \u211d) * |Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)| := by\n    rw [h_LHS_eq, abs_mul, abs_of_nonneg (by positivity : 0 \u2264 x ^ (1/4 : \u211d))]\n  have h_ineq' : |Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)| \u2264 (Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d) :=\n    one_var_ineq' u hu_nonneg hu_lt_one\n  have h_RHS_eq : x ^ (1/4 : \u211d) * ((Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d)) = (d ^ ((3/2 : \u211d)) * Real.sqrt 2 / 2) * x ^ ((-5/4 : \u211d)) := by\n    calc\n      x ^ (1/4 : \u211d) * ((Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d)) = (Real.sqrt 2 / 2) * x ^ (1/4 : \u211d) * (1 - u^2)^(3/2 : \u211d) := by ring\n      _ = (Real.sqrt 2 / 2) * x ^ (1/4 : \u211d) * ((d/x)^(3/2 : \u211d)) := by rw [h_one_minus_u_sq]\n      _ = (Real.sqrt 2 / 2) * x ^ (1/4 : \u211d) * (d^(3/2 : \u211d) / x^(3/2 : \u211d)) := by rw [Real.div_rpow (by linarith) hxpos.le (3/2 : \u211d)]\n      _ = (Real.sqrt 2 / 2) * d^(3/2 : \u211d) * (x ^ (1/4 : \u211d) / x^(3/2 : \u211d)) := by ring\n      _ = (Real.sqrt 2 / 2) * d^(3/2 : \u211d) * (x ^ ((1/4 : \u211d) - (3/2 : \u211d))) := by rw [Real.rpow_sub hxpos]\n      _ = (Real.sqrt 2 / 2) * d^(3/2 : \u211d) * (x ^ ((-5/4 : \u211d))) := by norm_num\n      _ = (d ^ ((3/2 : \u211d)) * Real.sqrt 2 / 2) * x ^ ((-5/4 : \u211d)) := by ring\n  calc\n    |Real.sqrt (Real.sqrt x - Real.sqrt (x - d)) - Real.sqrt (d/2) * x ^ ((-1/4 : \u211d))|\n        = x ^ (1/4 : \u211d) * |Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)| := h_abs_LHS_eq\n    _ \u2264 x ^ (1/4 : \u211d) * ((Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d)) := by\n      exact mul_le_mul_of_nonneg_left h_ineq' (by positivity)\n    _ = (d ^ ((3/2 : \u211d)) * Real.sqrt 2 / 2) * x ^ ((-5/4 : \u211d)) := h_RHS_eq\n\n-- Bound on R"
+    },
+    {
+      "id": "lemma_bound_R",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a,b>0 and x\u2265 b, |R_{a,b}(x)| \u2264 K(a,b) x^{-5/4}.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b>0$ and $x\\ge b$, $|R_{a,b}(x)| \\le K(a,b)\\,x^{-5/4}$. -/)\n  (proof := /-- Combine Lemma 1 (with $c=a$) and Lemma 2 (with $d=b$) using the triangle inequality. -/)]\nlemma lemma_bound_R (a b : \u211d) (ha : a > 0) (hb : b > 0) (x : \u211d) (hx : x \u2265 b) :\n    |R a b x| \u2264 K a b * x ^ ((-5/4 : \u211d)) := by\n  have hxpos : x > 0 := by\n    linarith\n  have h1 : |Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))| \u2264 M a * x ^ ((-5/4 : \u211d)) := by\n    have := lemma1 a ha x hxpos\n    simpa [M] using this\n  have h2 : |Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d))| \u2264 N b * x ^ ((-5/4 : \u211d)) := by\n    have := lemma2 b hb x hx\n    simpa [N] using this\n  have hR : R a b x = (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) -\n    (Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d))) := rfl\n  rw [hR]\n  calc\n    |(Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))) -\n      (Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d)))|\n      \u2264 |Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (a/2) * x ^ ((-1/4 : \u211d))| +\n        |Real.sqrt (Real.sqrt x - Real.sqrt (x - b)) - Real.sqrt (b/2) * x ^ ((-1/4 : \u211d))| := abs_sub _ _\n    _ \u2264 (M a * x ^ ((-5/4 : \u211d))) + (N b * x ^ ((-5/4 : \u211d))) := add_le_add h1 h2\n    _ = (M a + N b) * x ^ ((-5/4 : \u211d)) := by ring\n    _ = K a b * x ^ ((-5/4 : \u211d)) := rfl\n\n-- Antiderivative of x^{-5/4}"
+    },
+    {
+      "id": "lemma_case_a_eq_b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If a>0, then texttt{habconv}(a,a) holds.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $a>0$, then $\\texttt{habconv}(a,a)$ holds. -/)\n  (proof := /-- When $a=b$, $C=0$, so $f(x)=R_{a,a}(x)$. The integral of $R_{a,a}$ converges by `lemma_integral_R_converges`. Hence the integral of $f$ converges. -/)]\nlemma lemma_case_a_eq_b (habconv : (\u211d \u00d7 \u211d) \u2192 Prop) (habconv_def : habconv = fun \u27e8a,b\u27e9 =>\n    \u2203 limit : \u211d, Tendsto (fun t : \u211d => \u222b x in (Set.Icc b t), (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - b)))) atTop (\ud835\udcdd limit))\n    (a : \u211d) (ha : a > 0) : habconv (a, a) := by\n  rw [habconv_def]\n  -- show that (fun \u27e8a,b\u27e9 => ...) (a, a) holds, i.e., the condition for (a,a)\n  -- which is: \u2203 limit : \u211d, Tendsto (fun t : \u211d => \u222b x in (Set.Icc a t), (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - a)))) atTop (\ud835\udcdd limit)\n  -- Using lemma_integral_R_converges a a ha ha\n  have hconv := lemma_integral_R_converges a a ha ha\n  -- hconv: \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc a t, R a a x) atTop (\ud835\udcdd L)\n  -- The integrand we need is R a a x (by f_decomposition with a=b). So we can show that the limit L also works for the original integrand.\n  rcases hconv with \u27e8L, hL\u27e9\n  refine \u27e8L, ?_\u27e9\n  -- Need to show: Tendsto (fun t : \u211d => \u222b x in (Set.Icc a t), (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - a)))) atTop (\ud835\udcdd L)\n  -- We have hL: Tendsto (fun t : \u211d => \u222b x in Set.Icc a t, R a a x) atTop (\ud835\udcdd L)\n  -- So if we can show that the two integrals are equal for all t, then we can use hL.\n  -- Let's prove that for any t, \u222b_a^t (original) = \u222b_a^t R a a x.\n  -- Use setIntegral_congr_fun.\n  have h_eq_integral : \u2200 t : \u211d, (\u222b x in Set.Icc a t, (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - a)))) = (\u222b x in Set.Icc a t, R a a x) := by\n    intro t\n    apply MeasureTheory.setIntegral_congr_fun\n    \u00b7 exact measurableSet_Icc\n    \u00b7 intro x hx\n      have hx' : x \u2265 a := hx.1\n      calc\n        (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - a)))\n            = C a a * x ^ ((-1/4 : \u211d)) + R a a x := f_decomposition a a x hx' ha ha\n        _ = 0 * x ^ ((-1/4 : \u211d)) + R a a x := by\n          dsimp [C]\n          simp\n        _ = R a a x := by ring\n  have h_eq_fun : (fun (t : \u211d) => \u222b x in Set.Icc a t, (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - a)))) = \n                (fun (t : \u211d) => \u222b x in Set.Icc a t, R a a x) := by\n    ext t; exact h_eq_integral t\n  rw [h_eq_fun]\n  exact hL\n\n-- Case a \u2260 b"
+    },
+    {
+      "id": "lemma_case_a_ne_b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If a,b>0 and a\u2260 b, then texttt{habconv}(a,b) does **not** hold.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $a,b>0$ and $a\\neq b$, then $\\texttt{habconv}(a,b)$ does **not** hold. -/)\n  (proof := /-- Assume $\\texttt{habconv}(a,b)$. Then the integral of $f$ converges. Decompose $f = C x^{-1/4} + R$. The integral of $R$ converges, while the integral of $C x^{-1/4}$ diverges (since $C\\neq0$). This yields a contradiction. -/)]\nlemma lemma_case_a_ne_b (habconv : (\u211d \u00d7 \u211d) \u2192 Prop) (habconv_def : habconv = fun \u27e8a,b\u27e9 =>\n    \u2203 limit : \u211d, Tendsto (fun t : \u211d => \u222b x in (Set.Icc b t), (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - b)))) atTop (\ud835\udcdd limit))\n    (a b : \u211d) (ha : a > 0) (hb : b > 0) (hne : a \u2260 b) : \u00ac habconv (a, b) := by\n  intro h\n  rw [habconv_def] at h\n  rcases h with \u27e8L, hL\u27e9\n  have hC_ne_zero : C a b \u2260 0 := by\n    intro hCzero\n    exact hne ((C_eq_zero_iff a b ha hb).mp hCzero)\n  have hR_ex : \u2203 L_R : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, R a b x) atTop (\ud835\udcdd L_R) :=\n    lemma_integral_R_converges a b ha hb\n  rcases hR_ex with \u27e8L_R, hR\u27e9\n  have h_int_eq : \u2200 t : \u211d, (\u222b x in Set.Icc b t, (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - b)))) =\n      (\u222b x in Set.Icc b t, (C a b * x ^ ((-1/4 : \u211d)))) + (\u222b x in Set.Icc b t, R a b x) := by\n    intro t\n    calc\n      (\u222b x in Set.Icc b t, (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - b)))) =\n          (\u222b x in Set.Icc b t, (C a b * x ^ ((-1/4 : \u211d)) + R a b x)) := by\n        refine MeasureTheory.setIntegral_congr_fun measurableSet_Icc ?_\n        intro x hx\n        rcases hx with \u27e8hx1, hx2\u27e9\n        exact f_decomposition a b x hx1 hb ha\n      _ = (\u222b x in Set.Icc b t, (C a b * x ^ ((-1/4 : \u211d)))) + (\u222b x in Set.Icc b t, R a b x) := by\n        have h_int_Cx : MeasureTheory.IntegrableOn (fun x : \u211d => C a b * x ^ ((-1/4 : \u211d))) (Icc b t) := by\n          have h_cont_pow : ContinuousOn (fun x : \u211d => x ^ ((-1/4 : \u211d))) (Ici b) := by\n            apply (continuous_id.continuousOn).rpow_const\n            intro x hx\n            have hxpos : x > 0 := by\n              have : x \u2265 b := hx\n              linarith\n            exact Or.inl (ne_of_gt hxpos)\n          have h_cont : ContinuousOn (fun x : \u211d => C a b * x ^ ((-1/4 : \u211d))) (Ici b) :=\n            h_cont_pow.const_smul (C a b)\n          have h_cont_sub : ContinuousOn (fun x : \u211d => C a b * x ^ ((-1/4 : \u211d))) (Icc b t) :=\n            h_cont.mono (Set.Icc_subset_Ici_self (a := b) (b := t))\n          exact h_cont_sub.integrableOn_Icc\n        have h_int_R : MeasureTheory.IntegrableOn (R a b) (Icc b t) := by\n          have hcont := continuousOn_R a b ha hb\n          have hcont_sub : ContinuousOn (R a b) (Icc b t) :=\n            hcont.mono (Set.Icc_subset_Ici_self (a := b) (b := t))\n          exact hcont_sub.integrableOn_Icc\n        have h := MeasureTheory.integral_add (\u03bc := MeasureTheory.volume.restrict (Icc b t)) (hf := h_int_Cx) (hg := h_int_R)\n        simpa using h\n  have hG_ex : \u2203 L_G : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, (C a b * x ^ ((-1/4 : \u211d)))) atTop (\ud835\udcdd L_G) := by\n    use L - L_R\n    have h_sub : Tendsto (fun t : \u211d => (\u222b x in Set.Icc b t, (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - b)))) -\n      (\u222b x in Set.Icc b t, R a b x)) atTop (\ud835\udcdd (L - L_R)) :=\n      Filter.Tendsto.sub hL hR\n    have h_eq : \u2200 t : \u211d, (\u222b x in Set.Icc b t, (Real.sqrt (Real.sqrt (x + a) - Real.sqrt x) - Real.sqrt (Real.sqrt x - Real.sqrt (x - b)))) -\n      (\u222b x in Set.Icc b t, R a b x) = (\u222b x in Set.Icc b t, (C a b * x ^ ((-1/4 : \u211d)))) := by\n      intro t\n      rw [h_int_eq t]\n      ring\n    simpa [h_eq] using h_sub\n  have hdiv := lemma_diverges_C_x_pow_neg_one_fourth (C a b) hC_ne_zero b hb\n  exact hdiv hG_ex\n\n-- Main theorem"
+    },
+    {
+      "id": "lemma_diverges_C_x_pow_neg_one_fourth",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If c\u22600, the improper integral int_b^\u221e c x^{-1/4} dx diverges (does not converge to a finite real number).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If $c\\neq0$, the improper integral $\\int_b^\\infty c\\,x^{-1/4}\\,dx$ diverges (does not converge to a finite real number). -/)\n  (proof := /-- The antiderivative is $(4c/3)(t^{3/4} - b^{3/4})$, which tends to $\\pm\\infty$ as $t\\to\\infty$ because $t^{3/4}\\to\\infty$. -/)]\nlemma lemma_diverges_C_x_pow_neg_one_fourth (c : \u211d) (hc : c \u2260 0) (b : \u211d) (hb : b > 0) :\n    \u00ac \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d))) atTop (\ud835\udcdd L) := by\n    rcases lt_or_gt_of_ne hc with (hc_neg | hc_pos)\n    \u00b7 -- case c < 0\n      intro h\n      rcases h with \u27e8L, hL\u27e9\n      have h_rpow : Tendsto (fun t : \u211d => t ^ ((3/4 : \u211d))) atTop atTop := by\n        apply tendsto_rpow_atTop\n        norm_num\n      have h_const : Tendsto (fun _ : \u211d => -b ^ ((3/4 : \u211d))) atTop (\ud835\udcdd (-b ^ ((3/4 : \u211d)))) := tendsto_const_nhds\n      have h_diff : Tendsto (fun t : \u211d => t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d))) atTop atTop := by\n        have h_add := h_const.add_atTop h_rpow\n        simpa [sub_eq_add_neg, add_comm] using h_add\n      have hc_prod_neg : c * (4/3 : \u211d) < 0 := mul_neg_of_neg_of_pos hc_neg (by norm_num : (0:\u211d) < (4/3 : \u211d))\n      have hlim : Tendsto (fun t : \u211d => c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d)))) ) atTop atBot := by\n        have h := Filter.Tendsto.const_mul_atTop_of_neg hc_prod_neg h_diff\n        simpa [mul_assoc] using h\n      have h_eq_eventually : \u2200\u1da0 (t : \u211d) in atTop, \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d)) = c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d)))) := by\n        filter_upwards [eventually_ge_atTop b] with t ht\n        calc\n          \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d)) = c * \u222b x in Set.Icc b t, x ^ ((-1/4 : \u211d)) := by\n            exact integral_const_mul_set (Set.Icc b t) c (fun x => x ^ ((-1/4 : \u211d)))\n          _ = c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d)))) := by\n            rw [lemma_integral_x_pow_neg_one_fourth_eq b t hb ht]\n      have h_event : (fun t : \u211d => \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d))) =\u1da0[atTop]\n        (fun t : \u211d => c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d))))) := h_eq_eventually\n      have hlim' : Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d))) atTop atBot :=\n        hlim.congr' h_event.symm\n      exact not_tendsto_nhds_of_tendsto_atBot hlim' L hL\n    \u00b7 -- case c > 0\n      intro h\n      rcases h with \u27e8L, hL\u27e9\n      have h_rpow : Tendsto (fun t : \u211d => t ^ ((3/4 : \u211d))) atTop atTop := by\n        apply tendsto_rpow_atTop\n        norm_num\n      have h_const : Tendsto (fun _ : \u211d => -b ^ ((3/4 : \u211d))) atTop (\ud835\udcdd (-b ^ ((3/4 : \u211d)))) := tendsto_const_nhds\n      have h_diff : Tendsto (fun t : \u211d => t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d))) atTop atTop := by\n        have h_add := h_const.add_atTop h_rpow\n        simpa [sub_eq_add_neg, add_comm] using h_add\n      have hprod_pos : 0 < c * (4/3 : \u211d) := mul_pos hc_pos (by norm_num : (0:\u211d) < (4/3 : \u211d))\n      have hlim : Tendsto (fun t : \u211d => c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d)))) ) atTop atTop := by\n        simpa [mul_assoc] using Filter.Tendsto.const_mul_atTop hprod_pos h_diff\n      have h_eq_eventually : \u2200\u1da0 (t : \u211d) in atTop, \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d)) = c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d)))) := by\n        filter_upwards [eventually_ge_atTop b] with t ht\n        calc\n          \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d)) = c * \u222b x in Set.Icc b t, x ^ ((-1/4 : \u211d)) := by\n            exact integral_const_mul_set (Set.Icc b t) c (fun x => x ^ ((-1/4 : \u211d)))\n          _ = c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d)))) := by\n            rw [lemma_integral_x_pow_neg_one_fourth_eq b t hb ht]\n      have h_event : (fun t : \u211d => \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d))) =\u1da0[atTop]\n        (fun t : \u211d => c * ((4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d))))) := h_eq_eventually\n      have hlim' : Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, c * x ^ ((-1/4 : \u211d))) atTop atTop :=\n        hlim.congr' h_event.symm\n      exact not_tendsto_nhds_of_tendsto_atTop hlim' L hL\n  where\n    integral_const_mul_set (s : Set \u211d) (c : \u211d) (f : \u211d \u2192 \u211d) : \u222b x in s, c * f x = c * \u222b x in s, f x := by\n      calc\n        \u222b x in s, c * f x = \u222b x, (c * f x) \u2202(MeasureTheory.Measure.restrict MeasureTheory.volume s) := rfl\n        _ = c * \u222b x, f x \u2202(MeasureTheory.Measure.restrict MeasureTheory.volume s) := by rw [MeasureTheory.integral_const_mul c f]\n        _ = c * \u222b x in s, f x := rfl\n\n-- Decomposition f = C*x^{-1/4} + R"
+    },
+    {
+      "id": "lemma_integrable_K_times_pow_on_Icc",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a,b>0, K(a,b) x^{-5/4} is integrable on [b,t] for any t.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b>0$, $K(a,b)\\,x^{-5/4}$ is integrable on $[b,t]$ for any $t$. -/)\n  (proof := /-- The function is continuous on $[b,t]$, hence integrable. -/)]\nlemma lemma_integrable_K_times_pow_on_Icc (a b : \u211d) (ha : a > 0) (hb : b > 0) (t : \u211d) :\n    MeasureTheory.IntegrableOn (fun x : \u211d => K a b * x ^ ((-5/4 : \u211d))) (Set.Icc b t) MeasureTheory.volume := by\n  have h_cont : ContinuousOn (fun (x : \u211d) => x ^ ((-5/4 : \u211d))) (Set.Icc b t) := by\n    refine (continuousOn_id.rpow_const ?_)\n    intro x hx\n    left\n    have hxpos : x > 0 := by\n      have hxlb : b \u2264 x := hx.1\n      linarith\n    exact ne_of_gt hxpos\n  have h_int : MeasureTheory.IntegrableOn (fun (x : \u211d) => x ^ ((-5/4 : \u211d))) (Set.Icc b t) MeasureTheory.volume :=\n    h_cont.integrableOn_Icc\n  exact h_int.const_mul (K a b)\n\n-- Convergence of \u222b K * x^{-5/4}"
+    },
+    {
+      "id": "lemma_integral_K_times_pow",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a,b>0, int_b^\u221e K(a,b) x^{-5/4} dx converges.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b>0$, $\\int_b^\\infty K(a,b)\\,x^{-5/4}\\,dx$ converges. -/)\n  (proof := /-- Since $\\int_b^\\infty x^{-5/4}\\,dx$ converges, multiplying by the constant $K(a,b)$ preserves convergence. -/)]\nlemma lemma_integral_K_times_pow (a b : \u211d) (ha : a > 0) (hb : b > 0) :\n    \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, K a b * x ^ ((-5/4 : \u211d))) atTop (\ud835\udcdd L) := by\n  exact lemma_integral_const_mul (K a b) (fun x : \u211d => x ^ ((-5/4 : \u211d))) b hb (lemma_integral_x_pow_neg_five_fourths b hb)\n\n-- Comparison test for improper integrals (revised with integrability hypothesis)"
+    },
+    {
+      "id": "lemma_integral_R_converges",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For a,b>0, the improper integral int_b^\u221e R_{a,b}(x) dx converges.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $a,b>0$, the improper integral $\\int_b^\\infty R_{a,b}(x)\\,dx$ converges. -/)\n  (proof := /-- By the bound $|R_{a,b}(x)|\\le K(a,b)x^{-5/4}$ and the convergence of $\\int_b^\\infty x^{-5/4}\\,dx$, the comparison test applies. -/)]\nlemma lemma_integral_R_converges (a b : \u211d) (ha : a > 0) (hb : b > 0) :\n    \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, R a b x) atTop (\ud835\udcdd L) := by\n  refine comparison_test (R a b) (fun x => K a b * x ^ ((-5/4 : \u211d))) b hb ?_ ?_ ?_\n  \u00b7 intro x hx\n    exact lemma_bound_R a b ha hb x hx\n  \u00b7 exact fun t => lemma_integrable_K_times_pow_on_Icc a b ha hb t\n  \u00b7 exact lemma_integral_K_times_pow a b ha hb\n\n-- C = 0 iff a = b"
+    },
+    {
+      "id": "lemma_integral_const_mul",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If int_b^\u221e g(x) dx converges, then int_b^\u221e c g(x) dx converges for any constant c.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If $\\int_b^\\infty g(x)\\,dx$ converges, then $\\int_b^\\infty c\\,g(x)\\,dx$ converges for any constant $c$. -/)\n  (proof := /-- By linearity of the integral and the limit. -/)]\nlemma lemma_integral_const_mul (c : \u211d) (g : \u211d \u2192 \u211d) (b : \u211d) (hb : b > 0)\n    (hconv_g : \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, g x) atTop (\ud835\udcdd L)) :\n    \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, c * g x) atTop (\ud835\udcdd L) := by\n  rcases hconv_g with \u27e8L, hconv\u27e9\n  refine \u27e8c * L, ?_\u27e9\n  have h_eq : (fun t : \u211d => \u222b x in Set.Icc b t, c * g x) = (fun t : \u211d => c * (\u222b x in Set.Icc b t, g x)) := by\n    ext t\n    calc\n      (\u222b x in Set.Icc b t, c * g x) = (\u222b x, c * g x \u2202(MeasureTheory.volume.restrict (Set.Icc b t))) := rfl\n      _ = c * (\u222b x, g x \u2202(MeasureTheory.volume.restrict (Set.Icc b t))) := by rw [MeasureTheory.integral_const_mul c g]\n      _ = c * (\u222b x in Set.Icc b t, g x) := rfl\n  rw [h_eq]\n  exact (Tendsto.const_mul c hconv)\n\n-- Integrability of K(a,b)*x^{-5/4} on Icc b t"
+    },
+    {
+      "id": "lemma_integral_x_pow_neg_five_fourths",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For b>0, the improper integral int_b^\u221e x^{-5/4} dx converges (to a finite real number).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For $b>0$, the improper integral $\\int_b^\\infty x^{-5/4}\\,dx$ converges (to a finite real number). -/)\n  (proof := /-- Use the antiderivative formula: the limit as $t\\to\\infty$ is $4b^{-1/4}$. -/)]\nlemma lemma_integral_x_pow_neg_five_fourths (b : \u211d) (hb : b > 0) :\n    \u2203 L : \u211d, Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, x ^ ((-5/4 : \u211d))) atTop (\ud835\udcdd L) := by\n  set L := 4 * b ^ ((-1/4 : \u211d)) with hL\n  refine \u27e8L, ?_\u27e9\n  have h_eventually : \u2200\u1da0 t in atTop, (\u222b x in Set.Icc b t, x ^ ((-5/4 : \u211d))) = 4 * (b ^ ((-1/4 : \u211d)) - t ^ ((-1/4 : \u211d))) := by\n    filter_upwards [eventually_ge_atTop b] with t ht\n    exact lemma_integral_x_pow_neg_five_fourths_eq b t hb ht\n  have h_tendsto_t_pow : Tendsto (fun t : \u211d => t ^ ((-1/4 : \u211d))) atTop (\ud835\udcdd 0) := by\n    have hpos : (0 : \u211d) < 1/4 := by norm_num\n    have := tendsto_rpow_neg_atTop hpos\n    have h_eq : (fun t : \u211d => t ^ ((-1/4 : \u211d))) = (fun t : \u211d => t ^ (-(1/4 : \u211d))) := by\n      ext t; ring\n    rw [h_eq]\n    exact this\n  have h_tendsto_RHS' : Tendsto (fun t : \u211d => 4 * (b ^ ((-1/4 : \u211d)) - t ^ ((-1/4 : \u211d)))) atTop (\ud835\udcdd (4 * (b ^ ((-1/4 : \u211d)) - 0))) := by\n    apply Tendsto.const_mul (4) ?_\n    apply Tendsto.sub (tendsto_const_nhds) h_tendsto_t_pow\n  have h_tendsto_RHS'' : Tendsto (fun t : \u211d => 4 * (b ^ ((-1/4 : \u211d)) - t ^ ((-1/4 : \u211d)))) atTop (\ud835\udcdd (4 * b ^ ((-1/4 : \u211d)))) := by\n    simpa [sub_zero] using h_tendsto_RHS'\n  have h_tendsto_int : Tendsto (fun t : \u211d => \u222b x in Set.Icc b t, x ^ ((-5/4 : \u211d))) atTop (\ud835\udcdd L) :=\n    (Filter.Tendsto.congr' (EventuallyEq.symm h_eventually) h_tendsto_RHS'')\n  exact h_tendsto_int\n\n-- Constant multiplication of converging integral"
+    },
+    {
+      "id": "lemma_integral_x_pow_neg_five_fourths_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For b>0 and t\u2265 b, int_b^t x^{-5/4} dx = 4 (b^{-1/4} - t^{-1/4}).",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- For $b>0$ and $t\\ge b$, $\\int_b^t x^{-5/4}\\,dx = 4\\,(b^{-1/4} - t^{-1/4})$. -/)\n  (proof := /-- Use the antiderivative $-4x^{-1/4}$. -/)]\nlemma lemma_integral_x_pow_neg_five_fourths_eq (b t : \u211d) (hb : b > 0) (ht : t \u2265 b) :\n    \u222b x in Set.Icc b t, x ^ ((-5/4 : \u211d)) = 4 * (b ^ ((-1/4 : \u211d)) - t ^ ((-1/4 : \u211d))) := by\n  have hle : b \u2264 t := ht\n  have hpos : \u2200 x \u2208 Set.Icc b t, x \u2260 0 := by\n    intro x hx\n    have hx' : b \u2264 x := hx.1\n    linarith\n  -- convert Icc integral to interval integral\n  have hIcc_eq : \u222b x in Set.Icc b t, x ^ ((-5/4 : \u211d)) = \u222b x in b..t, x ^ ((-5/4 : \u211d)) := by\n    calc\n      \u222b x in Set.Icc b t, x ^ ((-5/4 : \u211d)) = \u222b x in Set.Ioc b t, x ^ ((-5/4 : \u211d)) := by\n        rw [MeasureTheory.integral_Icc_eq_integral_Ioc]\n      _ = \u222b x in b..t, x ^ ((-5/4 : \u211d)) := by\n        rw [intervalIntegral.integral_of_le hle]\n  -- define antiderivative F\n  set F := fun (x : \u211d) => -4 * x ^ ((-1/4 : \u211d)) with hFdef\n  have hderiv : \u2200 x \u2208 uIcc b t, HasDerivAt F (x ^ ((-5/4 : \u211d))) x := by\n    intro x hx\n    have hxpos : x > 0 := by\n      rcases mem_uIcc.1 hx with (\u27e8hx1, hx2\u27e9 | \u27e8hx1', hx2'\u27e9)\n      \u00b7 linarith\n      \u00b7 have : b \u2264 x := le_trans hle hx1'\n        linarith\n    have hx_ne_zero : x \u2260 0 := by linarith\n    have h_deriv_rpow : HasDerivAt (fun (y : \u211d) => y ^ ((-1/4 : \u211d))) (((-1/4 : \u211d)) * x ^ ((-5/4 : \u211d))) x := by\n      have := Real.hasDerivAt_rpow_const (Or.inl hx_ne_zero) (p := (-1/4 : \u211d))\n      have h_sub : ((-1/4 : \u211d) - 1 : \u211d) = (-5/4 : \u211d) := by ring\n      simpa [h_sub] using this\n    have htemp := h_deriv_rpow.const_mul (-4)\n    -- htemp : HasDerivAt (fun y => -4 * y ^ (-1/4 : \u211d)) ((-4) * ((-1/4 : \u211d) * x ^ (-5/4 : \u211d))) x\n    have htemp' : ((-4 : \u211d) * ((-1/4 : \u211d) * x ^ ((-5/4 : \u211d)))) = x ^ ((-5/4 : \u211d)) := by ring\n    simpa [F, htemp'] using htemp\n  have hint : IntervalIntegrable (fun (x : \u211d) => x ^ ((-5/4 : \u211d))) MeasureTheory.volume b t := by\n    have hcont : ContinuousOn (fun (x : \u211d) => x) (Set.Icc b t) := continuous_id.continuousOn\n    have hcont_rpow : ContinuousOn (fun (x : \u211d) => x ^ ((-5/4 : \u211d))) (Set.Icc b t) :=\n      hcont.rpow_const (fun x hx => Or.inl (hpos x hx))\n    exact ContinuousOn.intervalIntegrable_of_Icc hle hcont_rpow\n  have hFTC : \u222b x in b..t, x ^ ((-5/4 : \u211d)) = F t - F b :=\n    intervalIntegral.integral_eq_sub_of_hasDerivAt hderiv hint\n  calc\n    \u222b x in Set.Icc b t, x ^ ((-5/4 : \u211d)) = \u222b x in b..t, x ^ ((-5/4 : \u211d)) := hIcc_eq\n    _ = F t - F b := hFTC\n    _ = 4 * (b ^ ((-1/4 : \u211d)) - t ^ ((-1/4 : \u211d))) := by\n      dsimp [F]\n      ring\n\n-- Antiderivative of x^{-1/4}"
+    },
+    {
+      "id": "lemma_integral_x_pow_neg_one_fourth_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For b>0 and t\u2265 b, int_b^t x^{-1/4} dx = frac{4}{3} (t^{3/4} - b^{3/4}).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $b>0$ and $t\\ge b$, $\\int_b^t x^{-1/4}\\,dx = \\frac{4}{3}\\,(t^{3/4} - b^{3/4})$. -/)\n  (proof := /-- Use the antiderivative $\\frac{4}{3}x^{3/4}$. -/)]\nlemma lemma_integral_x_pow_neg_one_fourth_eq (b t : \u211d) (hb : b > 0) (ht : t \u2265 b) :\n    \u222b x in Set.Icc b t, x ^ ((-1/4 : \u211d)) = (4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d))) := by\n  have hle : b \u2264 t := ht\n  have hpos : -1 < (-1/4 : \u211d) := by linarith\n  calc\n    \u222b x in Set.Icc b t, x ^ ((-1/4 : \u211d)) = \u222b x in Ioc b t, x ^ ((-1/4 : \u211d)) := by\n      rw [MeasureTheory.integral_Icc_eq_integral_Ioc]\n    _ = \u222b x in b..t, x ^ ((-1/4 : \u211d)) := by\n      rw [intervalIntegral.integral_of_le hle]\n    _ = (t ^ (((-1/4 : \u211d) + 1)) - b ^ (((-1/4 : \u211d) + 1))) / (((-1/4 : \u211d) + 1)) := by\n      rw [integral_rpow (Or.inl hpos)]\n    _ = (4/3 : \u211d) * (t ^ ((3/4 : \u211d)) - b ^ ((3/4 : \u211d))) := by\n      have h : ((-1/4 : \u211d) + 1) = (3/4 : \u211d) := by ring\n      simp [h]\n      field_simp\n\n-- Convergence of \u222b x^{-5/4} on [b,\u221e)"
+    },
+    {
+      "id": "main_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For t>0, \u221a{t/2} - \u221a{\u221a{1+t}-1} \u2264 t^{3/2}\u221a{2}/8.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For $t>0$, $\\sqrt{t/2} - \\sqrt{\\sqrt{1+t}-1} \\le t^{3/2}\\sqrt{2}/8$. -/)\n  (proof := /-- Use the algebraic chain $a-b = (a^2-b^2)/(a+b)$, rewrite using `diff_sq_eq` and `key_identity`, then bound denominator. -/)]\nlemma main_bound (t : \u211d) (ht : t > 0) : Real.sqrt (t/2) - Real.sqrt (Real.sqrt (1+t)-1) \u2264 t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8 := by\n  have prod_eq (t : \u211d) (ht : t > 0) : (t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * Real.sqrt (t/2) = t^2 / 8 := by\n    have hpos : Real.sqrt 2 \u2260 0 := by positivity\n    calc\n      (t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * Real.sqrt (t/2) = (t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * (Real.sqrt t / Real.sqrt 2) := by\n        rw [Real.sqrt_div (by positivity : 0 \u2264 t) 2]\n      _ = (t ^ ((3/2 : \u211d)) * Real.sqrt t) / 8 := by\n        field_simp [hpos]\n      _ = (t ^ ((3/2 : \u211d)) * t ^ ((1/2 : \u211d))) / 8 := by rw [Real.sqrt_eq_rpow t]\n      _ = t ^ (((3/2 : \u211d) + (1/2 : \u211d))) / 8 := by rw [Real.rpow_add ht (3/2 : \u211d) (1/2 : \u211d)]\n      _ = t ^ (2 : \u211d) / 8 := by norm_num\n      _ = t^2 / 8 := by norm_num\n  have prod_eq2 (t : \u211d) (ht : t > 0) : (t ^ ((3/2 : \u211d)) * Real.sqrt 2) * Real.sqrt (t/2) = t^2 := by\n    calc\n      (t ^ ((3/2 : \u211d)) * Real.sqrt 2) * Real.sqrt (t/2) = 8 * ((t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8) * Real.sqrt (t/2)) := by ring\n      _ = 8 * (t^2 / 8) := by rw [prod_eq t ht]\n      _ = t^2 := by ring\n  set A := Real.sqrt (t/2) with hA\n  set B := Real.sqrt (Real.sqrt (1+t)-1) with hB\n  have hApos : 0 < A := A_pos t ht\n  have hA_nonneg : 0 \u2264 A := le_of_lt hApos\n  have hB_nonneg : 0 \u2264 B := Real.sqrt_nonneg _\n  have hAB_sum_pos : 0 < A + B := by\n    positivity\n  have hdiff_sq_eq : A^2 - B^2 = 1 + t/2 - Real.sqrt (1+t) := by\n    calc\n      A^2 - B^2 = (Real.sqrt (t/2))^2 - (Real.sqrt (Real.sqrt (1+t)-1))^2 := by rfl\n      _ = 1 + t/2 - Real.sqrt (1+t) := diff_sq_eq t ht\n  have hAB_diff_eq : A - B = (A^2 - B^2)/(A + B) := by\n    field_simp [hAB_sum_pos.ne']\n    ring\n  have hnum_nonneg : 0 \u2264 A^2 - B^2 := by\n    rw [hdiff_sq_eq]\n    rw [key_identity t ht]\n    positivity\n  have hAB_ge_A : A \u2264 A + B := by nlinarith\n  have h_bound1 : (A^2 - B^2)/(A + B) \u2264 (A^2 - B^2)/A := by\n    field_simp [hApos.ne', hAB_sum_pos.ne']\n    nlinarith\n  have h_bound2 : A - B \u2264 (A^2 - B^2)/A := by\n    calc\n      A - B = (A^2 - B^2)/(A + B) := hAB_diff_eq\n      _ \u2264 (A^2 - B^2)/A := h_bound1\n  have hRHS_eq : (A^2 - B^2)/A = (t^2/4) / (Real.sqrt (t/2) * (1 + t/2 + Real.sqrt (1+t))) := by\n    calc\n      (A^2 - B^2)/A = (1 + t/2 - Real.sqrt (1+t))/A := by\n        rw [hdiff_sq_eq]\n      _ = ((t^2/4) / (1 + t/2 + Real.sqrt (1+t))) / A := by rw [key_identity t ht]\n      _ = (t^2/4) / (A * (1 + t/2 + Real.sqrt (1+t))) := by\n        field_simp [hApos.ne', (factor_pos t ht).ne']\n      _ = (t^2/4) / (Real.sqrt (t/2) * (1 + t/2 + Real.sqrt (1+t))) := by simp [hA, mul_comm]\n  have hSpos : 0 < Real.sqrt (t/2) := A_pos t ht\n  have hDpos : 0 < 1 + t/2 + Real.sqrt (1+t) := factor_pos t ht\n  have h_prod_pos : 0 < Real.sqrt (t/2) * (1 + t/2 + Real.sqrt (1+t)) := mul_pos hSpos hDpos\n  have h_sqrt_ge_one : 1 \u2264 Real.sqrt (1+t) := by\n    calc\n      (1 : \u211d) = Real.sqrt ((1 : \u211d)^2) := by norm_num\n      _ \u2264 Real.sqrt (1+t) := Real.sqrt_le_sqrt (by nlinarith)\n  have hD_ge_two : 2 \u2264 1 + t/2 + Real.sqrt (1+t) := by nlinarith\n  have h_goal : (t^2/4) / (Real.sqrt (t/2) * (1 + t/2 + Real.sqrt (1+t))) \u2264 t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8 := by\n    have hpos : 0 < Real.sqrt (t/2) * (1 + t/2 + Real.sqrt (1+t)) := h_prod_pos\n    have htarget_nonneg : 0 \u2264 t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8 := by positivity\n    field_simp [hSpos.ne', hDpos.ne']\n    nlinarith [prod_eq2 t ht, hD_ge_two]\n  calc\n    Real.sqrt (t/2) - Real.sqrt (Real.sqrt (1+t)-1) = A - B := by simp [hA, hB]\n    _ \u2264 (A^2 - B^2)/A := h_bound2\n    _ = (t^2/4) / (Real.sqrt (t/2) * (1 + t/2 + Real.sqrt (1+t))) := hRHS_eq\n    _ \u2264 t ^ ((3/2 : \u211d)) * Real.sqrt 2 / 8 := h_goal"
+    },
+    {
+      "id": "one_var_ineq'",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For 0\u2264 u<1, |\u221a{1-u} - \u221a{1/2}\u221a{1-u^2}| \u2264 (\u221a{2}/2)(1-u^2)^{3/2}.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- For $0\\le u<1$, $|\\sqrt{1-u} - \\sqrt{1/2}\\sqrt{1-u^2}| \\le (\\sqrt{2}/2)(1-u^2)^{3/2}$. -/)\n  (proof := /-- Reduce to `aux_ineq` via $v=\\sqrt{1+u}$. -/)]\nlemma one_var_ineq' (u : \u211d) (hu0 : 0 \u2264 u) (hu1 : u < 1) : \n    |Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)| \u2264 (Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d) := by\n  have hpos1 : 0 \u2264 1 - u := by linarith\n  have hpos2 : 0 \u2264 1 - u^2 := by\n    nlinarith\n  have hpos_sum : 0 \u2264 1 + u := by nlinarith\n  have hApos : 0 \u2264 Real.sqrt (1 - u) := Real.sqrt_nonneg _\n  have hApos_pos : 0 < Real.sqrt (1 - u) := Real.sqrt_pos.mpr (by linarith)\n  have hvpos : 0 \u2264 Real.sqrt (1 + u) := Real.sqrt_nonneg _\n  set v := Real.sqrt (1 + u) with hv\n  have hv1 : 1 \u2264 v := by\n    calc\n      (1 : \u211d) = Real.sqrt (1 : \u211d) := by norm_num\n      _ \u2264 Real.sqrt (1 + u) := Real.sqrt_le_sqrt (by nlinarith)\n      _ = v := rfl\n  have hv2 : v < Real.sqrt 2 := by\n    refine Real.sqrt_lt_sqrt (by nlinarith) ?_\n    nlinarith\n  have h_aux : Real.sqrt 2 - v \u2264 v^3*(2 - v^2) := aux_ineq v hv1 hv2\n  have h_sqrt2_mul_sqrt_half : Real.sqrt 2 * Real.sqrt (1/2 : \u211d) = 1 := by\n    calc\n      Real.sqrt 2 * Real.sqrt (1/2 : \u211d) = Real.sqrt (2 * (1/2 : \u211d)) := by rw [Real.sqrt_mul (by norm_num : 0 \u2264 (2 : \u211d))]\n      _ = Real.sqrt 1 := by ring\n      _ = 1 := Real.sqrt_one\n  have hA_sq : (Real.sqrt (1 - u)) ^ 2 = 1 - u := Real.sq_sqrt hpos1\n  have hv_sq : v ^ 2 = 1 + u := Real.sq_sqrt hpos_sum\n  have hA2_eq : (Real.sqrt (1 - u)) ^ 2 = 2 - v ^ 2 := by\n    calc\n      (Real.sqrt (1 - u)) ^ 2 = 1 - u := hA_sq\n      _ = 2 - (1 + u) := by ring\n      _ = 2 - v ^ 2 := by rw [hv_sq]\n  have h_sqrt_prod : Real.sqrt (1 - u^2) = Real.sqrt (1 - u) * v := by\n    calc\n      Real.sqrt (1 - u^2) = Real.sqrt ((1 - u)*(1 + u)) := by ring\n      _ = Real.sqrt (1 - u) * Real.sqrt (1 + u) := Real.sqrt_mul hpos1 (1 + u)\n      _ = Real.sqrt (1 - u) * v := rfl\n  have hLHS : Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) = Real.sqrt (1 - u) * (1 - Real.sqrt (1/2 : \u211d) * v) := by\n    calc\n      Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) = Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * (Real.sqrt (1 - u) * v) := by rw [h_sqrt_prod]\n      _ = Real.sqrt (1 - u) * (1 - Real.sqrt (1/2 : \u211d) * v) := by ring\n  have hRHS' : (Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d) = (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u^2)) ^ 3) := by\n    calc\n      (Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d) = (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u^2)) ^ 3) := by\n        congr 1\n        calc\n          (1 - u^2)^(3/2 : \u211d) = ((1 - u^2)^(1/2 : \u211d)) ^ (3 : \u211d) := by\n            calc\n              (1 - u^2)^(3/2 : \u211d) = (1 - u^2)^((1/2 : \u211d) * (3 : \u211d)) := by ring\n              _ = ((1 - u^2)^(1/2 : \u211d)) ^ (3 : \u211d) := by rw [Real.rpow_mul hpos2 (1/2) (3 : \u211d)]\n          _ = (Real.sqrt (1 - u^2)) ^ (3 : \u211d) := by simp [Real.sqrt_eq_rpow]\n          _ = (Real.sqrt (1 - u^2)) ^ 3 := by norm_num\n      _ = (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u^2)) ^ 3) := rfl\n  have hRHS'' : (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u^2)) ^ 3) = (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u)) ^ 3 * v ^ 3) := by\n    rw [h_sqrt_prod, mul_pow]\n  have h_pos_sqrt2 : 0 < Real.sqrt 2 := Real.sqrt_pos.mpr (by norm_num : (0 : \u211d) < 2)\n  have h_mul_sqrt2 : Real.sqrt 2 * (1 - Real.sqrt (1/2 : \u211d) * v) = Real.sqrt 2 - v := by\n    calc\n      Real.sqrt 2 * (1 - Real.sqrt (1/2 : \u211d) * v) = Real.sqrt 2 - Real.sqrt 2 * Real.sqrt (1/2 : \u211d) * v := by ring\n      _ = Real.sqrt 2 - (Real.sqrt 2 * Real.sqrt (1/2 : \u211d)) * v := by ring\n      _ = Real.sqrt 2 - (1 : \u211d) * v := by rw [h_sqrt2_mul_sqrt_half]\n      _ = Real.sqrt 2 - v := by ring\n  have h_mul_RHS : Real.sqrt 2 * ((Real.sqrt 2 / 2) * (2 - v ^ 2) * v ^ 3) = (2 - v ^ 2) * v ^ 3 := by\n    calc\n      Real.sqrt 2 * ((Real.sqrt 2 / 2) * (2 - v ^ 2) * v ^ 3) = (Real.sqrt 2 * (Real.sqrt 2 / 2)) * (2 - v ^ 2) * v ^ 3 := by ring\n      _ = ((Real.sqrt 2 * Real.sqrt 2) / 2) * (2 - v ^ 2) * v ^ 3 := by ring\n      _ = (2 / 2) * (2 - v ^ 2) * v ^ 3 := by simp [Real.mul_self_sqrt (show 0 \u2264 (2 : \u211d) from by norm_num)]\n      _ = 1 * (2 - v ^ 2) * v ^ 3 := by norm_num\n      _ = (2 - v ^ 2) * v ^ 3 := by ring\n  have h_aux' : Real.sqrt 2 - v \u2264 (2 - v ^ 2) * v ^ 3 := by\n    simpa [mul_comm] using h_aux\n  have h_ineq_after_mul : Real.sqrt 2 * (1 - Real.sqrt (1/2 : \u211d) * v) \u2264 Real.sqrt 2 * ((Real.sqrt 2 / 2) * (2 - v ^ 2) * v ^ 3) := by\n    calc\n      Real.sqrt 2 * (1 - Real.sqrt (1/2 : \u211d) * v) = Real.sqrt 2 - v := h_mul_sqrt2\n      _ \u2264 (2 - v ^ 2) * v ^ 3 := h_aux'\n      _ = Real.sqrt 2 * ((Real.sqrt 2 / 2) * (2 - v ^ 2) * v ^ 3) := by symm; exact h_mul_RHS\n  have h_ineq : 1 - Real.sqrt (1/2 : \u211d) * v \u2264 (Real.sqrt 2 / 2) * (2 - v ^ 2) * v ^ 3 :=\n    le_of_mul_le_mul_left h_ineq_after_mul h_pos_sqrt2\n  have h_sq_A : (Real.sqrt (1 - u)) ^ 2 = 2 - v ^ 2 := hA2_eq\n  have h_ineq2 : 1 - Real.sqrt (1/2 : \u211d) * v \u2264 (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u)) ^ 2) * v ^ 3 := by\n    rw [h_sq_A]\n    exact h_ineq\n  have h_main_ineq : Real.sqrt (1 - u) * (1 - Real.sqrt (1/2 : \u211d) * v) \u2264 (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u)) ^ 3 * v ^ 3) := by\n    calc\n      Real.sqrt (1 - u) * (1 - Real.sqrt (1/2 : \u211d) * v) \u2264 Real.sqrt (1 - u) * ((Real.sqrt 2 / 2) * ((Real.sqrt (1 - u)) ^ 2) * v ^ 3) := by\n        apply mul_le_mul_of_nonneg_left h_ineq2 (by positivity)\n      _ = (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u)) * ((Real.sqrt (1 - u)) ^ 2) * v ^ 3) := by ring\n      _ = (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u)) ^ 3 * v ^ 3) := by ring\n  -- Now we need to show the nonnegativity of the expression to drop absolute value\n  have h_nonneg : 0 \u2264 Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) := by\n    have hApos' : 0 \u2264 Real.sqrt (1 - u) := Real.sqrt_nonneg _\n    have hBpos' : 0 \u2264 Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) := mul_nonneg (Real.sqrt_nonneg _) (Real.sqrt_nonneg _)\n    have h_sq_ineq : (Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2))^2 \u2264 (Real.sqrt (1 - u))^2 := by\n      calc\n        (Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2))^2 = ((Real.sqrt (1/2 : \u211d))^2) * ((Real.sqrt (1 - u^2))^2) := by ring\n        _ = ((1/2 : \u211d)) * (1 - u^2) := by simp [Real.sq_sqrt (show 0 \u2264 (1/2 : \u211d) from by norm_num), Real.sq_sqrt hpos2]\n        _ \u2264 1 - u := by\n          nlinarith\n        _ = (Real.sqrt (1 - u))^2 := by symm; exact Real.sq_sqrt hpos1\n    have h_ineq_sq : Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) \u2264 Real.sqrt (1 - u) :=\n      (sq_le_sq\u2080 hBpos' hApos').mp h_sq_ineq\n    exact sub_nonneg.mpr h_ineq_sq\n  calc\n    |Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2)| = Real.sqrt (1 - u) - Real.sqrt (1/2 : \u211d) * Real.sqrt (1 - u^2) := by\n      rw [abs_of_nonneg h_nonneg]\n    _ = Real.sqrt (1 - u) * (1 - Real.sqrt (1/2 : \u211d) * v) := hLHS\n    _ \u2264 (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u)) ^ 3 * v ^ 3) := h_main_ineq\n    _ = (Real.sqrt 2 / 2) * ((Real.sqrt (1 - u^2)) ^ 3) := by rw [hRHS'']\n    _ = (Real.sqrt 2 / 2) * (1 - u^2)^(3/2 : \u211d) := by rw [hRHS'.symm]\n\n-- Lemma 2"
+    },
+    {
+      "id": "putnam_1995_a2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all positive real numbers a,b, the improper integral converges iff a=b.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- For all positive real numbers $a,b$, the improper integral converges iff $a=b$. -/)\n  (proof := /-- Combine `lemma_case_a_eq_b` and `lemma_case_a_ne_b`. -/)]\ntheorem putnam_1995_a2\n(habconv : (\u211d \u00d7 \u211d) \u2192 Prop)\n(habconv_def : habconv = fun \u27e8a,b\u27e9 =>\n\u2203 limit : \u211d, Tendsto (fun t : \u211d => \u222b x in (Set.Icc b t), (sqrt (sqrt (x + a) - sqrt x) - sqrt (sqrt x - sqrt (x - b)))) atTop (\ud835\udcdd limit))\n: \u2200 ab : \u211d \u00d7 \u211d, ab.1 > 0 \u2227 ab.2 > 0 \u2192 (habconv ab \u2194 ab \u2208 (({x | let \u27e8a,b\u27e9 := x; a = b}) : Set (\u211d \u00d7 \u211d) )) := by\n  intro ab hpos\n  rcases hpos with \u27e8ha, hb\u27e9\n  rcases ab with \u27e8a, b\u27e9\n  simp [Set.mem_setOf_eq]\n  constructor\n  \u00b7 intro h\n    by_contra hne\n    have : \u00ac habconv (a, b) := lemma_case_a_ne_b habconv habconv_def a b ha hb hne\n    exact this h\n  \u00b7 intro heq\n    subst heq\n    exact lemma_case_a_eq_b habconv habconv_def a ha"
+    },
+    {
+      "id": "sqrt_c_div_two_mul_x_pow_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For c,x>0, \u221a{c/2} x^{-1/4} = x^{1/4}\u221a{(c/x)/2}.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For $c,x>0$, $\\sqrt{c/2}\\,x^{-1/4} = x^{1/4}\\sqrt{(c/x)/2}$. -/)\n  (proof := /-- Write $\\sqrt{c/2} = \\sqrt{x}\\sqrt{(c/x)/2}$ and simplify exponents. -/)]\nlemma sqrt_c_div_two_mul_x_pow_eq (c x : \u211d) (hc : c > 0) (hx : x > 0) (t : \u211d) (ht : t = c/x) :\n    Real.sqrt (c/2) * x ^ ((-1/4 : \u211d)) = x ^ ((1/4 : \u211d)) * Real.sqrt (t/2) := by\n  rw [ht]\n  have hx_nonneg : 0 \u2264 x := le_of_lt hx\n  have hc_nonneg : 0 \u2264 c := le_of_lt hc\n  have hc2_nonneg : 0 \u2264 c/2 := by nlinarith\n  have h_sqrt_div : Real.sqrt ((c/x)/2) = Real.sqrt (c/2) / Real.sqrt x := by\n    calc\n      Real.sqrt ((c/x)/2) = Real.sqrt ((c/2)/x) := by ring\n      _ = Real.sqrt (c/2) / Real.sqrt x := by\n        rw [Real.sqrt_div hc2_nonneg x]\n  have h_exp_eq : x ^ ((1/4 : \u211d)) / Real.sqrt x = x ^ ((-1/4 : \u211d)) := by\n    calc\n      x ^ ((1/4 : \u211d)) / Real.sqrt x = x ^ ((1/4 : \u211d)) / (x ^ ((1/2 : \u211d))) := by\n        rw [Real.sqrt_eq_rpow x]\n      _ = x ^ ((1/4 : \u211d)) * (x ^ ((1/2 : \u211d)))\u207b\u00b9 := by ring\n      _ = x ^ ((1/4 : \u211d)) * x ^ (-(1/2 : \u211d)) := by\n        rw [\u2190 Real.rpow_neg hx_nonneg]\n      _ = x ^ ((1/4 : \u211d) + (-(1/2 : \u211d))) := by\n        rw [\u2190 Real.rpow_add hx ((1/4 : \u211d)) (-(1/2 : \u211d))]\n      _ = x ^ ((-1/4 : \u211d)) := by ring\n  calc\n    Real.sqrt (c/2) * x ^ ((-1/4 : \u211d))\n        = x ^ ((-1/4 : \u211d)) * Real.sqrt (c/2) := mul_comm _ _\n    _ = (x ^ ((1/4 : \u211d)) / Real.sqrt x) * Real.sqrt (c/2) := by rw [h_exp_eq]\n    _ = x ^ ((1/4 : \u211d)) * (Real.sqrt (c/2) / Real.sqrt x) := by ring\n    _ = x ^ ((1/4 : \u211d)) * Real.sqrt ((c/x)/2) := by rw [h_sqrt_div]"
+    },
+    {
+      "id": "sqrt_xc_sub_sqrt_x_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For c,x>0, \u221a{\u221a{x+c}-\u221a{x}} = x^{1/4}\u221a{\u221a{1+c/x}-1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For $c,x>0$, $\\sqrt{\\sqrt{x+c}-\\sqrt{x}} = x^{1/4}\\sqrt{\\sqrt{1+c/x}-1}$. -/)\n  (proof := /-- Factor $\\sqrt{x}$ out of $\\sqrt{x+c}-\\sqrt{x}$ and use $\\sqrt{x}^{1/2}=x^{1/4}$. -/)]\nlemma sqrt_xc_sub_sqrt_x_eq (c x : \u211d) (hc : c > 0) (hx : x > 0) (t : \u211d) (ht : t = c/x) :\n    Real.sqrt (Real.sqrt (x + c) - Real.sqrt x) = x ^ ((1/4 : \u211d)) * Real.sqrt (Real.sqrt (1 + t) - 1) := by\n  have hx_nonneg : x \u2265 0 := by linarith\n  have hx_sqrt_nonneg : Real.sqrt x \u2265 0 := Real.sqrt_nonneg x\n  have htpos : t > 0 := by\n    rw [ht]\n    exact div_pos hc hx\n  have h_sqrt1p_ge_one : Real.sqrt (1 + t) \u2265 1 := by\n    have hpos_one_plus_t : 1 + t \u2265 1 := by linarith\n    calc\n      Real.sqrt (1 + t) \u2265 Real.sqrt 1 := Real.sqrt_le_sqrt hpos_one_plus_t\n      _ = 1 := by norm_num\n  have h_diff_nonneg : Real.sqrt (1 + t) - 1 \u2265 0 := by linarith\n  have hx_plus_c_eq : x + c = x * (1 + t) := by\n    calc\n      x + c = x + x * (c / x) := by field_simp [hx.ne.symm]\n      _ = x * (1 + c / x) := by ring\n      _ = x * (1 + t) := by rw [ht]\n  have h_factor : Real.sqrt (x + c) - Real.sqrt x = Real.sqrt x * (Real.sqrt (1 + t) - 1) := by\n    calc\n      Real.sqrt (x + c) - Real.sqrt x = Real.sqrt (x * (1 + t)) - Real.sqrt x := by\n        rw [hx_plus_c_eq]\n      _ = (Real.sqrt x * Real.sqrt (1 + t)) - Real.sqrt x := by\n        rw [Real.sqrt_mul hx_nonneg]\n      _ = Real.sqrt x * (Real.sqrt (1 + t) - 1) := by ring\n  have h_sqrt_sqrt_x_eq_x_pow_fourth : Real.sqrt (Real.sqrt x) = x ^ ((1/4 : \u211d)) := by\n    calc\n      Real.sqrt (Real.sqrt x) = (Real.sqrt x) ^ ((1/2 : \u211d)) := by rw [Real.sqrt_eq_rpow]\n      _ = (x ^ ((1/2 : \u211d))) ^ ((1/2 : \u211d)) := by rw [Real.sqrt_eq_rpow x]\n      _ = x ^ (((1/2 : \u211d) * (1/2 : \u211d))) := by rw [Real.rpow_mul hx_nonneg (1/2 : \u211d) (1/2 : \u211d)]\n      _ = x ^ ((1/4 : \u211d)) := by ring\n  calc\n    Real.sqrt (Real.sqrt (x + c) - Real.sqrt x) = Real.sqrt (Real.sqrt x * (Real.sqrt (1 + t) - 1)) := by\n      rw [h_factor]\n    _ = Real.sqrt (Real.sqrt x) * Real.sqrt (Real.sqrt (1 + t) - 1) := by\n      rw [Real.sqrt_mul hx_sqrt_nonneg]\n    _ = x ^ ((1/4 : \u211d)) * Real.sqrt (Real.sqrt (1 + t) - 1) := by\n      rw [h_sqrt_sqrt_x_eq_x_pow_fourth]"
+    }
+  ],
+  "edges": [
+    {
+      "source": "C",
+      "target": "C_eq_zero_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "R",
+      "target": "continuousOn_R",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sqrt_xc_sub_sqrt_x_eq",
+      "target": "hLHS_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sqrt_c_div_two_mul_x_pow_eq",
+      "target": "hLHS_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "factor_pos",
+      "target": "key_identity",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "hLHS_eq",
+      "target": "lemma1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "hRHS_eq",
+      "target": "lemma1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma1_core",
+      "target": "lemma1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "aux_nonneg",
+      "target": "lemma1_core",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "main_bound",
+      "target": "lemma1_core",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "one_var_ineq'",
+      "target": "lemma2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N",
+      "target": "lemma2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma1",
+      "target": "lemma_bound_R",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma2",
+      "target": "lemma_bound_R",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "K",
+      "target": "lemma_bound_R",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "M",
+      "target": "lemma_bound_R",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N",
+      "target": "lemma_bound_R",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integral_R_converges",
+      "target": "lemma_case_a_eq_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_decomposition",
+      "target": "lemma_case_a_eq_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "lemma_case_a_eq_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "R",
+      "target": "lemma_case_a_eq_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "K",
+      "target": "lemma_case_a_eq_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "M",
+      "target": "lemma_case_a_eq_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N",
+      "target": "lemma_case_a_eq_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integral_R_converges",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_decomposition",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C_eq_zero_iff",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_diverges_C_x_pow_neg_one_fourth",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "continuousOn_R",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "R",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "K",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "M",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N",
+      "target": "lemma_case_a_ne_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integral_x_pow_neg_one_fourth_eq",
+      "target": "lemma_diverges_C_x_pow_neg_one_fourth",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "K",
+      "target": "lemma_integrable_K_times_pow_on_Icc",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "M",
+      "target": "lemma_integrable_K_times_pow_on_Icc",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N",
+      "target": "lemma_integrable_K_times_pow_on_Icc",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integral_x_pow_neg_five_fourths",
+      "target": "lemma_integral_K_times_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integral_const_mul",
+      "target": "lemma_integral_K_times_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "K",
+      "target": "lemma_integral_K_times_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "M",
+      "target": "lemma_integral_K_times_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N",
+      "target": "lemma_integral_K_times_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_bound_R",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integral_K_times_pow",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "comparison_test",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integrable_K_times_pow_on_Icc",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "R",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "K",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "M",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N",
+      "target": "lemma_integral_R_converges",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_integral_x_pow_neg_five_fourths_eq",
+      "target": "lemma_integral_x_pow_neg_five_fourths",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A_pos",
+      "target": "main_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "factor_pos",
+      "target": "main_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "diff_sq_eq",
+      "target": "main_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "key_identity",
+      "target": "main_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "aux_ineq",
+      "target": "one_var_ineq'",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_case_a_eq_b",
+      "target": "putnam_1995_a2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lemma_case_a_ne_b",
+      "target": "putnam_1995_a2",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

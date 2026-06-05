@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 A1. 375 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item current">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item current">1</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "D",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "D_k = m_k - n_k (as integer).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- $D_k = m_k - n_k$ (as integer). -/)]\ndef D (m n : \u2115 \u2192 \u2115) (k : \u2115) : \u2124 := (m k : \u2124) - (n k : \u2124)"
+    },
+    {
+      "id": "D_recurrence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k, d_k \u00b7 D_{k+1} = 2 \u00b7 D_k in \u2124.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all $k$, $d_k \\cdot D_{k+1} = 2 \\cdot D_k$ in \u2124. -/)\n  (proof := /-- From `reduction_relation` and `reduction_relation_n`, subtract the two equations in \u2124. -/)]\nlemma D_recurrence (m n : \u2115 \u2192 \u2115) (hm : \u2200 k : \u2115, 0 < m k) (hn : \u2200 k : \u2115, 0 < n k) (h_coprime : \u2200 k : \u2115, 0 < k \u2192 Nat.Coprime (m k) (n k)) (h_recurrence : \u2200 k : \u2115, (m (k+1) : \u211a) / (n (k+1) : \u211a) = (2*(m k : \u211a)+1) / (2*(n k : \u211a)+1)) (k : \u2115) : (d m n k : \u2124) * D m n (k+1) = 2 * D m n k := by\n  have hmkpos : 0 < m k := hm k\n  have hnkpos : 0 < n k := hn k\n  have h1 : (2*(m k : \u2124) + 1) = (d m n k : \u2124) * (m (k+1) : \u2124) := by\n    exact_mod_cast reduction_relation m n hm hn h_coprime h_recurrence k\n  have h2 : (2*(n k : \u2124) + 1) = (d m n k : \u2124) * (n (k+1) : \u2124) := by\n    exact_mod_cast reduction_relation_n m n hm hn h_coprime h_recurrence k\n  calc\n    (d m n k : \u2124) * D m n (k+1) = (d m n k : \u2124) * ((m (k+1) : \u2124) - (n (k+1) : \u2124)) := rfl\n    _ = ((d m n k : \u2124) * (m (k+1) : \u2124)) - ((d m n k : \u2124) * (n (k+1) : \u2124)) := by ring\n    _ = (2*(m k : \u2124) + 1) - (2*(n k : \u2124) + 1) := by\n      simp [h1, h2]\n    _ = 2*((m k : \u2124) - (n k : \u2124)) := by ring\n    _ = 2 * D m n k := rfl"
+    },
+    {
+      "id": "d",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "d_k = gcd(2m_k+1, 2n_k+1).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- $d_k = \\gcd(2m_k+1, 2n_k+1)$. -/)]\ndef d (m n : \u2115 \u2192 \u2115) (k : \u2115) : \u2115 := Nat.gcd (2*m k + 1) (2*n k + 1)"
+    },
+    {
+      "id": "d_odd",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k, d_k is odd, i.e., d_k \u2261 1 pmod 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all $k$, $d_k$ is odd, i.e., $d_k \\equiv 1 \\pmod 2$. -/)\n  (proof := /-- $2m_k+1$ and $2n_k+1$ are odd, so their gcd is odd. -/)]\nlemma d_odd (m n : \u2115 \u2192 \u2115) (k : \u2115) : d m n k % 2 = 1 := by\n  unfold d\n  rw [\u2190 Nat.two_dvd_ne_zero]\n  intro h\n  have h2 : 2 \u2223 2*m k + 1 := Nat.dvd_trans h (Nat.gcd_dvd_left _ _)\n  have : \u00ac 2 \u2223 2*m k + 1 := by\n    simp\n  exact this h2"
+    },
+    {
+      "id": "only_finitely_many_d_gt_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.45,
+      "proof_length": 62,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The set {k | d_k > 1} is finite.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- The set $\\{k \\mid d_k > 1\\}$ is finite. -/)\n  (proof := /-- Suppose the set were infinite. Then there are infinitely many $k$ with $d_k > 1$. Choose enough of them so that the product of the corresponding $d_i$ exceeds $|D_0|$ (possible because each $d_i > 1$ contributes at least $3$). But by `product_divides`, the product of any initial segment of $d_i$ divides $|D_0|$, hence cannot exceed $|D_0|$. Contradiction. Therefore the set is finite. -/)]\nlemma only_finitely_many_d_gt_one (m n : \u2115 \u2192 \u2115) (hm : \u2200 k : \u2115, 0 < m k) (hn : \u2200 k : \u2115, 0 < n k) (h_distinct : m 0 \u2260 n 0) (h_coprime : \u2200 k : \u2115, 0 < k \u2192 Nat.Coprime (m k) (n k)) (h_recurrence : \u2200 k : \u2115, (m (k+1) : \u211a) / (n (k+1) : \u211a) = (2*(m k : \u211a)+1) / (2*(n k : \u211a)+1)) : {k : \u2115 | d m n k > 1}.Finite := by\n  let N := Int.natAbs (D m n 0)\n  have hNpos : 0 < N := by\n    have hD0_ne_zero : D m n 0 \u2260 0 := by\n      intro hzero\n      apply h_distinct\n      have hm_eq_n : (m 0 : \u2124) = (n 0 : \u2124) := sub_eq_zero.mp hzero\n      exact_mod_cast hm_eq_n\n    exact Int.natAbs_pos.mpr hD0_ne_zero\n  let P : \u2115 \u2192 \u2115 := \u03bb k => Finset.prod (Finset.range k) (fun i => d m n i)\n  have hd_pos (i : \u2115) : 0 < d m n i := by\n    have hpos1 : 0 < 2*m i + 1 := by\n      have hm_pos : 0 < m i := hm i\n      nlinarith\n    have hpos2 : 0 < 2*n i + 1 := by\n      have hn_pos : 0 < n i := hn i\n      nlinarith\n    exact Nat.gcd_pos_of_pos_left (2*n i + 1) hpos1\n  have hPpos (k : \u2115) : 0 < P k := by\n    refine Finset.prod_pos (fun i hi => ?_)\n    exact hd_pos i\n  have hPdiv (k : \u2115) : P k \u2223 N := by\n    have := product_divides m n hm hn h_distinct h_coprime h_recurrence k\n    simpa [N, P] using this\n  have hP_le_N (k : \u2115) : P k \u2264 N := by\n    have hpos : 0 < P k := hPpos k\n    have hdiv : P k \u2223 N := hPdiv k\n    exact Nat.le_of_dvd hNpos hdiv\n  have hP_mono (a b : \u2115) (h : a \u2264 b) : P a \u2264 P b := by\n    refine Nat.le_induction (by rfl) (fun k hk hPk => ?_) b h\n    have hPk_succ_eq : P (k+1) = P k * d m n k := by\n      simp [P, Finset.prod_range_succ]\n    have h_d_ge_one : 1 \u2264 d m n k := by\n      have hpos : 0 < d m n k := hd_pos k\n      exact Nat.succ_le_of_lt hpos\n    have h_mul : P k \u2264 P k * d m n k := by\n      calc\n        P k = P k * 1 := by simp\n        _ \u2264 P k * d m n k := Nat.mul_le_mul_left (P k) h_d_ge_one\n    have hPk_succ : P k \u2264 P (k+1) := by\n      rw [hPk_succ_eq]\n      exact h_mul\n    exact le_trans hPk hPk_succ\n  have hP_strict (k : \u2115) (hdgt : d m n k > 1) : P k < P (k+1) := by\n    have hPk_succ_eq : P (k+1) = P k * d m n k := by\n      simp [P, Finset.prod_range_succ]\n    have hposP : 0 < P k := hPpos k\n    have h_mul_lt : P k * 1 < P k * d m n k := by\n      exact Nat.mul_lt_mul_of_pos_left hdgt hposP\n    calc\n      P k = P k * 1 := by simp\n      _ < P k * d m n k := h_mul_lt\n      _ = P (k+1) := by rw [hPk_succ_eq]\n  let f : \u2115 \u2192 \u2115 := \u03bb k => P (k+1)\n  have hinj : Set.InjOn f {k | d m n k > 1} := by\n    intro x hx y hy hxy\n    have hx' : d m n x > 1 := hx\n    have hy' : d m n y > 1 := hy\n    -- make equality in terms of P\n    have hxy' : P (x+1) = P (y+1) := by simpa [f] using hxy\n    by_contra hne\n    have hlt_or : x < y \u2228 y < x := Nat.lt_or_gt_of_ne hne\n    rcases hlt_or with (hlt | hlt)\n    \u00b7 -- x < y\n      have hx_plus_one_le_y : x+1 \u2264 y := by omega\n      have hPx_le_Py : P (x+1) \u2264 P y := hP_mono (x+1) y hx_plus_one_le_y\n      have hPy_lt_Py_succ : P y < P (y+1) := hP_strict y hy'\n      have hPx_lt_Py_succ : P (x+1) < P (y+1) := lt_of_le_of_lt hPx_le_Py hPy_lt_Py_succ\n      rw [hxy'] at hPx_lt_Py_succ\n      exact lt_irrefl _ hPx_lt_Py_succ\n    \u00b7 -- y < x\n      have hy_plus_one_le_x : y+1 \u2264 x := by omega\n      have hPy_le_Px : P (y+1) \u2264 P x := hP_mono (y+1) x hy_plus_one_le_x\n      have hPx_lt_Px_succ : P x < P (x+1) := hP_strict x hx'\n      have hPy_lt_Px_succ : P (y+1) < P (x+1) := lt_of_le_of_lt hPy_le_Px hPx_lt_Px_succ\n      rw [hxy'] at hPy_lt_Px_succ\n      exact lt_irrefl _ hPy_lt_Px_succ\n  have h_image_subset : f '' {k | d m n k > 1} \u2286 (Finset.range (N+1) : Set \u2115) := by\n    intro x hx\n    rcases hx with \u27e8k, hk, rfl\u27e9\n    have hPleN : P (k+1) \u2264 N := hP_le_N (k+1)\n    have h_lt : P (k+1) < N+1 := by omega\n    exact Finset.mem_coe.mpr (Finset.mem_range.mpr h_lt)\n  have hm : Set.MapsTo f {k | d m n k > 1} (Finset.range (N+1) : Set \u2115) := by\n    exact (Set.mapsTo_iff_image_subset.mpr h_image_subset)\n  have hfin : Set.Finite (Finset.range (N+1) : Set \u2115) := by\n    exact Finset.finite_toSet _\n  have hS_finite : Set.Finite {k | d m n k > 1} :=\n    Set.Finite.of_injOn hm hinj hfin\n  exact hS_finite"
+    },
+    {
+      "id": "product_divides",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.05,
+      "proof_length": 45,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k, \u03a0_{i=0}^{k-1} d_i divides |D_0| in \u2115.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For all $k$, $\\prod_{i=0}^{k-1} d_i$ divides $|D_0|$ in \u2115. -/)\n  (proof := /-- By induction using `D_recurrence`, we get $(\\prod_{i<k} d_i) \\cdot D_k = 2^k \\cdot D_0$ in \u2124. Hence the product divides $2^k \\cdot D_0$. Since each $d_i$ is odd (`d_odd`), the product is coprime to $2$, so it must divide $D_0$ in \u2124. Taking absolute values yields the result. -/)]\nlemma product_divides (m n : \u2115 \u2192 \u2115) (hm : \u2200 k : \u2115, 0 < m k) (hn : \u2200 k : \u2115, 0 < n k) (h_distinct : m 0 \u2260 n 0) (h_coprime : \u2200 k : \u2115, 0 < k \u2192 Nat.Coprime (m k) (n k)) (h_recurrence : \u2200 k : \u2115, (m (k+1) : \u211a) / (n (k+1) : \u211a) = (2*(m k : \u211a)+1) / (2*(n k : \u211a)+1)) (k : \u2115) : (Finset.prod (Finset.range k) (fun i => d m n i)) \u2223 Int.natAbs (D m n 0) := by\n  have product_odd' : ((Finset.prod (Finset.range k) (fun i => d m n i)) % 2 = 1) := by\n    refine Finset.induction_on (Finset.range k) ?_ ?_\n    \u00b7 simp\n    \u00b7 intro i s his ih\n      rw [Finset.prod_insert his, Nat.odd_mul_odd (d_odd m n i) ih]\n  have product_times_D_eq' : ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124) * D m n k) = ((2 : \u2124)^k) * D m n 0 := by\n    revert product_odd'\n    induction' k with k ih\n    \u00b7 intro h\n      simp [D]\n    \u00b7 intro h\n      rw [Finset.prod_range_succ]\n      push_cast\n      have h_rec := D_recurrence m n hm hn h_coprime h_recurrence k\n      have hk_odd : ((Finset.prod (Finset.range k) (fun i => d m n i)) % 2 = 1) := by\n        refine Finset.induction_on (Finset.range k) ?_ ?_\n        \u00b7 simp\n        \u00b7 intro i s his ih'\n          rw [Finset.prod_insert his, Nat.odd_mul_odd (d_odd m n i) ih']\n      calc\n        ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124) * (d m n k : \u2124)) * D m n (k+1) = ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124) * ((d m n k : \u2124) * D m n (k+1))) := by ring\n        _ = ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124) * (2 * D m n k)) := by rw [h_rec]\n        _ = 2 * ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124) * D m n k) := by ring\n        _ = 2 * (((2 : \u2124)^k) * D m n 0) := by rw [ih hk_odd]\n        _ = ((2 : \u2124)^(k+1)) * D m n 0 := by ring\n  have hP_odd : ((Finset.prod (Finset.range k) (fun i => d m n i)) % 2 = 1) := product_odd'\n  have hP_coprime_nat : Nat.Coprime (Finset.prod (Finset.range k) (fun i => d m n i)) 2 := by\n    rw [Nat.coprime_two_right]\n    rw [Nat.odd_iff]\n    exact hP_odd\n  have hP_coprime_int : IsCoprime ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124)) (2 : \u2124) := by\n    simpa [Nat.cast_prod] using (Nat.isCoprime_iff_coprime.mpr hP_coprime_nat)\n  have hP_coprime_2k : IsCoprime ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124)) ((2 : \u2124)^k) :=\n    hP_coprime_int.pow_right (n := k)\n  have h_eq := product_times_D_eq'\n  have h_dvd : ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124) \u2223 ((2 : \u2124)^k) * D m n 0) := by\n    rw [\u2190 h_eq]\n    exact dvd_mul_right ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124)) (D m n k)\n  have h_dvd_D0 : ((Finset.prod (Finset.range k) (fun i => d m n i) : \u2124) \u2223 D m n 0) :=\n    hP_coprime_2k.dvd_of_dvd_mul_left h_dvd\n  rw [\u2190 Int.ofNat_dvd_left]\n  simpa [Nat.cast_prod] using h_dvd_D0"
+    },
+    {
+      "id": "putnam_2025_a1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 27,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "See above.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- See above. -/)\n  (proof := /-- By `Nat.coprime_iff_gcd_eq_one`, the condition $\\neg \\operatorname{Coprime}(2m_k+1,2n_k+1)$ is equivalent to $d_k > 1$. Thus the set in question equals $\\{k \\mid d_k > 1\\}$, which is finite by `only_finitely_many_d_gt_one`. -/)]\ntheorem putnam_2025_a1\n  (m n : \u2115 \u2192 \u2115)\n  (hm : \u2200 k : \u2115, 0 < m k)\n  (hn : \u2200 k : \u2115, 0 < n k)\n  (h_distinct : m 0 \u2260 n 0)\n  (h_coprime : \u2200 k : \u2115, 0 < k \u2192 Nat.Coprime (m k) (n k))\n  (h_recurrence : \u2200 k : \u2115,\n    (m (k + 1) : \u211a) / (n (k + 1) : \u211a) = (2 * (m k : \u211a) + 1) / (2 * (n k : \u211a) + 1)) :\n  {k : \u2115 | \u00acNat.Coprime (2 * m k + 1) (2 * n k + 1)}.Finite := by\n  have h_finite : {k : \u2115 | d m n k > 1}.Finite :=\n    only_finitely_many_d_gt_one m n hm hn h_distinct h_coprime h_recurrence\n  have h_eq : {k : \u2115 | d m n k > 1} = {k : \u2115 | \u00acNat.Coprime (2*m k + 1) (2*n k + 1)} := by\n    ext k\n    constructor\n    \u00b7 intro h\n      -- h: d m n k > 1\n      have h_gcd_gt1 : Nat.gcd (2*m k + 1) (2*n k + 1) > 1 := by\n        simpa [d] using h\n      have h_gcd_ne_one : Nat.gcd (2*m k + 1) (2*n k + 1) \u2260 1 := Nat.ne_of_gt h_gcd_gt1\n      simpa [Nat.coprime_iff_gcd_eq_one] using h_gcd_ne_one\n    \u00b7 intro h\n      -- h: \u00acNat.Coprime (2*m k + 1) (2*n k + 1)\n      have h_not_coprime : \u00acNat.Coprime (2*m k + 1) (2*n k + 1) := h\n      rw [Nat.coprime_iff_gcd_eq_one] at h_not_coprime\n      -- h_not_coprime: \u00ac(Nat.gcd (2*m k + 1) (2*n k + 1) = 1)\n      have hpos : 0 < Nat.gcd (2*m k + 1) (2*n k + 1) := by\n        apply Nat.gcd_pos_of_pos_left (2*n k + 1)\n        omega\n      have hgt1 : 1 < Nat.gcd (2*m k + 1) (2*n k + 1) := by\n        by_contra! hle\n        -- hle: \u00ac(1 < gcd), i.e., gcd \u2264 1\n        have h_eq1 : Nat.gcd (2*m k + 1) (2*n k + 1) = 1 := by omega\n        exact h_not_coprime h_eq1\n      simpa [d] using hgt1\n  rw [h_eq] at h_finite\n  exact h_finite"
+    },
+    {
+      "id": "recurrence_integer",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.59,
+      "proof_length": 40,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k, m_{k+1} (2n_k+1) = n_{k+1} (2m_k+1).",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- For all $k$, $m_{k+1} (2n_k+1) = n_{k+1} (2m_k+1)$. -/)\n  (proof := /-- From `h_recurrence`, cross-multiplying in \u211a and using that all terms are integers yields the equality. More precisely, `h_recurrence` gives equality in \u211a, and because denominators are positive, we can clear denominators and obtain integer equality. Use `hm`, `hn` for positivity. -/)]\nlemma recurrence_integer (m n : \u2115 \u2192 \u2115) (hm : \u2200 k : \u2115, 0 < m k) (hn : \u2200 k : \u2115, 0 < n k) (h_recurrence : \u2200 k : \u2115, (m (k+1) : \u211a) / (n (k+1) : \u211a) = (2*(m k : \u211a)+1) / (2*(n k : \u211a)+1)) (k : \u2115) : m (k+1) * (2*n k + 1) = n (k+1) * (2*m k + 1) := by\n  have hpos_nk : (2*(n k : \u211a)+1) \u2260 0 := by\n    have hpos : (0 : \u211a) < 2*(n k : \u211a)+1 := by\n      have hnpos : (0 : \u211a) < (n k : \u211a) := by exact_mod_cast hn k\n      nlinarith\n    linarith\n  have hpos_nk1 : (n (k+1) : \u211a) \u2260 0 := by\n    have hnpos1 : 0 < n (k+1) := hn (k+1)\n    exact_mod_cast hnpos1.ne'\n  have h_eq_rat : (m (k+1) : \u211a) * (2*(n k : \u211a) + 1) = (n (k+1) : \u211a) * (2*(m k : \u211a) + 1) := by\n    have h := h_recurrence k\n    field_simp [hpos_nk1, hpos_nk] at h\n    exact h\n  exact_mod_cast h_eq_rat"
+    },
+    {
+      "id": "reduction_relation",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 18.11,
+      "proof_length": 71,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k, 2m_k+1 = d_k \u00b7 m_{k+1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For all $k$, $2m_k+1 = d_k \\cdot m_{k+1}$. -/)\n  (proof := /-- Let $d = d_k$. Then $d$ divides both $2m_k+1$ and $2n_k+1$. Write $2m_k+1 = d a$, $2n_k+1 = d b$ with $\\gcd(a,b)=1$. From `recurrence_integer` we have $m_{k+1} b = n_{k+1} a$. Since $\\gcd(a,b)=1$, we get $a \\mid m_{k+1}$ and $b \\mid n_{k+1}$. Using `h_coprime` for $k+1>0$, we get $m_{k+1}$ and $n_{k+1}$ are coprime, so the common factor $t$ must be $1$, hence $a = m_{k+1}$, $b = n_{k+1}$. Therefore $2m_k+1 = d \\cdot m_{k+1}$. -/)]\nlemma reduction_relation (m n : \u2115 \u2192 \u2115) (hm : \u2200 k : \u2115, 0 < m k) (hn : \u2200 k : \u2115, 0 < n k) (h_coprime : \u2200 k : \u2115, 0 < k \u2192 Nat.Coprime (m k) (n k)) (h_recurrence : \u2200 k : \u2115, (m (k+1) : \u211a) / (n (k+1) : \u211a) = (2*(m k : \u211a)+1) / (2*(n k : \u211a)+1)) (k : \u2115) : 2*m k + 1 = d m n k * m (k+1) := by\n  have h_recurrence_integer := recurrence_integer m n hm hn h_recurrence k\n  set a := 2*m k + 1 with ha\n  set b := 2*n k + 1 with hb\n  have ha_pos : 0 < a := by\n    have hmk : 0 < m k := hm k\n    linarith\n  have hb_pos : 0 < b := by\n    have hnk : 0 < n k := hn k\n    linarith\n  set g := d m n k with hg\n  have hg_dvd_a : g \u2223 a := by\n    unfold g\n    exact Nat.gcd_dvd_left a b\n  have hg_dvd_b : g \u2223 b := by\n    unfold g\n    exact Nat.gcd_dvd_right a b\n  have hg_pos : 0 < g := by\n    unfold g\n    exact Nat.gcd_pos_of_pos_left b ha_pos\n  have h_coprime_ab_div : Nat.Coprime (a / g) (b / g) := by\n    rw [Nat.coprime_iff_gcd_eq_one]\n    exact Nat.gcd_div_gcd_div_gcd_of_pos_left ha_pos\n  have h_next_coprime : Nat.Coprime (m (k+1)) (n (k+1)) := h_coprime (k+1) (Nat.succ_pos k)\n  have ha_eq' : a = g * (a / g) := (Nat.mul_div_cancel' hg_dvd_a).symm\n  have hb_eq' : b = g * (b / g) := (Nat.mul_div_cancel' hg_dvd_b).symm\n  have h_eq2 : m (k+1) * (b / g) = n (k+1) * (a / g) := by\n    apply Nat.mul_right_cancel hg_pos\n    calc\n      (m (k+1) * (b / g)) * g = m (k+1) * ((b / g) * g) := by ring\n      _ = m (k+1) * b := by rw [Nat.div_mul_cancel hg_dvd_b]\n      _ = n (k+1) * a := h_recurrence_integer\n      _ = n (k+1) * ((a / g) * g) := by rw [Nat.div_mul_cancel hg_dvd_a]\n      _ = (n (k+1) * (a / g)) * g := by ring\n  set a' := a / g with ha'\n  set b' := b / g with hb'\n  have h_a'_dvd_m : a' \u2223 m (k+1) := by\n    have htemp : a' * n (k+1) = b' * m (k+1) := by\n      calc\n        a' * n (k+1) = (a / g) * n (k+1) := rfl\n        _ = n (k+1) * (a / g) := by ring\n        _ = m (k+1) * (b / g) := by rw [h_eq2]\n        _ = b' * m (k+1) := by ring\n    have htemp' : a' \u2223 b' * m (k+1) := by\n      rw [\u2190 htemp]\n      exact dvd_mul_right a' (n (k+1))\n    exact h_coprime_ab_div.dvd_of_dvd_mul_left htemp'\n  have h_m_dvd_a' : m (k+1) \u2223 a' := by\n    have htemp : b' * m (k+1) = a' * n (k+1) := by\n      calc\n        b' * m (k+1) = (b / g) * m (k+1) := rfl\n        _ = m (k+1) * (b / g) := by ring\n        _ = n (k+1) * (a / g) := by rw [h_eq2]\n        _ = a' * n (k+1) := by ring\n    have htemp' : m (k+1) \u2223 a' * n (k+1) := by\n      have htemp'' : m (k+1) \u2223 b' * m (k+1) := by\n        refine \u27e8b', ?_\u27e9\n        ring\n      rw [htemp] at htemp''\n      exact htemp''\n    exact h_next_coprime.dvd_of_dvd_mul_left (by simpa [mul_comm] using htemp')\n  have h_a'_eq_m : a' = m (k+1) := Nat.dvd_antisymm h_a'_dvd_m h_m_dvd_a'\n  calc\n    2*m k + 1 = a := rfl\n    _ = g * a' := ha_eq'\n    _ = g * m (k+1) := by rw [h_a'_eq_m]\n    _ = d m n k * m (k+1) := by rw [hg]"
+    },
+    {
+      "id": "reduction_relation_n",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k, 2n_k+1 = d_k \u00b7 n_{k+1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For all $k$, $2n_k+1 = d_k \\cdot n_{k+1}$. -/)\n  (proof := /-- Symmetric to `reduction_relation`. -/)]\nlemma reduction_relation_n (m n : \u2115 \u2192 \u2115) (hm : \u2200 k : \u2115, 0 < m k) (hn : \u2200 k : \u2115, 0 < n k) (h_coprime : \u2200 k : \u2115, 0 < k \u2192 Nat.Coprime (m k) (n k)) (h_recurrence : \u2200 k : \u2115, (m (k+1) : \u211a) / (n (k+1) : \u211a) = (2*(m k : \u211a)+1) / (2*(n k : \u211a)+1)) (k : \u2115) : 2*n k + 1 = d m n k * n (k+1) := by\n  have hpos_mk : 0 < m k := hm k\n  have hpos_nk : 0 < n k := hn k\n  have hpos_mk1 : 0 < m (k+1) := hm (k+1)\n  have hpos_nk1 : 0 < n (k+1) := hn (k+1)\n  have h_coprime_k1 : Nat.Coprime (m (k+1)) (n (k+1)) := h_coprime (k+1) (by omega)\n  have h_eq : m (k+1) * (2*n k + 1) = n (k+1) * (2*m k + 1) := recurrence_integer m n hm hn h_recurrence k\n  set a := 2*m k + 1 with ha\n  set b := 2*n k + 1 with hb\n  set a' := m (k+1) with ha'\n  set b' := n (k+1) with hb'\n  have ha_pos : 0 < a := by\n    nlinarith\n  have hb_pos : 0 < b := by\n    nlinarith\n  have ha'_pos : 0 < a' := hpos_mk1\n  have hb'_pos : 0 < b' := hpos_nk1\n  have h_coprime_ab' : Nat.Coprime a' b' := h_coprime_k1\n  have h_eq' : a' * b = b' * a := by\n    simpa [ha, hb, ha', hb'] using h_eq\n  have ha'_dvd_a : a' \u2223 a := by\n    apply h_coprime_ab'.dvd_of_dvd_mul_left\n    have : a' * b = b' * a := h_eq'\n    have ha'_dvd_ab : a' \u2223 a' * b := by exact dvd_mul_right a' b\n    rw [this] at ha'_dvd_ab\n    exact ha'_dvd_ab\n  have hb'_dvd_b : b' \u2223 b := by\n    have hb'_dvd_ba' : b' \u2223 b * a' := by\n      have htemp : b' * a = a' * b := h_eq'.symm\n      have htemp2 : b' \u2223 b' * a := dvd_mul_right b' a\n      rw [htemp] at htemp2\n      simpa [mul_comm] using htemp2\n    exact h_coprime_ab'.symm.dvd_of_dvd_mul_right hb'_dvd_ba'\n  rcases ha'_dvd_a with \u27e8g, hg\u27e9\n  rcases hb'_dvd_b with \u27e8h, hh\u27e9\n  have hpos_ab' : 0 < a' * b' := mul_pos ha'_pos hb'_pos\n  have h_eq_mul : a' * b' * h = a' * b' * g := by\n    calc\n      a' * b' * h = a' * (b' * h) := by ring\n      _ = a' * b := by rw [hh]\n      _ = b' * a := h_eq'\n      _ = b' * (a' * g) := by rw [hg]\n      _ = a' * b' * g := by ring\n  have h_eq_g_h : h = g := Nat.eq_of_mul_eq_mul_left hpos_ab' h_eq_mul\n  have hb_eq : b = b' * g := by\n    rw [hh, h_eq_g_h]\n  have h_gcd : d m n k = g := by\n    calc\n      d m n k = Nat.gcd a b := rfl\n      _ = Nat.gcd (a' * g) (b' * g) := by rw [hg, hh, h_eq_g_h]\n      _ = Nat.gcd a' b' * g := by rw [Nat.gcd_mul_right a' g b']\n      _ = 1 * g := by rw [h_coprime_ab'.gcd_eq_one]\n      _ = g := by simp\n  calc\n    2*n k + 1 = b := by rw [hb]\n    _ = b' * g := hb_eq\n    _ = (d m n k) * b' := by rw [h_gcd, mul_comm]\n    _ = d m n k * n (k+1) := by rfl"
+    }
+  ],
+  "edges": [
+    {
+      "source": "reduction_relation",
+      "target": "D_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "reduction_relation_n",
+      "target": "D_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "D",
+      "target": "only_finitely_many_d_gt_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "product_divides",
+      "target": "only_finitely_many_d_gt_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d_odd",
+      "target": "product_divides",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "D_recurrence",
+      "target": "product_divides",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "putnam_2025_a1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "only_finitely_many_d_gt_one",
+      "target": "putnam_2025_a1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "recurrence_integer",
+      "target": "reduction_relation",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "recurrence_integer",
+      "target": "reduction_relation_n",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

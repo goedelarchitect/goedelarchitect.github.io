@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 A3. 629 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item current">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item current">1</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "BobGood",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "BobGood play holds if for every k such that 2k+1 < play.length, play[2k+1] = pairing_f (play[2k]).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- BobGood play holds if for every k such that 2k+1 < play.length, play[2k+1] = pairing_f (play[2k]). -/)]\ndef BobGood {n : \u2115} (play : List (GameString n)) : Prop :=\n  \u2200 k : \u2115, \u2200 h : 2*k + 1 < play.length,\n    let hk : 2*k < play.length := Nat.lt_of_succ_lt h\n    play.get \u27e82*k+1, h\u27e9 = pairing_f (play.get \u27e82*k, hk\u27e9)"
+    },
+    {
+      "id": "EvenLength",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "EvenLength play means play has even length.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- EvenLength play means play has even length. -/)]\ndef EvenLength {n : \u2115} (play : List (GameString n)) : Prop := play.length % 2 = 0"
+    },
+    {
+      "id": "GameString",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "GameString n is the type of strings of length n with digits 0, 1, 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- GameString n is the type of strings of length n with digits 0, 1, 2. -/)]\ndef GameString (n : \u2115) := Fin n \u2192 Fin 3"
+    },
+    {
+      "id": "IsValidGamePlay",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "IsValidGamePlay play holds iff play is a chain of valid moves starting from initialState n with no repeats.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- IsValidGamePlay play holds iff play is a chain of valid moves starting from initialState n with no repeats. -/)]\ndef IsValidGamePlay {n : \u2115} (play : List (GameString n)) : Prop :=\n  play.Chain isValidMove (initialState n) \u2227\n  (initialState n :: play).Nodup"
+    },
+    {
+      "id": "P",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "P play := (BobGood play \u2227 EvenLength play) \u2192 False.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- P play := (BobGood play \u2227 EvenLength play) \u2192 False. -/)]\ndef P {n : \u2115} (play : List (GameString n)) : Prop :=\n  (BobGood play \u2227 EvenLength play) \u2192 False"
+    },
+    {
+      "id": "f_involutive",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.49,
+      "proof_length": 39,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any x \u2260 initialState n, pairing_f (pairing_f x) = x.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any x \u2260 initialState n, pairing_f (pairing_f x) = x. -/)\n  (proof := /-- Since pairing_f only changes the minimum non-zero index, and flips 1\u21942, applying it twice restores the original. The minimum non-zero index of pairing_f x is the same as that of x, because the set of non-zero positions is unchanged. -/)]\nlemma f_involutive {n : \u2115} (x : GameString n) (hx : x \u2260 initialState n) : pairing_f (pairing_f x) = x := by\n  -- helper lemmas\n\n  have pairing_f_eq_of_ne (x : GameString n) (hx : x \u2260 initialState n) (j : Fin n) (hj : j \u2260 minNonzeroIndex x hx) : pairing_f x j = x j := by\n    unfold pairing_f\n    simp [hx, hj]\n\n  have minNonzeroIndex_nonzero (x : GameString n) (hx : x \u2260 initialState n) : x (minNonzeroIndex x hx) \u2260 0 := by\n    have h_nonempty : (Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n))).Nonempty := by\n      have h_exists : \u2203 i : Fin n, x i \u2260 0 := by\n        by_contra hnone\n        apply hx\n        apply funext; intro i\n        by_contra hzero\n        apply hnone\n        exact \u27e8i, hzero\u27e9\n      rcases h_exists with \u27e8i, hi\u27e9\n      exact \u27e8i, Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi\u27e9\u27e9\n    have hmem : minNonzeroIndex x hx \u2208 Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n)) :=\n      Finset.min'_mem _ h_nonempty\n    exact (Finset.mem_filter.mp hmem).2\n\n  have minNonzeroIndex_le_of_nonzero (x : GameString n) (hx : x \u2260 initialState n) (k : Fin n) (hk : x k \u2260 0) :\n      minNonzeroIndex x hx \u2264 k := by\n    have hmem_k : k \u2208 Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n)) :=\n      Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hk\u27e9\n    exact Finset.min'_le (Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n))) k hmem_k\n\n  have minNonzeroIndex_minimal (x : GameString n) (hx : x \u2260 initialState n) (k : Fin n) \n      (hk : (k : \u2115) < (minNonzeroIndex x hx : \u2115)) : x k = 0 := by\n    by_contra hnonzero\n    have hle : minNonzeroIndex x hx \u2264 k := minNonzeroIndex_le_of_nonzero x hx k hnonzero\n    have hval : (minNonzeroIndex x hx : \u2115) \u2264 (k : \u2115) := hle\n    have : (k : \u2115) < (k : \u2115) := Nat.lt_of_lt_of_le hk hval\n    exact Nat.lt_irrefl _ this\n\n  have pairing_f_ne_initial (x : GameString n) (hx : x \u2260 initialState n) : pairing_f x \u2260 initialState n := by\n    intro h\n    have hi_nonzero_x : x (minNonzeroIndex x hx) \u2260 0 := minNonzeroIndex_nonzero x hx\n    have hzero : pairing_f x (minNonzeroIndex x hx) = 0 := by\n      calc\n        pairing_f x (minNonzeroIndex x hx) = initialState n (minNonzeroIndex x hx) := by rw [h]\n        _ = 0 := rfl\n    have hcalc : pairing_f x (minNonzeroIndex x hx) = if x (minNonzeroIndex x hx) = 1 then (2 : Fin 3) else (1 : Fin 3) := by\n      unfold pairing_f\n      simp [hx]\n    rw [hcalc] at hzero\n    by_cases hxi1 : x (minNonzeroIndex x hx) = 1\n    \u00b7 rw [hxi1] at hzero\n      have : (2 : Fin 3) \u2260 0 := by decide\n      exact this hzero\n    \u00b7 have hxi2 : x (minNonzeroIndex x hx) = 2 := by\n        have h0 : x (minNonzeroIndex x hx) \u2260 0 := hi_nonzero_x\n        have h1 : x (minNonzeroIndex x hx) \u2260 1 := hxi1\n        have : \u2200 (z : Fin 3), z \u2260 0 \u2192 z \u2260 1 \u2192 z = 2 := by decide\n        exact this (x (minNonzeroIndex x hx)) h0 h1\n      rw [hxi2] at hzero\n      have : (1 : Fin 3) \u2260 0 := by decide\n      exact this hzero\n\n  have minNonzeroIndex_pairing_f (x : GameString n) (hx : x \u2260 initialState n) : \n      minNonzeroIndex (pairing_f x) (pairing_f_ne_initial x hx) = minNonzeroIndex x hx := by\n    set i := minNonzeroIndex x hx with hi_def\n    set y := pairing_f x with hy_def\n    have hy_ne_initial : y \u2260 initialState n := pairing_f_ne_initial x hx\n    have hi_nonzero_x : x i \u2260 0 := minNonzeroIndex_nonzero x hx\n    have hi_nonzero_y : y i \u2260 0 := by\n      have hcalc : y i = if x i = 1 then (2 : Fin 3) else (1 : Fin 3) := by\n        dsimp [y, pairing_f]\n        simp [hx, hi_def]\n      rw [hcalc]\n      by_cases hxi1 : x i = 1\n      \u00b7 simp [hxi1]\n      \u00b7 simp [hxi1]\n    have h_nonempty_y : (Finset.filter (\u03bb i' => y i' \u2260 0) (Finset.univ : Finset (Fin n))).Nonempty := by\n      refine \u27e8i, Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi_nonzero_y\u27e9\u27e9\n    set j := minNonzeroIndex y hy_ne_initial with hj_def\n    have hj_mem : j \u2208 Finset.filter (\u03bb i' => y i' \u2260 0) (Finset.univ : Finset (Fin n)) :=\n      Finset.min'_mem _ h_nonempty_y\n    have hj_nonzero_y : y j \u2260 0 := (Finset.mem_filter.mp hj_mem).2\n    have hji_val : (j : \u2115) \u2264 (i : \u2115) := by\n      have hmem_i : i \u2208 Finset.filter (\u03bb i' => y i' \u2260 0) (Finset.univ : Finset (Fin n)) :=\n        Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi_nonzero_y\u27e9\n      have hle : j \u2264 i := Finset.min'_le (Finset.filter (\u03bb i' => y i' \u2260 0) (Finset.univ : Finset (Fin n))) i hmem_i\n      exact hle\n    have hij_val : (i : \u2115) \u2264 (j : \u2115) := by\n      by_contra hlt\n      have hlt_val : (j : \u2115) < (i : \u2115) := Nat.lt_of_not_ge hlt\n      have hx_j_zero : x j = 0 := minNonzeroIndex_minimal x hx j hlt_val\n      have hji_ne : j \u2260 i := by\n        intro h_eq\n        have : (j : \u2115) = (i : \u2115) := congrArg Fin.val h_eq\n        linarith\n      have hyj_zero : y j = 0 := by\n        rw [hy_def]\n        have hji_ne' : j \u2260 minNonzeroIndex x hx := by\n          intro h_eq\n          apply hji_ne\n          rw [\u2190 hi_def] at h_eq\n          exact h_eq\n        rw [pairing_f_eq_of_ne x hx j hji_ne']\n        exact hx_j_zero\n      rw [hyj_zero] at hj_nonzero_y\n      exact hj_nonzero_y rfl\n    have hval_eq : (j : \u2115) = (i : \u2115) := Nat.le_antisymm hji_val hij_val\n    exact Fin.ext hval_eq\n\n  have pairing_f_at_min_val (x : GameString n) (hx : x \u2260 initialState n) : \n      pairing_f x (minNonzeroIndex x hx) = if x (minNonzeroIndex x hx) = 1 then (2 : Fin 3) else (1 : Fin 3) := by\n    unfold pairing_f\n    simp [hx]\n\n  set y := pairing_f x with hy_def\n  have hy_ne_initial : y \u2260 initialState n := pairing_f_ne_initial x hx\n  have hmin_eq : minNonzeroIndex y hy_ne_initial = minNonzeroIndex x hx := minNonzeroIndex_pairing_f x hx\n  apply funext; intro j\n  by_cases hj : j = minNonzeroIndex x hx\n  \u00b7 subst hj\n    set i := minNonzeroIndex x hx with hi_def\n    have hi_nonzero_x : x i \u2260 0 := minNonzeroIndex_nonzero x hx\n    have hy_i : y i = if x i = 1 then (2 : Fin 3) else (1 : Fin 3) := by\n      dsimp [y]\n      rw [pairing_f_at_min_val x hx]\n    have htemp := pairing_f_at_min_val y hy_ne_initial\n    rw [hmin_eq] at htemp\n    calc\n      pairing_f y i = if y i = 1 then (2 : Fin 3) else (1 : Fin 3) := htemp\n      _ = if (if x i = 1 then (2 : Fin 3) else (1 : Fin 3)) = 1 then (2 : Fin 3) else (1 : Fin 3) := by rw [hy_i]\n      _ = x i := by\n        by_cases hxi1 : x i = 1\n        \u00b7 simp [hxi1]\n        \u00b7 have hxi2 : x i = 2 := by\n            have hi_nonzero_x' : x i \u2260 0 := hi_nonzero_x\n            have hxi_ne_1 : x i \u2260 1 := hxi1\n            have : \u2200 (z : Fin 3), z \u2260 0 \u2192 z \u2260 1 \u2192 z = 2 := by decide\n            exact this (x i) hi_nonzero_x' hxi_ne_1\n          simp [hxi2]\n  \u00b7 have hj_ne_min : j \u2260 minNonzeroIndex x hx := hj\n    calc\n      pairing_f y j = y j := by\n        rw [hy_def]\n        apply pairing_f_eq_of_ne y hy_ne_initial j ?_\n        rw [hmin_eq]\n        exact hj_ne_min\n      _ = x j := by\n        rw [hy_def, pairing_f_eq_of_ne x hx j hj_ne_min]"
+    },
+    {
+      "id": "f_ne_initialState",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.0,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If x \u2260 initialState n, then pairing_f x \u2260 initialState n.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If x \u2260 initialState n, then pairing_f x \u2260 initialState n. -/)\n  (proof := /-- By definition, pairing_f x at the minimum non-zero index i has value 1 or 2, which is \u2260 0, so pairing_f x \u2260 initialState n. -/)]\nlemma f_ne_initialState {n : \u2115} (x : GameString n) (hx : x \u2260 initialState n) : pairing_f x \u2260 initialState n := by\n  intro h_eq\n  have hmem : minNonzeroIndex x hx \u2208 Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n)) :=\n    Finset.min'_mem (Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n))) (by\n      have h : \u2203 i : Fin n, x i \u2260 0 := by\n        by_contra hnone\n        apply hx\n        apply funext; intro i\n        by_contra hzero\n        apply hnone\n        exact \u27e8i, hzero\u27e9\n      rcases h with \u27e8i, hi\u27e9\n      refine \u27e8i, Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi\u27e9\u27e9)\n  have hxi_ne_zero : x (minNonzeroIndex x hx) \u2260 0 :=\n    (Finset.mem_filter.mp hmem).2\n  have hpair_i : pairing_f x (minNonzeroIndex x hx) = (if x (minNonzeroIndex x hx) = 1 then (2 : Fin 3) else (1 : Fin 3)) := by\n    unfold pairing_f\n    simp [hx]\n  have hpair_nonzero : (if x (minNonzeroIndex x hx) = 1 then (2 : Fin 3) else (1 : Fin 3)) \u2260 0 := by\n    intro hzero\n    by_cases hx_i_eq_one : x (minNonzeroIndex x hx) = 1\n    \u00b7 simp [hx_i_eq_one] at hzero\n    \u00b7 simp [hx_i_eq_one] at hzero\n  have hzero_val : pairing_f x (minNonzeroIndex x hx) = 0 := by\n    calc\n      pairing_f x (minNonzeroIndex x hx) = initialState n (minNonzeroIndex x hx) := by rw [h_eq]\n      _ = 0 := rfl\n  have hnonzero_val : pairing_f x (minNonzeroIndex x hx) \u2260 0 := by\n    rw [hpair_i]\n    exact hpair_nonzero\n  exact hnonzero_val hzero_val"
+    },
+    {
+      "id": "f_ne_x",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any x \u2260 initialState n, pairing_f x \u2260 x.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any x \u2260 initialState n, pairing_f x \u2260 x. -/)\n  (proof := /-- pairing_f x differs from x at the minimum non-zero index, as 1 \u2260 2. -/)]\nlemma f_ne_x {n : \u2115} (x : GameString n) (hx : x \u2260 initialState n) : pairing_f x \u2260 x := by\n  set i := minNonzeroIndex x hx with hi_def\n  have hi_nonzero : x i \u2260 0 := by\n    have h_nonempty : (Finset.filter (\u03bb i' => x i' \u2260 0) (Finset.univ : Finset (Fin n))).Nonempty := by\n      have h_exists : \u2203 i' : Fin n, x i' \u2260 0 := by\n        by_contra hnone\n        apply hx\n        apply funext; intro i'\n        by_contra hzero\n        apply hnone\n        exact \u27e8i', hzero\u27e9\n      rcases h_exists with \u27e8i', hi'\u27e9\n      refine \u27e8i', Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi'\u27e9\u27e9\n    have hmem : i \u2208 Finset.filter (\u03bb i' => x i' \u2260 0) (Finset.univ : Finset (Fin n)) :=\n      Finset.min'_mem _ h_nonempty\n    exact (Finset.mem_filter.mp hmem).2\n  have h_val : x i = 1 \u2228 x i = 2 := by\n    have h_options : (Finset.filter (\u03bb (z : Fin 3) => z \u2260 0) Finset.univ) = {1,2} := by decide\n    have h_mem' : x i \u2208 Finset.filter (\u03bb (z : Fin 3) => z \u2260 0) Finset.univ :=\n      Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi_nonzero\u27e9\n    have h_mem : x i \u2208 ({1,2} : Finset (Fin 3)) := by\n      simpa [h_options] using h_mem'\n    simpa [Finset.mem_insert, Finset.mem_singleton] using h_mem\n  have h_pairing_i : pairing_f x i \u2260 x i := by\n    have h_eq_val : pairing_f x i = (if x i = 1 then (2 : Fin 3) else (1 : Fin 3)) := by\n      dsimp [pairing_f]\n      simp [hx, hi_def]\n    rw [h_eq_val]\n    by_cases h_one : x i = 1\n    \u00b7 rw [if_pos h_one]\n      have h21 : (2 : Fin 3) \u2260 1 := by decide\n      simpa [h_one] using h21\n    \u00b7 rw [if_neg h_one]\n      have h_two : x i = (2 : Fin 3) := by\n        rcases h_val with (h1 | h2)\n        \u00b7 exact absurd h1 h_one\n        \u00b7 exact h2\n      have h12 : (1 : Fin 3) \u2260 2 := by decide\n      simpa [h_two] using h12\n  intro h_eq\n  apply h_pairing_i\n  simpa [h_eq] using rfl"
+    },
+    {
+      "id": "initialState",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "initialState n is the all-zero string.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- initialState n is the all-zero string. -/)]\ndef initialState (n : \u2115) : GameString n := fun _ => 0"
+    },
+    {
+      "id": "isValidGamePlay_chain_s_fs",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.31,
+      "proof_length": 48,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If IsValidGamePlay (play ++ [s]), BobGood play, EvenLength play, and s \u2260 initialState n, then IsValidGamePlay (play ++ [s, pairing_f s]).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If IsValidGamePlay (play ++ [s]), BobGood play, EvenLength play, and s \u2260 initialState n, then IsValidGamePlay (play ++ [s, pairing_f s]). -/)\n  (proof := /-- The chain condition: (play ++ [s]).Chain isValidMove initialState n holds, and isValidMove s (pairing_f s) holds by isValidMove_x_fx. The nodup condition: we already know (initialState n :: play ++ [s]).Nodup, and by s'_not_in_play we have pairing_f s not in that list, so the extended list is also nodup. -/)]\nlemma isValidGamePlay_chain_s_fs {n : \u2115} {play : List (GameString n)} {s : GameString n}\n    (h_valid : IsValidGamePlay (play ++ [s])) (h_bob : BobGood play) (h_even : EvenLength play) (hs : s \u2260 initialState n) : IsValidGamePlay (play ++ [s, pairing_f s]) := by\n  rcases h_valid with \u27e8h_chain, h_nodup\u27e9\n  -- Chain condition\n  have h_chain_isChain : IsChain isValidMove ((initialState n :: play) ++ [s]) := by\n    -- h_chain : (play ++ [s]).Chain isValidMove (initialState n)\n    -- which is defined as IsChain isValidMove (initialState n :: (play ++ [s]))\n    -- and initialState n :: (play ++ [s]) = (initialState n :: play) ++ [s]\n    simpa [append_assoc] using h_chain\n  have h_chain_singleton : IsChain isValidMove [pairing_f s] :=\n    List.IsChain.singleton _\n  have h_link : \u2200 x \u2208 ((initialState n :: play) ++ [s]).getLast?, \u2200 y \u2208 [pairing_f s].head?, isValidMove x y := by\n    intro x hx\n    intro y hy\n    have hx' : s = x := by\n      have htemp : ((initialState n :: play) ++ [s]).getLast? = some x := hx\n      have hlast : ((initialState n :: play) ++ [s]).getLast? = some s := by\n        rw [List.getLast?_append]\n        simp\n      have : some x = some s := by\n        calc\n          some x = ((initialState n :: play) ++ [s]).getLast? := by symm; exact htemp\n          _ = some s := hlast\n      injection this with h_eq\n      exact h_eq.symm\n    have hy' : pairing_f s = y := by\n      have htemp : [pairing_f s].head? = some y := hy\n      have hhead : [pairing_f s].head? = some (pairing_f s) := by simp\n      have : some y = some (pairing_f s) := by\n        calc\n          some y = [pairing_f s].head? := by symm; exact htemp\n          _ = some (pairing_f s) := hhead\n      injection this with h_eq\n      exact h_eq.symm\n    rw [hx'.symm, hy'.symm]\n    exact isValidMove_x_fx s hs\n  have h_chain_extended : IsChain isValidMove (((initialState n :: play) ++ [s]) ++ [pairing_f s]) :=\n    List.IsChain.append h_chain_isChain h_chain_singleton h_link\n  -- convert back to Chain form\n  have h_chain' : (play ++ [s, pairing_f s]).Chain isValidMove (initialState n) := by\n    have h_eq : ((initialState n :: play) ++ [s]) ++ [pairing_f s] = initialState n :: (play ++ [s, pairing_f s]) := by\n      simp [append_assoc]\n    have h_temp : IsChain isValidMove (initialState n :: (play ++ [s, pairing_f s])) := by\n      rw [\u2190 h_eq]\n      exact h_chain_extended\n    simpa [Chain] using h_temp\n  -- Nodup condition\n  have h_nodup' : (initialState n :: play ++ [s, pairing_f s]).Nodup := by\n    have h_not_mem : pairing_f s \u2209 (initialState n :: play ++ [s]) :=\n      s'_not_in_play \u27e8h_chain, h_nodup\u27e9 h_bob h_even hs\n    have hconcat := h_nodup.concat h_not_mem\n    -- hconcat : ((initialState n :: play ++ [s]).concat (pairing_f s)).Nodup\n    simpa [List.concat_eq_append, append_assoc] using hconcat\n  exact And.intro h_chain' h_nodup'"
+    },
+    {
+      "id": "isValidMove",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "isValidMove s1 s2 holds iff s1 and s2 differ at exactly one index and the values differ by \u00b11.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- isValidMove s1 s2 holds iff s1 and s2 differ at exactly one index and the values differ by \u00b11. -/)]\ndef isValidMove {n : \u2115} (s1 s2 : GameString n) : Prop :=\n  (\u2203! i : Fin n, s1 i \u2260 s2 i) \u2227\n  \u2200 i : Fin n, s1 i \u2260 s2 i \u2192\n    ((s1 i).val + 1 = (s2 i).val \u2228 (s2 i).val + 1 = (s1 i).val)"
+    },
+    {
+      "id": "isValidMove_x_fx",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.79,
+      "proof_length": 32,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any x \u2260 initialState n, the move from x to pairing_f x is valid.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For any x \u2260 initialState n, the move from x to pairing_f x is valid. -/)\n  (proof := /-- x and pairing_f x differ only at the minimum non-zero index i, and their values are 1 and 2, which differ by 1. Hence the \u2203! condition and the \u00b11 condition hold. -/)]\nlemma isValidMove_x_fx {n : \u2115} (x : GameString n) (hx : x \u2260 initialState n) : isValidMove x (pairing_f x) := by\n  have minNonzeroIndex_nonzero : x (minNonzeroIndex x hx) \u2260 0 := by\n    let S := Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n))\n    have hS_nonempty : S.Nonempty := by\n      have h_exists : \u2203 i : Fin n, x i \u2260 0 := by\n        by_contra hnone\n        apply hx\n        apply funext; intro i\n        by_contra hzero\n        apply hnone\n        exact \u27e8i, hzero\u27e9\n      rcases h_exists with \u27e8i, hi\u27e9\n      refine \u27e8i, ?_\u27e9\n      exact Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi\u27e9\n    have hi_mem_S : minNonzeroIndex x hx \u2208 S :=\n      Finset.min'_mem _ hS_nonempty\n    simpa [S] using hi_mem_S\n  have minNonzeroIndex_val' : x (minNonzeroIndex x hx) = 1 \u2228 x (minNonzeroIndex x hx) = 2 := by\n    have h0 : x (minNonzeroIndex x hx) \u2260 0 := minNonzeroIndex_nonzero\n    have : Finset.filter (\u03bb (z : Fin 3) => z \u2260 0) (Finset.univ : Finset (Fin 3)) = {1,2} := by decide\n    have mem : x (minNonzeroIndex x hx) \u2208 Finset.filter (\u03bb (z : Fin 3) => z \u2260 0) (Finset.univ : Finset (Fin 3)) := by\n      apply Finset.mem_filter.mpr\n      exact \u27e8Finset.mem_univ _, h0\u27e9\n    rw [this] at mem\n    simp at mem\n    simpa using mem\n  refine \u27e8?_, ?_\u27e9\n  \u00b7 -- \u2203! i, x i \u2260 (pairing_f x) i\n    let i0 := minNonzeroIndex x hx\n    refine \u27e8i0, ?_, ?_\u27e9\n    \u00b7 -- x i0 \u2260 (pairing_f x) i0\n      dsimp [i0]\n      dsimp [pairing_f, hx]\n      simp [hx]\n      rcases minNonzeroIndex_val' with (h1 | h2)\n      \u00b7 simp [h1]\n      \u00b7 simp [h2]\n    \u00b7 intro i hi\n      by_contra hne\n      apply hi\n      dsimp [pairing_f]\n      dsimp [i0] at hne\n      simp [hx, hne]\n  \u00b7 -- \u2200 i, x i \u2260 (pairing_f x) i \u2192 ((x i).val + 1 = ((pairing_f x) i).val \u2228 ((pairing_f x) i).val + 1 = (x i).val)\n    intro i hi\n    have hi_eq_i0 : i = minNonzeroIndex x hx := by\n      by_contra hne\n      apply hi\n      dsimp [pairing_f]\n      simp [hx, hne]\n    subst hi_eq_i0\n    rcases minNonzeroIndex_val' with (h1 | h2)\n    \u00b7 -- x i = 1\n      have hfx_eq2 : (pairing_f x) (minNonzeroIndex x hx) = (2 : Fin 3) := by\n        dsimp [pairing_f]\n        simp [hx, h1]\n      left\n      calc\n        (x (minNonzeroIndex x hx)).val + 1 = (1 : Fin 3).val + 1 := by simp [h1]\n        _ = 1 + 1 := rfl\n        _ = 2 := by omega\n        _ = ((2 : Fin 3).val) := by simp\n        _ = ((pairing_f x) (minNonzeroIndex x hx)).val := by simp [hfx_eq2]\n    \u00b7 -- x i = 2\n      have hfx_eq1 : (pairing_f x) (minNonzeroIndex x hx) = (1 : Fin 3) := by\n        dsimp [pairing_f]\n        simp [hx, h2]\n      right\n      calc\n        ((pairing_f x) (minNonzeroIndex x hx)).val + 1 = (1 : Fin 3).val + 1 := by simp [hfx_eq1]\n        _ = 1 + 1 := rfl\n        _ = 2 := by omega\n        _ = ((2 : Fin 3).val) := by simp\n        _ = (x (minNonzeroIndex x hx)).val := by simp [h2]"
+    },
+    {
+      "id": "minNonzeroIndex",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "minNonzeroIndex x hx is the smallest index i (with respect to the natural order on Fin n) such that x i \u2260 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- minNonzeroIndex x hx is the smallest index i (with respect to the natural order on Fin n) such that x i \u2260 0. -/)]\ndef minNonzeroIndex {n : \u2115} (x : GameString n) (hx : x \u2260 initialState n) : Fin n :=\n  Finset.min' (Finset.filter (\u03bb i => x i \u2260 0) (Finset.univ : Finset (Fin n))) (by\n    have h : \u2203 i : Fin n, x i \u2260 0 := by\n      by_contra hnone\n      apply hx\n      apply funext; intro i\n      by_contra hzero\n      apply hnone\n      exact \u27e8i, hzero\u27e9\n    rcases h with \u27e8i, hi\u27e9\n    refine \u27e8i, Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi\u27e9\u27e9)"
+    },
+    {
+      "id": "pairing_f",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "pairing_f x is the string obtained from x by flipping the value at the minimum non-zero index between 1 and 2, leaving all other entries unchanged. If x = initialState n, we define pairing_f x = initialState n.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- pairing_f x is the string obtained from x by flipping the value at the minimum non-zero index between 1 and 2, leaving all other entries unchanged. If x = initialState n, we define pairing_f x = initialState n. -/)]\nnoncomputable def pairing_f {n : \u2115} (x : GameString n) : GameString n := by\n  classical\n  if hx : x = initialState n then\n    exact x\n  else\n    let i := minNonzeroIndex x hx\n    exact fun j => if j = i then\n      if x i = 1 then (2 : Fin 3) else (1 : Fin 3)\n    else x j"
+    },
+    {
+      "id": "putnam_2025_a3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 32.41,
+      "proof_length": 57,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The main theorem: For n \u2265 1, ((fun _ => False) : \u2115 \u2192 Prop) n \u2194 AliceHasWinningStrategy n.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The main theorem: For n \u2265 1, ((fun _ => False) : \u2115 \u2192 Prop) n \u2194 AliceHasWinningStrategy n. -/)\n  (proof := /-- The left side is False, so the equivalence reduces to \u00ac AliceHasWinningStrategy n. By definition, AliceHasWinningStrategy n = HasWinningStrategy n []. Using strategizingLemma with play = [], we have HasWinningStrategy n [] \u2192 P []. Since BobGood [] and EvenLength [] hold trivially, P [] yields False. Hence HasWinningStrategy n [] \u2192 False, i.e., \u00ac AliceHasWinningStrategy n. -/)]\ntheorem putnam_2025_a3 (n : \u2115) (hn : 1 \u2264 n) :\n    ((fun _ => False) : \u2115 \u2192 Prop ) n \u2194 AliceHasWinningStrategy n := by\n  constructor\n  \u00b7 intro hfalse\n    exfalso; exact hfalse\n  \u00b7 intro halice\n    have hP : P [] := strategizingLemma [] halice\n    have hBob : BobGood ([] : List (GameString n)) := by\n      unfold BobGood\n      intro k h\n      exfalso\n      exact Nat.not_lt_zero (2*k+1) h\n    have hEven : EvenLength ([] : List (GameString n)) := by\n      unfold EvenLength\n      simp\n    have hFalse : False := hP \u27e8hBob, hEven\u27e9\n    exact hFalse"
+    },
+    {
+      "id": "s'_not_in_play",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 18.39,
+      "proof_length": 75,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If IsValidGamePlay (play ++ [s]), BobGood play, and EvenLength play, then pairing_f s is not in the list (initialState n :: play ++ [s]).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If IsValidGamePlay (play ++ [s]), BobGood play, and EvenLength play, then pairing_f s is not in the list (initialState n :: play ++ [s]). -/)\n  (proof := /-- Suppose pairing_f s appears in the list. By case analysis on its position, we derive a contradiction using properties of f and BobGood play. Cases: pairing_f s = initialState n (contradicts f_ne_initialState), pairing_f s = s (contradicts f_ne_x), or pairing_f s = play[i] for some i < play.length. Since play.length is even, i is either even or odd; in both subcases, using BobGood play and f_involutive, we deduce that s appears in play, contradicting nodup. -/)]\nlemma s'_not_in_play {n : \u2115} {play : List (GameString n)} {s : GameString n}\n    (h_valid : IsValidGamePlay (play ++ [s])) (h_bob : BobGood play) (h_even : EvenLength play) (hs : s \u2260 initialState n) :\n    pairing_f s \u2209 (initialState n :: play ++ [s]) := by\n  have h_nodup_all := h_valid.2\n  have h_nodup_ps : (play ++ [s]).Nodup :=\n    ((List.nodup_cons (a := initialState n) (l := play ++ [s])).mp h_nodup_all).2\n  have h_s_not_mem_play : s \u2209 play := by\n    have h_nodup_append := (List.nodup_append (l\u2081 := play) (l\u2082 := [s])).mp h_nodup_ps\n    rcases h_nodup_append with \u27e8hn_play, hn_s, h_all_diff\u27e9\n    intro hsmem\n    have h_contra := h_all_diff s hsmem s (by simp)\n    exact h_contra rfl\n  intro hmem\n  have hmem_cases := (List.mem_cons (a := pairing_f s) (b := initialState n) (l := play ++ [s])).mp hmem\n  rcases hmem_cases with (h_eq_init | hmem_play_s)\n  \u00b7 -- pairing_f s = initialState n\n    exact f_ne_initialState s hs h_eq_init\n  \u00b7 -- pairing_f s \u2208 play ++ [s]\n    have hmem_play_s_cases := List.mem_append.mp hmem_play_s\n    rcases hmem_play_s_cases with (hmem_play | hmem_last)\n    \u00b7 -- pairing_f s \u2208 play\n      rcases List.mem_iff_get.mp hmem_play with \u27e8i, hi\u27e9\n      -- i : Fin (play.length), hi : play.get i = pairing_f s\n      let i_val := i.val\n      have hi_val_lt : i_val < play.length := i.2\n      unfold EvenLength at h_even\n      have hparity := Nat.even_or_odd i_val\n      rcases hparity with (\u27e8k, hk\u27e9 | \u27e8k, hk\u27e9)\n      \u00b7 -- i_val = k + k (i.e., even)\n        have h_2k_lt : 2*k < play.length := by\n          omega\n        have h_next_lt : 2*k + 1 < play.length := by\n          omega\n        have h_get_even : play.get \u27e82*k, h_2k_lt\u27e9 = pairing_f s := by\n          have h_eq_val : (2*k : \u2115) = i.val := by\n            dsimp [i_val]\n            omega\n          have h_eq : (\u27e82*k, h_2k_lt\u27e9 : Fin play.length) = i := Fin.ext h_eq_val\n          simpa [h_eq] using hi\n        have h_bob_eq := h_bob k h_next_lt\n        have h_get_odd_eq_s : play.get \u27e82*k+1, h_next_lt\u27e9 = s := by\n          calc\n            play.get \u27e82*k+1, h_next_lt\u27e9 = pairing_f (play.get \u27e82*k, Nat.lt_of_succ_lt h_next_lt\u27e9) := h_bob_eq\n            _ = pairing_f (play.get \u27e82*k, h_2k_lt\u27e9) := by\n              have h_eq_idx : (\u27e82*k, Nat.lt_of_succ_lt h_next_lt\u27e9 : Fin play.length) = \u27e82*k, h_2k_lt\u27e9 := by\n                apply Fin.ext\n                rfl\n              simpa [h_eq_idx]\n            _ = pairing_f (pairing_f s) := by rw [h_get_even]\n            _ = s := f_involutive s hs\n        have h_s_mem_play : s \u2208 play := by\n          have h_mem := List.get_mem play \u27e82*k+1, h_next_lt\u27e9\n          rw [h_get_odd_eq_s] at h_mem\n          exact h_mem\n        exact h_s_not_mem_play h_s_mem_play\n      \u00b7 -- i_val = k + k + 1 (i.e., odd)\n        have h_2k1_lt : 2*k+1 < play.length := by\n          omega\n        have h_prev_lt : 2*k < play.length := by\n          omega\n        let prev_idx : Fin play.length := \u27e82*k, h_prev_lt\u27e9\n        have h_get_odd : play.get \u27e82*k+1, h_2k1_lt\u27e9 = pairing_f s := by\n          have h_eq_val : (2*k+1 : \u2115) = i.val := by\n            dsimp [i_val]\n            omega\n          have h_eq : (\u27e82*k+1, h_2k1_lt\u27e9 : Fin play.length) = i := Fin.ext h_eq_val\n          simpa [h_eq] using hi\n        have h_bob_eq := h_bob k h_2k1_lt\n        have h_pair_eq : pairing_f s = pairing_f (play.get prev_idx) := by\n          calc\n            pairing_f s = play.get \u27e82*k+1, h_2k1_lt\u27e9 := by symm; exact h_get_odd\n            _ = pairing_f (play.get prev_idx) := h_bob_eq\n        have h_prev_ne_init : play.get prev_idx \u2260 initialState n := by\n          intro h_eq\n          have h_pair_prev_init : pairing_f (play.get prev_idx) = initialState n := by\n            rw [h_eq]\n            unfold pairing_f\n            simp\n          have h_pair_s_ne_init : pairing_f s \u2260 initialState n := f_ne_initialState s hs\n          apply h_pair_s_ne_init\n          calc\n            pairing_f s = pairing_f (play.get prev_idx) := h_pair_eq\n            _ = initialState n := h_pair_prev_init\n        have h_invol_s : pairing_f (pairing_f s) = s := f_involutive s hs\n        have h_invol_prev : pairing_f (pairing_f (play.get prev_idx)) = play.get prev_idx :=\n          f_involutive (play.get prev_idx) h_prev_ne_init\n        have h_pair_eq' : pairing_f (pairing_f s) = pairing_f (pairing_f (play.get prev_idx)) := by\n          rw [h_pair_eq]\n        have h_s_eq_prev : s = play.get prev_idx := by\n          calc\n            s = pairing_f (pairing_f s) := by symm; exact h_invol_s\n            _ = pairing_f (pairing_f (play.get prev_idx)) := h_pair_eq'\n            _ = play.get prev_idx := h_invol_prev\n        have h_s_mem_play : s \u2208 play := by\n          have h_mem : play.get prev_idx \u2208 play := List.get_mem play prev_idx\n          rw [h_s_eq_prev]\n          exact h_mem\n        exact h_s_not_mem_play h_s_mem_play\n    \u00b7 -- pairing_f s \u2208 [s]\n      have h_eq : pairing_f s = s := by\n        simpa using hmem_last\n      exact f_ne_x s hs h_eq"
+    },
+    {
+      "id": "s_not_initial",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If IsValidGamePlay (play ++ [s]), then s \u2260 initialState n.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If IsValidGamePlay (play ++ [s]), then s \u2260 initialState n. -/)\n  (proof := /-- Since (initialState n :: play ++ [s]).Nodup, initialState n cannot be equal to s, because it appears at the head. -/)]\nlemma s_not_initial {n : \u2115} {play : List (GameString n)} {s : GameString n} (h : IsValidGamePlay (play ++ [s])) : s \u2260 initialState n := by\n  rcases h with \u27e8h_chain, h_nodup\u27e9\n  have h_nodup' : initialState n \u2209 (play ++ [s]) := by\n    -- from h_nodup which is (initialState n :: (play ++ [s])).Nodup\n    -- using List.nodup_cons\n    have := List.nodup_cons.mp h_nodup\n    exact this.1\n  have hmem : s \u2208 (play ++ [s]) := by\n    simp\n  intro h_eq\n  apply h_nodup'\n  simpa [h_eq] using hmem"
+    },
+    {
+      "id": "strategizingLemma",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 18.53,
+      "proof_length": 77,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any play, HasWinningStrategy n play \u2192 P play.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For any play, HasWinningStrategy n play \u2192 P play. -/)\n  (proof := /-- By induction on the derivation of HasWinningStrategy n play. The win case: assume HasWinningStrategy n play via win with s and hypotheses. Assume BobGood play and EvenLength play (otherwise P play holds trivially). Set s' = pairing_f s. Show IsValidGamePlay (play ++ [s, s']) using isValidGamePlay_chain_s_fs. Then by induction hypothesis, P (play ++ [s, s']) holds. Since BobGood (play ++ [s, s']) and EvenLength (play ++ [s, s']) are true, this yields False. Hence P play holds. -/)]\nlemma strategizingLemma {n : \u2115} (play : List (GameString n)) : HasWinningStrategy n play \u2192 P play := by\n  have bobGood_append_s_pairing_f {n : \u2115} (play : List (GameString n)) (s : GameString n) (h_bob : BobGood play) (h_even : EvenLength play) (h_valid : IsValidGamePlay (play ++ [s])) : BobGood (play ++ [s, pairing_f s]) := by\n    intro k h\n    intro hk\n    have hlen : (play ++ [s, pairing_f s]).length = play.length + 2 := by simp\n    have hL_even : play.length % 2 = 0 := h_even\n    have h' : 2*k + 1 < play.length + 2 := by\n      simpa [hlen] using h\n    by_cases h_lt : 2*k+1 < play.length\n    \u00b7 have hk_play : 2*k < play.length := Nat.lt_of_succ_lt h_lt\n      have h_play_eq := h_bob k h_lt\n      simpa [h_lt, hk_play] using h_play_eq\n    \u00b7 have h_ge : play.length \u2264 2*k+1 := Nat.le_of_not_lt h_lt\n      have h_eq : 2*k+1 = play.length + 1 := by\n        omega\n      have h_eq' : 2*k = play.length := by\n        omega\n      have h_goal : (play ++ [s, pairing_f s]).get \u27e8play.length + 1, by\n        simp\n      \u27e9 = pairing_f ((play ++ [s, pairing_f s]).get \u27e8play.length, by\n        simp\n      \u27e9) := by\n        simp\n      simpa [h_eq, h_eq'] using h_goal\n  intro h\n  induction h with\n  | win play s h_valid h_next ih =>\n    intro h_bob_even\n    rcases h_bob_even with \u27e8h_bob, h_even\u27e9\n    set s' := pairing_f s with hs'\n    have h_valid_ss' : IsValidGamePlay (play ++ [s, s']) := by\n      have hs_ne : s \u2260 initialState n := s_not_initial h_valid\n      exact isValidGamePlay_chain_s_fs h_valid h_bob h_even hs_ne\n    have hP : P (play ++ [s, s']) := ih s' h_valid_ss'\n    have h_bob_ss' : BobGood (play ++ [s, s']) := bobGood_append_s_pairing_f play s h_bob h_even h_valid\n    have h_even_ss' : EvenLength (play ++ [s, s']) := by\n      unfold EvenLength\n      have hlen : (play ++ [s, s']).length = play.length + 2 := by simp\n      rw [hlen]\n      have hmod : (play.length + 2) % 2 = play.length % 2 := by omega\n      rw [hmod]\n      exact h_even\n    exact hP \u27e8h_bob_ss', h_even_ss'\u27e9"
+    }
+  ],
+  "edges": [
+    {
+      "source": "minNonzeroIndex",
+      "target": "f_involutive",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "minNonzeroIndex",
+      "target": "f_ne_initialState",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "minNonzeroIndex",
+      "target": "f_ne_x",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "isValidMove",
+      "target": "isValidGamePlay_chain_s_fs",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "isValidMove_x_fx",
+      "target": "isValidGamePlay_chain_s_fs",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "s'_not_in_play",
+      "target": "isValidGamePlay_chain_s_fs",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "minNonzeroIndex",
+      "target": "isValidMove_x_fx",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "pairing_f",
+      "target": "putnam_2025_a3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "BobGood",
+      "target": "putnam_2025_a3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "GameString",
+      "target": "putnam_2025_a3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "EvenLength",
+      "target": "putnam_2025_a3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "P",
+      "target": "putnam_2025_a3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "strategizingLemma",
+      "target": "putnam_2025_a3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "isValidMove",
+      "target": "s'_not_in_play",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_involutive",
+      "target": "s'_not_in_play",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_ne_initialState",
+      "target": "s'_not_in_play",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "minNonzeroIndex",
+      "target": "s'_not_in_play",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_ne_x",
+      "target": "s'_not_in_play",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "isValidMove",
+      "target": "s_not_initial",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "s_not_initial",
+      "target": "strategizingLemma",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "pairing_f",
+      "target": "strategizingLemma",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "BobGood",
+      "target": "strategizingLemma",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "isValidGamePlay_chain_s_fs",
+      "target": "strategizingLemma",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "EvenLength",
+      "target": "strategizingLemma",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "initialState",
+      "target": "strategizingLemma",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "IsValidGamePlay",
+      "target": "strategizingLemma",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

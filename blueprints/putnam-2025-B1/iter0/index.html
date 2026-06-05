@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 B1. 1,542 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item current">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item current">1</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "affineIndependent_three_points_on_circle",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.0,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Three distinct points on a circle are affinely independent (i.e., not collinear).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- Three distinct points on a circle are affinely independent (i.e., not collinear). -/)\n  (proof := /-- A line intersects a circle in at most two points. Since three distinct points on the same circle cannot be collinear, they are affinely independent. -/)]\nlemma affineIndependent_three_points_on_circle (X A B G : EuclideanSpace \u211d (Fin 2))\n    (hA : A \u2208 Metric.sphere X (dist X G)) (hB : B \u2208 Metric.sphere X (dist X G))\n    (hA_ne_G : A \u2260 G) (hB_ne_G : B \u2260 G) (hA_ne_B : A \u2260 B) :\n    AffineIndependent \u211d ![G, A, B] := by\n  rw [affineIndependent_iff_not_collinear_set]\n  intro hcoll\n  have hGmem : G \u2208 ({G, A, B} : Set (EuclideanSpace \u211d (Fin 2))) := by simp\n  have hcoll_iff := (collinear_iff_of_mem hGmem).mp hcoll\n  rcases hcoll_iff with \u27e8v, hv\u27e9\n  have hA_ex : \u2203 r : \u211d, A = r \u2022 v +\u1d65 G := hv A (by simp)\n  have hB_ex : \u2203 r : \u211d, B = r \u2022 v +\u1d65 G := hv B (by simp)\n  rcases hA_ex with \u27e8rA, hA_eq\u27e9\n  rcases hB_ex with \u27e8rB, hB_eq\u27e9\n  have hA_ne_G' : rA \u2260 0 := by\n    intro hzero\n    apply hA_ne_G\n    calc\n      A = rA \u2022 v +\u1d65 G := hA_eq\n      _ = (0 : \u211d) \u2022 v +\u1d65 G := by rw [hzero]\n      _ = G := by simp\n  have hB_ne_G' : rB \u2260 0 := by\n    intro hzero\n    apply hB_ne_G\n    calc\n      B = rB \u2022 v +\u1d65 G := hB_eq\n      _ = (0 : \u211d) \u2022 v +\u1d65 G := by rw [hzero]\n      _ = G := by simp\n  have hd : A - G = rA \u2022 v := by\n    calc\n      A - G = (rA \u2022 v +\u1d65 G) - G := by rw [hA_eq]\n      _ = rA \u2022 v := by simp\n  have hB_minus_G : B - G = rB \u2022 v := by\n    calc\n      B - G = (rB \u2022 v +\u1d65 G) - G := by rw [hB_eq]\n      _ = rB \u2022 v := by simp\n  have hlam : \u2203 (lam : \u211d), B - G = lam \u2022 (A - G) := by\n    use (rB / rA)\n    calc\n      B - G = rB \u2022 v := hB_minus_G\n      _ = (rB / rA) \u2022 (rA \u2022 v) := by\n        calc\n          rB \u2022 v = ((rB / rA) * rA) \u2022 v := by field_simp [hA_ne_G']\n          _ = (rB / rA) \u2022 (rA \u2022 v) := by rw [smul_smul]\n      _ = (rB / rA) \u2022 (A - G) := by rw [hd]\n  rcases hlam with \u27e8lam, hlam_eq\u27e9\n  have hA_dist : dist X A = dist X G := by\n    rw [dist_comm]\n    exact (Metric.mem_sphere.mp hA)\n  have hB_dist : dist X B = dist X G := by\n    rw [dist_comm]\n    exact (Metric.mem_sphere.mp hB)\n  have hA_norm : \u2016X - A\u2016 = \u2016X - G\u2016 := by\n    rw [dist_eq_norm, dist_eq_norm] at hA_dist; exact hA_dist\n  have hB_norm : \u2016X - B\u2016 = \u2016X - G\u2016 := by\n    rw [dist_eq_norm, dist_eq_norm] at hB_dist; exact hB_dist\n  have norm_sq_eq_two_inner (Y : EuclideanSpace \u211d (Fin 2)) (hY_norm : \u2016X - Y\u2016 = \u2016X - G\u2016) : \u2016Y - G\u2016^2 = 2 * inner \u211d (X - G) (Y - G) := by\n    have htemp : \u2016(X - G) - (Y - G)\u2016^2 = \u2016X - G\u2016^2 := by\n      calc\n        \u2016(X - G) - (Y - G)\u2016^2 = \u2016X - Y\u2016^2 := by simp\n        _ = \u2016X - G\u2016^2 := by rw [hY_norm]\n    have hnorm_sub_sq : \u2016(X - G) - (Y - G)\u2016^2 = \u2016X - G\u2016^2 - 2 * inner \u211d (X - G) (Y - G) + \u2016Y - G\u2016^2 := by\n      rw [norm_sub_sq_real]\n    nlinarith\n  have hA_sq_eq : \u2016A - G\u2016^2 = 2 * inner \u211d (X - G) (A - G) :=\n    norm_sq_eq_two_inner A hA_norm\n  have hB_sq_eq : \u2016B - G\u2016^2 = 2 * inner \u211d (X - G) (B - G) :=\n    norm_sq_eq_two_inner B hB_norm\n  have hB_sq : \u2016B - G\u2016^2 = lam^2 * \u2016A - G\u2016^2 := by\n    calc\n      \u2016B - G\u2016^2 = \u2016lam \u2022 (A - G)\u2016^2 := by rw [hlam_eq]\n      _ = (\u2016lam\u2016 * \u2016A - G\u2016)^2 := by rw [norm_smul]\n      _ = (|lam| * \u2016A - G\u2016)^2 := by simp\n      _ = lam^2 * \u2016A - G\u2016^2 := by\n        calc\n          (|lam| * \u2016A - G\u2016)^2 = (|lam|^2) * (\u2016A - G\u2016^2) := by ring\n          _ = lam^2 * \u2016A - G\u2016^2 := by simp [sq_abs lam]\n  have hB_inner_eq : inner \u211d (X - G) (B - G) = lam * inner \u211d (X - G) (A - G) := by\n    rw [hlam_eq, inner_smul_right]\n  have hB_sq_eq2 : lam^2 * \u2016A - G\u2016^2 = 2 * lam * inner \u211d (X - G) (A - G) := by\n    calc\n      lam^2 * \u2016A - G\u2016^2 = \u2016B - G\u2016^2 := by symm; exact hB_sq\n      _ = 2 * inner \u211d (X - G) (B - G) := hB_sq_eq\n      _ = 2 * (lam * inner \u211d (X - G) (A - G)) := by rw [hB_inner_eq]\n      _ = 2 * lam * inner \u211d (X - G) (A - G) := by ring\n  have h_inner_eq : inner \u211d (X - G) (A - G) = (1/2) * \u2016A - G\u2016^2 := by\n    linarith\n  have h_eq : lam^2 * \u2016A - G\u2016^2 = lam * \u2016A - G\u2016^2 := by\n    calc\n      lam^2 * \u2016A - G\u2016^2 = 2 * lam * inner \u211d (X - G) (A - G) := hB_sq_eq2\n      _ = 2 * lam * ((1/2) * \u2016A - G\u2016^2) := by rw [h_inner_eq]\n      _ = lam * \u2016A - G\u2016^2 := by ring\n  have hAd_sq_ne_zero : \u2016A - G\u2016^2 \u2260 0 := by\n    intro hzero\n    apply hA_ne_G\n    apply sub_eq_zero.mp\n    apply norm_eq_zero.mp\n    exact pow_eq_zero hzero\n  have h_factor : lam^2 - lam = 0 := by\n    have htemp : (lam^2 - lam) * \u2016A - G\u2016^2 = 0 := by\n      nlinarith\n    rcases eq_zero_or_eq_zero_of_mul_eq_zero htemp with (h | h)\n    \u00b7 exact h\n    \u00b7 exfalso; exact hAd_sq_ne_zero h\n  have h_lam_cases : lam = 0 \u2228 lam = 1 := by\n    have : lam*(lam-1) = 0 := by nlinarith\n    rcases eq_zero_or_eq_zero_of_mul_eq_zero this with (h | h)\n    \u00b7 left; exact h\n    \u00b7 right; exact sub_eq_zero.mp h\n  rcases h_lam_cases with (hlam0 | hlam1)\n  \u00b7 -- lam = 0\n    apply hB_ne_G\n    calc\n      B = G + (B - G) := by simp\n      _ = G + (0 : EuclideanSpace \u211d (Fin 2)) := by rw [hlam_eq, hlam0, zero_smul]\n      _ = G := by simp\n  \u00b7 -- lam = 1\n    apply hA_ne_B\n    calc\n      A = G + (A - G) := by simp\n      _ = G + (B - G) := by rw [hlam_eq, hlam1, one_smul]\n      _ = B := by simp"
+    },
+    {
+      "id": "at_most_one_other_color_point",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 19.13,
+      "proof_length": 86,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Suppose X is a point on the perpendicular bisector of RG. If there exist two distinct points A, B on the circle centered at X with radius dist X G, both different from G and both having the same color as G, then color X must equal color G.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Suppose `X` is a point on the perpendicular bisector of `RG`. If there exist two distinct points `A`, `B` on the circle centered at `X` with radius `dist X G`, both different from `G` and both having the same color as `G`, then `color X` must equal `color G`. -/)\n  (proof := /-- By `perp_bisector_equidistant`, `dist X R = dist X G`. By `affineIndependent_three_points_on_circle`, the points `G, A, B` are affinely independent, hence form a 2-simplex `s`. The circumcenter of `s` is the center of the circle passing through `G, A, B`, which is `X` because `A` and `B` lie on the circle centered at `X` with radius `dist X G`. Hence `s.circumcenter = X`. By the hypothesis `h`, since all vertices have color `color G`, the circumcenter also has color `color G`. Therefore `color X = color G`. -/)]\nlemma at_most_one_other_color_point (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (h : \u2200 (s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2), (\u2200 i j : Fin 3, color (s.points i) = color (s.points j)) \u2192 color s.circumcenter = color (s.points 0))\n    (R G X A B : EuclideanSpace \u211d (Fin 2))\n    (hXperp : X \u2208 perp_bisector R G)\n    (hA : A \u2208 Metric.sphere X (dist X G)) (hB : B \u2208 Metric.sphere X (dist X G))\n    (hA_ne_G : A \u2260 G) (hB_ne_G : B \u2260 G) (hA_ne_B : A \u2260 B)\n    (hA_color : color A = color G) (hB_color : color B = color G) : color X = color G := by\n  have hRG : dist X R = dist X G := perp_bisector_equidistant R G X hXperp\n  have hA_dist : dist X A = dist X G := by\n    rw [dist_comm]\n    rwa [Metric.mem_sphere] at hA\n  have hB_dist : dist X B = dist X G := by\n    rw [dist_comm]\n    rwa [Metric.mem_sphere] at hB\n  have h_indep : AffineIndependent \u211d ![G, A, B] :=\n    affineIndependent_three_points_on_circle X A B G hA hB hA_ne_G hB_ne_G hA_ne_B\n  let points : Fin 3 \u2192 EuclideanSpace \u211d (Fin 2) := ![G, A, B]\n  have h_indep' : AffineIndependent \u211d points := h_indep\n  let s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2 := Simplex.mk points h_indep'\n  have h_finrank : Module.finrank \u211d (EuclideanSpace \u211d (Fin 2)) = 2 := by\n    simpa using finrank_euclideanSpace_fin (\ud835\udd5c := \u211d) (n := 2)\n  have h_span : affineSpan \u211d (Set.range s.points) = \u22a4 :=\n    Affine.Simplex.span_eq_top s h_finrank\n  have hX_mem_span : X \u2208 affineSpan \u211d (Set.range s.points) := by\n    rw [h_span]\n    exact AffineSubspace.mem_top \u211d (EuclideanSpace \u211d (Fin 2)) X\n  have hr : \u2203 r, \u2200 i : Fin 3, dist (s.points i) X = r := by\n    refine \u27e8dist X G, ?_\u27e9\n    intro i\n    have : s.points i = points i := rfl\n    rw [this]\n    dsimp [points]\n    fin_cases i <;> simp [dist_comm, hA_dist, hB_dist]\n  have h_proj_eq_circumcenter : \u2191(s.orthogonalProjectionSpan X) = s.circumcenter :=\n    Affine.Simplex.orthogonalProjection_eq_circumcenter_of_exists_dist_eq s hr\n  have h_proj_eq_X : \u2191(s.orthogonalProjectionSpan X) = X := by\n    have hX_mem_top : X \u2208 (\u22a4 : AffineSubspace \u211d (EuclideanSpace \u211d (Fin 2))) := AffineSubspace.mem_top \u211d (EuclideanSpace \u211d (Fin 2)) X\n    have htop := (EuclideanGeometry.orthogonalProjection_eq_self_iff (s := \u22a4) (p := X)).mpr hX_mem_top\n    calc\n      \u2191(s.orthogonalProjectionSpan X) = \u2191(EuclideanGeometry.orthogonalProjection (affineSpan \u211d (Set.range s.points)) X) := rfl\n      _ = \u2191(EuclideanGeometry.orthogonalProjection (\u22a4 : AffineSubspace \u211d (EuclideanSpace \u211d (Fin 2))) X) := by\n        simp [h_span]\n      _ = X := htop\n  have hX_eq_circumcenter : X = s.circumcenter := by\n    calc\n      X = \u2191(s.orthogonalProjectionSpan X) := by symm; exact h_proj_eq_X\n      _ = s.circumcenter := h_proj_eq_circumcenter\n  have hall_same_color : \u2200 i j : Fin 3, color (s.points i) = color (s.points j) := by\n    intro i j\n    have hpts : \u2200 k : Fin 3, color (points k) = color G := by\n      intro k\n      fin_cases k <;> simp [points, hA_color, hB_color]\n    calc\n      color (s.points i) = color (points i) := rfl\n      _ = color G := hpts i\n      _ = color (points j) := (hpts j).symm\n      _ = color (s.points j) := rfl\n  have hcolor_circumcenter : color s.circumcenter = color (s.points 0) := h s hall_same_color\n  calc\n    color X = color s.circumcenter := by rw [hX_eq_circumcenter]\n    _ = color (s.points 0) := hcolor_circumcenter\n    _ = color G := by simp [s, points]"
+    },
+    {
+      "id": "contradiction_case1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 20.0,
+      "proof_length": 100,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the assumption that there exist three distinct points on the perpendicular bisector of RG all of color color R, we derive a contradiction.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Under the assumption that there exist three distinct points on the perpendicular bisector of `RG` all of color `color R`, we derive a contradiction. -/)\n  (proof := /-- Let `X1, X2, X3` be such points. By `exists_point_of_color_R_on_sphere_case1`, for each `k` we obtain `Z_k` on `Metric.sphere X_k (dist X_k G)` and `Metric.sphere G (dist R G / 2)` with color `color R`. By `distinct_Z`, these `Z_k` are distinct. Then `Z1, Z2, Z3` are three distinct points on `Metric.sphere G (dist R G / 2)`, all of color `color R`. By `affineIndependent_three_points_on_circle`, they are affinely independent, forming a 2-simplex `s` whose circumcenter is `G`. By the hypothesis `h`, since all vertices have color `color R`, the circumcenter `G` must have color `color R`. But `color G \u2260 color R`, contradiction. -/)]\nlemma contradiction_case1 (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (h : \u2200 (s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2), (\u2200 i j : Fin 3, color (s.points i) = color (s.points j)) \u2192 color s.circumcenter = color (s.points 0))\n    (R G : EuclideanSpace \u211d (Fin 2)) (hR_ne_G : color R \u2260 color G)\n    (X1 X2 X3 : EuclideanSpace \u211d (Fin 2)) (hX1_ne_X2 : X1 \u2260 X2) (hX1_ne_X3 : X1 \u2260 X3) (hX2_ne_X3 : X2 \u2260 X3)\n    (hX1perp : X1 \u2208 perp_bisector R G) (hX2perp : X2 \u2208 perp_bisector R G) (hX3perp : X3 \u2208 perp_bisector R G)\n    (hX1color : color X1 = color R) (hX2color : color X2 = color R) (hX3color : color X3 = color R) : False := by\n  have hR_ne_G_pointwise : R \u2260 G := by\n    intro h_eq\n    apply hR_ne_G\n    exact congrArg color h_eq\n  have hZ1_exists : \u2203 Z : EuclideanSpace \u211d (Fin 2), Z \u2208 Metric.sphere X1 (dist X1 G) \u2227 Z \u2208 Metric.sphere G ((dist R G)/2) \u2227 color Z = color R :=\n    exists_point_of_color_R_on_sphere_case1 color h R G X1 hR_ne_G hX1perp hX1color\n  rcases hZ1_exists with \u27e8Z1, hZ1, hZ1', hZ1_color\u27e9\n  have hZ2_exists : \u2203 Z : EuclideanSpace \u211d (Fin 2), Z \u2208 Metric.sphere X2 (dist X2 G) \u2227 Z \u2208 Metric.sphere G ((dist R G)/2) \u2227 color Z = color R :=\n    exists_point_of_color_R_on_sphere_case1 color h R G X2 hR_ne_G hX2perp hX2color\n  rcases hZ2_exists with \u27e8Z2, hZ2, hZ2', hZ2_color\u27e9\n  have hZ3_exists : \u2203 Z : EuclideanSpace \u211d (Fin 2), Z \u2208 Metric.sphere X3 (dist X3 G) \u2227 Z \u2208 Metric.sphere G ((dist R G)/2) \u2227 color Z = color R :=\n    exists_point_of_color_R_on_sphere_case1 color h R G X3 hR_ne_G hX3perp hX3color\n  rcases hZ3_exists with \u27e8Z3, hZ3, hZ3', hZ3_color\u27e9\n  have hZ_distinct : Z1 \u2260 Z2 \u2227 Z1 \u2260 Z3 \u2227 Z2 \u2260 Z3 :=\n    distinct_Z R G hR_ne_G_pointwise X1 X2 X3 hX1_ne_X2 hX1_ne_X3 hX2_ne_X3 hX1perp hX2perp hX3perp Z1 Z2 Z3 hZ1 hZ1' hZ2 hZ2' hZ3 hZ3'\n  rcases hZ_distinct with \u27e8hZ12, hZ13, hZ23\u27e9\n  have h_cosp : EuclideanGeometry.Cospherical ({Z1, Z2, Z3} : Set (EuclideanSpace \u211d (Fin 2))) := by\n    rw [EuclideanGeometry.cospherical_def]\n    refine \u27e8G, (dist R G)/2, ?_\u27e9\n    intro p hp\n    simp at hp\n    rcases hp with (rfl|rfl|rfl)\n    \u00b7 exact hZ1'\n    \u00b7 exact hZ2'\n    \u00b7 exact hZ3'\n  have h_affine : AffineIndependent \u211d ![Z1, Z2, Z3] :=\n    EuclideanGeometry.Cospherical.affineIndependent_of_ne h_cosp hZ12 hZ13 hZ23\n  let s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2 := Simplex.mk ![Z1, Z2, Z3] h_affine\n  have h_circumcenter_eq_G : s.circumcenter = G := by\n    have h_span_top : affineSpan \u211d (Set.range s.points) = \u22a4 := by\n      have hi : AffineIndependent \u211d ![Z1, Z2, Z3] := h_affine\n      have h_card : Fintype.card (Fin 3) = Module.finrank \u211d (EuclideanSpace \u211d (Fin 2)) + 1 := by\n        simp\n      exact ((hi.affineSpan_eq_top_iff_card_eq_finrank_add_one).2 h_card)\n    have h_span : G \u2208 affineSpan \u211d (Set.range s.points) := by\n      rw [h_span_top]\n      exact AffineSubspace.mem_top (P := EuclideanSpace \u211d (Fin 2)) \u211d (EuclideanSpace \u211d (Fin 2)) G\n    have h_range_subset : Set.range s.points \u2286 Metric.sphere G ((dist R G)/2) := by\n      intro p hp\n      rcases hp with \u27e8i, rfl\u27e9\n      dsimp [s]\n      fin_cases i <;> assumption\n    have h_cs_cond : (EuclideanGeometry.Sphere.mk G ((dist R G)/2)).center \u2208 affineSpan \u211d (Set.range s.points) \u2227\n      Set.range s.points \u2286 Metric.sphere ((EuclideanGeometry.Sphere.mk G ((dist R G)/2)).center) ((EuclideanGeometry.Sphere.mk G ((dist R G)/2)).radius) := by\n      constructor\n      \u00b7 simpa using h_span\n      \u00b7 simpa using h_range_subset\n    have h_unique := (Affine.Simplex.circumsphere_unique_dist_eq s).2\n    have h_eq_sphere : (EuclideanGeometry.Sphere.mk G ((dist R G)/2)) = s.circumsphere :=\n      h_unique (EuclideanGeometry.Sphere.mk G ((dist R G)/2)) h_cs_cond\n    have h_center_eq : (EuclideanGeometry.Sphere.mk G ((dist R G)/2)).center = s.circumsphere.center := by\n      rw [h_eq_sphere]\n    have h_circsphere_center_eq_circumcenter : s.circumsphere.center = s.circumcenter := by\n      simpa using Affine.Simplex.circumsphere_center s\n    calc\n      s.circumcenter = s.circumsphere.center := by symm; exact h_circsphere_center_eq_circumcenter\n      _ = (EuclideanGeometry.Sphere.mk G ((dist R G)/2)).center := by symm; exact h_center_eq\n      _ = G := rfl\n  have h_vertices_color : \u2200 i j : Fin 3, color (s.points i) = color (s.points j) := by\n    intro i j\n    fin_cases i <;> fin_cases j <;> simp [s, hZ1_color, hZ2_color, hZ3_color]\n  have h_circumcenter_color : color s.circumcenter = color (s.points 0) := h s h_vertices_color\n  rw [h_circumcenter_eq_G] at h_circumcenter_color\n  have h_first_point_color : color (s.points 0) = color R := by\n    simp [s, hZ1_color]\n  rw [h_first_point_color] at h_circumcenter_color\n  exact hR_ne_G h_circumcenter_color.symm"
+    },
+    {
+      "id": "contradiction_case2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Under the assumption that there exist three distinct points on the perpendicular bisector of RG all of color color G, we derive a contradiction.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Under the assumption that there exist three distinct points on the perpendicular bisector of `RG` all of color `color G`, we derive a contradiction. -/)\n  (proof := /-- Symmetric to case 1, swapping the roles of `R` and `G`. -/)]\nlemma contradiction_case2 (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (h : \u2200 (s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2), (\u2200 i j : Fin 3, color (s.points i) = color (s.points j)) \u2192 color s.circumcenter = color (s.points 0))\n    (R G : EuclideanSpace \u211d (Fin 2)) (hR_ne_G : color R \u2260 color G)\n    (X1 X2 X3 : EuclideanSpace \u211d (Fin 2)) (hX1_ne_X2 : X1 \u2260 X2) (hX1_ne_X3 : X1 \u2260 X3) (hX2_ne_X3 : X2 \u2260 X3)\n    (hX1perp : X1 \u2208 perp_bisector R G) (hX2perp : X2 \u2208 perp_bisector R G) (hX3perp : X3 \u2208 perp_bisector R G)\n    (hX1color : color X1 = color G) (hX2color : color X2 = color G) (hX3color : color X3 = color G) : False := by\n  -- First, deduce R \u2260 G\n  have hR_ne_G' : R \u2260 G := by\n    intro h_eq\n    apply hR_ne_G\n    rw [h_eq]\n  have hR_ne_G_swap : G \u2260 R := by\n    intro h_eq\n    apply hR_ne_G'\n    exact h_eq.symm\n  -- For each X_i, get Z_i using exists_point_of_color_G_on_sphere_case2\n  obtain \u27e8Z1, hZ1_sphere_X1, hZ1_sphere_R, hZ1_color\u27e9 := exists_point_of_color_G_on_sphere_case2 color h R G X1 hR_ne_G hX1perp hX1color\n  obtain \u27e8Z2, hZ2_sphere_X2, hZ2_sphere_R, hZ2_color\u27e9 := exists_point_of_color_G_on_sphere_case2 color h R G X2 hR_ne_G hX2perp hX2color\n  obtain \u27e8Z3, hZ3_sphere_X3, hZ3_sphere_R, hZ3_color\u27e9 := exists_point_of_color_G_on_sphere_case2 color h R G X3 hR_ne_G hX3perp hX3color\n  -- Show that Z1, Z2, Z3 are distinct.\n  -- Use distinct_Z with R and G swapped.\n  have hX1perp_swap : X1 \u2208 perp_bisector G R := by\n    have h_eq : dist X1 R = dist X1 G := hX1perp\n    rw [perp_bisector]\n    dsimp\n    rw [eq_comm]\n    exact h_eq\n  have hX2perp_swap : X2 \u2208 perp_bisector G R := by\n    have h_eq : dist X2 R = dist X2 G := hX2perp\n    rw [perp_bisector]\n    dsimp\n    rw [eq_comm]\n    exact h_eq\n  have hX3perp_swap : X3 \u2208 perp_bisector G R := by\n    have h_eq : dist X3 R = dist X3 G := hX3perp\n    rw [perp_bisector]\n    dsimp\n    rw [eq_comm]\n    exact h_eq\n  have hZ_distinct : Z1 \u2260 Z2 \u2227 Z1 \u2260 Z3 \u2227 Z2 \u2260 Z3 := by\n    refine distinct_Z G R hR_ne_G_swap X1 X2 X3 hX1_ne_X2 hX1_ne_X3 hX2_ne_X3 hX1perp_swap hX2perp_swap hX3perp_swap Z1 Z2 Z3 ?_ ?_ ?_ ?_ ?_ ?_\n    \u00b7 exact hZ1_sphere_X1\n    \u00b7 simpa [dist_comm] using hZ1_sphere_R\n    \u00b7 exact hZ2_sphere_X2\n    \u00b7 simpa [dist_comm] using hZ2_sphere_R\n    \u00b7 exact hZ3_sphere_X3\n    \u00b7 simpa [dist_comm] using hZ3_sphere_R\n  rcases hZ_distinct with \u27e8hZ1_ne_Z2, hZ1_ne_Z3, hZ2_ne_Z3\u27e9\n  -- Now Z1, Z2, Z3 are three distinct points on the sphere centered at R with radius dist R G/2\n  -- They are affinely independent.\n  have hdist_R_Z1 : dist R Z1 = dist R G / 2 := by\n    have h := Metric.mem_sphere.mp hZ1_sphere_R\n    -- h : dist Z1 R = dist R G / 2\n    -- we need dist R Z1 = dist R G / 2\n    -- using dist_comm\n    rw [dist_comm] at h\n    exact h\n  have h_independent : AffineIndependent \u211d ![Z1, Z2, Z3] := by\n    -- apply affineIndependent_three_points_on_circle with X = R, A = Z2, B = Z3, G = Z1\n    have hZ2_sphere_R_Z1 : Z2 \u2208 Metric.sphere R (dist R Z1) := by\n      -- from hZ2_sphere_R and hdist_R_Z1\n      simpa [hdist_R_Z1] using hZ2_sphere_R\n    have hZ3_sphere_R_Z1 : Z3 \u2208 Metric.sphere R (dist R Z1) := by\n      simpa [hdist_R_Z1] using hZ3_sphere_R\n    have hZ2_ne_Z1 : Z2 \u2260 Z1 := Ne.symm hZ1_ne_Z2\n    have hZ3_ne_Z1 : Z3 \u2260 Z1 := Ne.symm hZ1_ne_Z3\n    exact affineIndependent_three_points_on_circle R Z2 Z3 Z1 hZ2_sphere_R_Z1 hZ3_sphere_R_Z1 hZ2_ne_Z1 hZ3_ne_Z1 hZ2_ne_Z3\n  have h_card : Fintype.card (Fin 3) = Module.finrank \u211d (EuclideanSpace \u211d (Fin 2)) + 1 := by\n    simp [finrank_euclideanSpace, Fintype.card_fin]\n  have h_span : affineSpan \u211d (Set.range (![Z1, Z2, Z3])) = \u22a4 :=\n    (h_independent.affineSpan_eq_top_iff_card_eq_finrank_add_one).mpr h_card\n  have hR_mem_span : R \u2208 affineSpan \u211d (Set.range (![Z1, Z2, Z3])) := by\n    rw [h_span]\n    exact AffineSubspace.mem_top \u211d (EuclideanSpace \u211d (Fin 2)) R\n  have h_range_subset : Set.range (![Z1, Z2, Z3]) \u2286 Metric.sphere R (dist R G / 2) := by\n    intro p hp\n    rcases hp with \u27e8i, rfl\u27e9\n    fin_cases i <;> assumption\n  -- define sphere_R\n  let sphere_R : EuclideanGeometry.Sphere (EuclideanSpace \u211d (Fin 2)) :=\n    EuclideanGeometry.Sphere.mk R (dist R G / 2)\n  have hsphere_R_candidate : sphere_R.center \u2208 affineSpan \u211d (Set.range (![Z1, Z2, Z3])) \u2227\n      Set.range (![Z1, Z2, Z3]) \u2286 Metric.sphere sphere_R.center sphere_R.radius := by\n    refine \u27e8by\n      simpa [sphere_R] using hR_mem_span, ?_\u27e9\n    simpa [sphere_R] using h_range_subset\n  have h_unique := h_independent.existsUnique_dist_eq\n  obtain \u27e8cs, hcs, huniq\u27e9 := h_unique\n  -- cs is the unique sphere with center in affine span and containing the points.\n  -- We need to show cs = sphere_R and cs = s.circumsphere.\n  have hcs_eq_sphere_R : cs = sphere_R := by\n    -- huniq gives \u2200 y, (condition y) \u2192 y = cs, so huniq sphere_R hsphere_R_candidate : sphere_R = cs\n    exact (huniq sphere_R hsphere_R_candidate).symm\n  -- Now construct the simplex s with vertices Z1, Z2, Z3\n  let s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2 :=\n    Simplex.mk ![Z1, Z2, Z3] h_independent\n  have hcenter_eq : s.circumsphere.center = s.circumcenter := by\n    simp [Simplex.circumsphere_center]\n  have hradius_eq : s.circumsphere.radius = s.circumradius := by\n    simp [Simplex.circumsphere_radius]\n  have h_circumsphere_candidate : s.circumsphere.center \u2208 affineSpan \u211d (Set.range (![Z1, Z2, Z3])) \u2227\n      Set.range (![Z1, Z2, Z3]) \u2286 Metric.sphere s.circumsphere.center s.circumsphere.radius := by\n    refine \u27e8by\n      -- s.circumcenter_mem_affineSpan\n      simpa [s, hcenter_eq] using s.circumcenter_mem_affineSpan, ?_\u27e9\n    intro p hp\n    rcases hp with \u27e8i, rfl\u27e9\n    have hdist : dist (![Z1, Z2, Z3] i) s.circumcenter = s.circumradius :=\n      s.dist_circumcenter_eq_circumradius i\n    rw [hcenter_eq, hradius_eq]\n    exact Metric.mem_sphere.mpr hdist\n  have hcs_eq_s_circumsphere : cs = s.circumsphere := by\n    -- huniq s.circumsphere h_circumsphere_candidate : s.circumsphere = cs\n    exact (huniq s.circumsphere h_circumsphere_candidate).symm\n  have h_circumcenter_eq_R : s.circumcenter = R := by\n    calc\n      s.circumcenter = s.circumsphere.center := by symm; exact hcenter_eq\n      _ = cs.center := by rw [hcs_eq_s_circumsphere]\n      _ = sphere_R.center := by rw [hcs_eq_sphere_R]\n      _ = R := by simp [sphere_R]\n  -- Now apply h to s\n  have h_all_same_color : \u2200 i j : Fin 3, color (s.points i) = color (s.points j) := by\n    intro i j\n    fin_cases i <;> fin_cases j <;> simp [s, hZ1_color, hZ2_color, hZ3_color]\n  have h_circumcenter_color_eq : color s.circumcenter = color (s.points 0) := h s h_all_same_color\n  -- But s.circumcenter = R and s.points 0 = Z1\n  have h_s_points0 : s.points 0 = Z1 := by simp [s]\n  rw [h_circumcenter_eq_R, h_s_points0] at h_circumcenter_color_eq\n  -- So h_circumcenter_color_eq: color R = color Z1\n  -- But we know color Z1 = color G and color R \u2260 color G\n  rw [hZ1_color] at h_circumcenter_color_eq\n  exact hR_ne_G h_circumcenter_color_eq"
+    },
+    {
+      "id": "dist_X_G_ge_half_RG",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.9,
+      "proof_length": 68,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any point X on the perpendicular bisector of RG, dist X G \u2265 dist R G / 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For any point `X` on the perpendicular bisector of `RG`, `dist X G \u2265 dist R G / 2`. -/)\n  (proof := /-- Let `M` be the midpoint of `RG`. Then triangle `X M G` is right-angled at `M`, so by the Pythagorean theorem, `dist X G ^ 2 = dist X M ^ 2 + dist M G ^ 2`, which implies `dist X G \u2265 dist M G`. Since `dist M G = dist R G / 2`, we obtain `dist X G \u2265 dist R G / 2`. -/)]\nlemma dist_X_G_ge_half_RG (R G X : EuclideanSpace \u211d (Fin 2)) (hXperp : X \u2208 perp_bisector R G) : dist X G \u2265 dist R G / 2 := by\n  have inner_sub_sub_self' (x y : EuclideanSpace \u211d (Fin 2)) : inner \u211d (x - y) (x - y) = inner \u211d x x - 2 * inner \u211d x y + inner \u211d y y := by\n    calc\n      inner \u211d (x - y) (x - y) = inner \u211d x (x - y) - inner \u211d y (x - y) := by rw [inner_sub_left]\n      _ = (inner \u211d x x - inner \u211d x y) - (inner \u211d y x - inner \u211d y y) := by simp [inner_sub_right]\n      _ = inner \u211d x x - inner \u211d x y - inner \u211d y x + inner \u211d y y := by ring\n      _ = inner \u211d x x - 2 * inner \u211d x y + inner \u211d y y := by\n        have h : inner \u211d y x = inner \u211d x y := real_inner_comm _ _\n        rw [h]\n        ring\n  have two_mul_inner_X_G_minus_R_eq_inner_G_G_sub_inner_R_R (R G X : EuclideanSpace \u211d (Fin 2)) (hXperp : X \u2208 perp_bisector R G) :\n      2 * inner \u211d X (G - R) = inner \u211d G G - inner \u211d R R := by\n    have hdist_eq : dist X R = dist X G := perp_bisector_equidistant R G X hXperp\n    have hnorm_sq_eq : \u2016X - R\u2016^2 = \u2016X - G\u2016^2 := by\n      have hnorm_eq : \u2016X - R\u2016 = \u2016X - G\u2016 := by\n        simpa [dist_eq_norm] using hdist_eq\n      calc\n        \u2016X - R\u2016^2 = (\u2016X - R\u2016) * (\u2016X - R\u2016) := by ring\n        _ = (\u2016X - G\u2016) * (\u2016X - G\u2016) := by rw [hnorm_eq]\n        _ = \u2016X - G\u2016^2 := by ring\n    have h_inner_eq : inner \u211d (X - R) (X - R) = inner \u211d (X - G) (X - G) := by\n      simpa [inner_self_eq_norm_sq] using hnorm_sq_eq\n    have h_expanded : inner \u211d X X - 2 * inner \u211d X R + inner \u211d R R = inner \u211d X X - 2 * inner \u211d X G + inner \u211d G G := by\n      calc\n        inner \u211d X X - 2 * inner \u211d X R + inner \u211d R R = inner \u211d (X - R) (X - R) := by rw [inner_sub_sub_self']\n        _ = inner \u211d (X - G) (X - G) := h_inner_eq\n        _ = inner \u211d X X - 2 * inner \u211d X G + inner \u211d G G := by rw [inner_sub_sub_self']\n    have h_simplified : -2 * inner \u211d X R + inner \u211d R R = -2 * inner \u211d X G + inner \u211d G G := by\n      linarith\n    calc\n      2 * inner \u211d X (G - R) = 2 * (inner \u211d X G - inner \u211d X R) := by rw [inner_sub_right]\n      _ = 2 * inner \u211d X G - 2 * inner \u211d X R := by ring\n      _ = (-2 * inner \u211d X R + inner \u211d R R) - (-2 * inner \u211d X G + inner \u211d G G) + (inner \u211d G G - inner \u211d R R) := by ring\n      _ = (inner \u211d G G - inner \u211d R R) := by\n        rw [h_simplified]\n        ring\n  have inner_midpoint_sub (R G : EuclideanSpace \u211d (Fin 2)) : inner \u211d (midpoint \u211d R G) (G - R) = (1/2 : \u211d) * (inner \u211d G G - inner \u211d R R) := by\n    have h_midpoint : midpoint \u211d R G = (\u215f2 : \u211d) \u2022 (R + G) := midpoint_eq_smul_add _ _ _\n    rw [h_midpoint]\n    simp [inner_smul_left, inner_add_left, inner_sub_right, real_inner_comm, add_comm, add_left_comm, add_assoc]\n    ring\n  have inner_X_minus_midpoint_G_minus_R_eq_zero (R G X : EuclideanSpace \u211d (Fin 2)) (hXperp : X \u2208 perp_bisector R G) :\n      inner \u211d (X - midpoint \u211d R G) (G - R) = 0 := by\n    have h1 : 2 * inner \u211d X (G - R) = inner \u211d G G - inner \u211d R R :=\n      two_mul_inner_X_G_minus_R_eq_inner_G_G_sub_inner_R_R R G X hXperp\n    have h2 : inner \u211d (midpoint \u211d R G) (G - R) = (1/2 : \u211d) * (inner \u211d G G - inner \u211d R R) :=\n      inner_midpoint_sub R G\n    calc\n      inner \u211d (X - midpoint \u211d R G) (G - R) = inner \u211d X (G - R) - inner \u211d (midpoint \u211d R G) (G - R) := by rw [inner_sub_left]\n      _ = ((inner \u211d G G - inner \u211d R R) / 2) - ((1/2 : \u211d) * (inner \u211d G G - inner \u211d R R)) := by\n        have h1' : inner \u211d X (G - R) = (inner \u211d G G - inner \u211d R R) / 2 := by\n          linarith\n        rw [h1', h2]\n      _ = 0 := by ring\n  set M := midpoint \u211d R G with hM\n  have h_orth_main : inner \u211d (X - M) (G - R) = 0 :=\n    inner_X_minus_midpoint_G_minus_R_eq_zero R G X hXperp\n  have h_orth : inner \u211d (X - M) (M - G) = 0 := by\n    have h_orth' : inner \u211d (X - M) (R - G) = 0 := by\n      calc\n        inner \u211d (X - M) (R - G) = inner \u211d (X - M) (-(G - R)) := by\n          abel\n        _ = - inner \u211d (X - M) (G - R) := by rw [inner_neg_right]\n        _ = -0 := by rw [h_orth_main]\n        _ = 0 := by ring\n    have hMsubG : M - G = (\u215f2 : \u211d) \u2022 (R - G) := by\n      rw [midpoint_sub_right]\n    rw [hMsubG]\n    simp [inner_smul_right, h_orth']\n  have h_pythag : \u2016(X - M) + (M - G)\u2016^2 = \u2016X - M\u2016^2 + \u2016M - G\u2016^2 := by\n    have htemp := norm_add_sq_eq_norm_sq_add_norm_sq_of_inner_eq_zero (X - M) (M - G) h_orth\n    nlinarith\n  have h_sum_eq : (X - M) + (M - G) = X - G := by\n    abel\n  rw [h_sum_eq] at h_pythag\n  have h_sq_ineq : \u2016X - G\u2016^2 \u2265 \u2016M - G\u2016^2 := by\n    nlinarith\n  have h_norm_ineq : \u2016X - G\u2016 \u2265 \u2016M - G\u2016 := by\n    have h_nonneg_XG : \u2016X - G\u2016 \u2265 0 := norm_nonneg _\n    have h_nonneg_MG : \u2016M - G\u2016 \u2265 0 := norm_nonneg _\n    nlinarith\n  have h_dist_XG : dist X G = \u2016X - G\u2016 := dist_eq_norm _ _\n  have h_dist_MG : dist M G = \u2016M - G\u2016 := dist_eq_norm _ _\n  have h_dist_MG_half : dist M G = dist R G / 2 := by\n    have htemp := dist_midpoint_right (\ud835\udd5c := \u211d) R G\n    dsimp [M]\n    simpa [div_eq_inv_mul, norm_num] using htemp\n  calc\n    dist X G = \u2016X - G\u2016 := h_dist_XG\n    _ \u2265 \u2016M - G\u2016 := h_norm_ineq\n    _ = dist M G := h_dist_MG.symm\n    _ = dist R G / 2 := h_dist_MG_half"
+    },
+    {
+      "id": "distinct_Z",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 19.51,
+      "proof_length": 92,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Given three distinct centers X1, X2, X3 on the perpendicular bisector of RG, and points Z_k each lying on Metric.sphere X_k (dist X_k G) and Metric.sphere G (dist R G / 2), the Z_k are distinct.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Given three distinct centers `X1, X2, X3` on the perpendicular bisector of `RG`, and points `Z_k` each lying on `Metric.sphere X_k (dist X_k G)` and `Metric.sphere G (dist R G / 2)`, the `Z_k` are distinct. -/)\n  (proof := /-- Suppose `Z_i = Z_j` for `i \u2260 j`. Then `Z_i` lies in `Metric.sphere X_i (dist X_i G) \u2229 Metric.sphere X_j (dist X_j G)`, which by `two_circles_intersection_eq_R_G` is `{R, G}`. So `Z_i = R` or `Z_i = G`. But `dist Z_i G = dist R G / 2`. If `Z_i = G`, then `dist G G = 0 \u2260 dist R G / 2` (since `R \u2260 G`). If `Z_i = R`, then `dist R G = dist R G / 2` implies `dist R G = 0`, contradiction. Therefore `Z_i \u2260 Z_j`. -/)]\nlemma distinct_Z (R G : EuclideanSpace \u211d (Fin 2)) (hR_ne_G : R \u2260 G)\n    (X1 X2 X3 : EuclideanSpace \u211d (Fin 2)) (hX1_ne_X2 : X1 \u2260 X2) (hX1_ne_X3 : X1 \u2260 X3) (hX2_ne_X3 : X2 \u2260 X3)\n    (hX1perp : X1 \u2208 perp_bisector R G) (hX2perp : X2 \u2208 perp_bisector R G) (hX3perp : X3 \u2208 perp_bisector R G)\n    (Z1 Z2 Z3 : EuclideanSpace \u211d (Fin 2))\n    (hZ1 : Z1 \u2208 Metric.sphere X1 (dist X1 G)) (hZ1' : Z1 \u2208 Metric.sphere G (dist R G / 2))\n    (hZ2 : Z2 \u2208 Metric.sphere X2 (dist X2 G)) (hZ2' : Z2 \u2208 Metric.sphere G (dist R G / 2))\n    (hZ3 : Z3 \u2208 Metric.sphere X3 (dist X3 G)) (hZ3' : Z3 \u2208 Metric.sphere G (dist R G / 2)) :\n    Z1 \u2260 Z2 \u2227 Z1 \u2260 Z3 \u2227 Z2 \u2260 Z3 := by\n  have h12 : Z1 \u2260 Z2 := by\n    intro h_eq\n    have hZ1_in_X2_sphere : Z1 \u2208 Metric.sphere X2 (dist X2 G) := by\n      rw [h_eq]\n      exact hZ2\n    have h_intersect_eq : (Metric.sphere X1 (dist X1 G) \u2229 Metric.sphere X2 (dist X2 G)) = {R, G} :=\n      two_circles_intersection_eq_R_G X1 X2 R G hX1_ne_X2 hX1perp hX2perp hR_ne_G\n    have hZ1_in_inter : Z1 \u2208 Metric.sphere X1 (dist X1 G) \u2229 Metric.sphere X2 (dist X2 G) :=\n      Set.mem_inter hZ1 hZ1_in_X2_sphere\n    have hZ1_in_set : Z1 \u2208 ({R, G} : Set (EuclideanSpace \u211d (Fin 2))) := by\n      rw [\u2190 h_intersect_eq]\n      exact hZ1_in_inter\n    have hcases : Z1 = R \u2228 Z1 = G := by\n      simpa [Set.mem_insert_iff, Set.mem_singleton_iff] using hZ1_in_set\n    rcases hcases with (hZ1_eq_R | hZ1_eq_G)\n    \u00b7 -- Z1 = R\n      have hdist_eq : dist R G = dist R G / 2 := by\n        calc\n          dist R G = dist Z1 G := by rw [hZ1_eq_R]\n          _ = dist R G / 2 := hZ1'\n      have hdist_pos : dist R G > 0 := dist_pos.mpr hR_ne_G\n      have hzero : dist R G = 0 := by\n        nlinarith\n      nlinarith\n    \u00b7 -- Z1 = G\n      have hdist_eq : dist G G = dist R G / 2 := by\n        calc\n          dist G G = dist Z1 G := by rw [hZ1_eq_G]\n          _ = dist R G / 2 := hZ1'\n      have hself : dist G G = 0 := dist_self G\n      have hzero2 : dist R G / 2 = 0 := by\n        calc\n          dist R G / 2 = dist G G := by symm; exact hdist_eq\n          _ = 0 := hself\n      have hdist_pos : dist R G > 0 := dist_pos.mpr hR_ne_G\n      have hzero_dist : dist R G = 0 := by\n        nlinarith\n      nlinarith\n  have h13 : Z1 \u2260 Z3 := by\n    intro h_eq\n    have hZ1_in_X3_sphere : Z1 \u2208 Metric.sphere X3 (dist X3 G) := by\n      rw [h_eq]\n      exact hZ3\n    have h_intersect_eq : (Metric.sphere X1 (dist X1 G) \u2229 Metric.sphere X3 (dist X3 G)) = {R, G} :=\n      two_circles_intersection_eq_R_G X1 X3 R G hX1_ne_X3 hX1perp hX3perp hR_ne_G\n    have hZ1_in_inter : Z1 \u2208 Metric.sphere X1 (dist X1 G) \u2229 Metric.sphere X3 (dist X3 G) :=\n      Set.mem_inter hZ1 hZ1_in_X3_sphere\n    have hZ1_in_set : Z1 \u2208 ({R, G} : Set (EuclideanSpace \u211d (Fin 2))) := by\n      rw [\u2190 h_intersect_eq]\n      exact hZ1_in_inter\n    have hcases : Z1 = R \u2228 Z1 = G := by\n      simpa [Set.mem_insert_iff, Set.mem_singleton_iff] using hZ1_in_set\n    rcases hcases with (hZ1_eq_R | hZ1_eq_G)\n    \u00b7 -- Z1 = R\n      have hdist_eq : dist R G = dist R G / 2 := by\n        calc\n          dist R G = dist Z1 G := by rw [hZ1_eq_R]\n          _ = dist R G / 2 := hZ1'\n      have hdist_pos : dist R G > 0 := dist_pos.mpr hR_ne_G\n      have hzero : dist R G = 0 := by\n        nlinarith\n      nlinarith\n    \u00b7 -- Z1 = G\n      have hdist_eq : dist G G = dist R G / 2 := by\n        calc\n          dist G G = dist Z1 G := by rw [hZ1_eq_G]\n          _ = dist R G / 2 := hZ1'\n      have hself : dist G G = 0 := dist_self G\n      have hzero2 : dist R G / 2 = 0 := by\n        calc\n          dist R G / 2 = dist G G := by symm; exact hdist_eq\n          _ = 0 := hself\n      have hdist_pos : dist R G > 0 := dist_pos.mpr hR_ne_G\n      have hzero_dist : dist R G = 0 := by\n        nlinarith\n      nlinarith\n  have h23 : Z2 \u2260 Z3 := by\n    intro h_eq\n    have hZ2_in_X3_sphere : Z2 \u2208 Metric.sphere X3 (dist X3 G) := by\n      rw [h_eq]\n      exact hZ3\n    have h_intersect_eq : (Metric.sphere X2 (dist X2 G) \u2229 Metric.sphere X3 (dist X3 G)) = {R, G} :=\n      two_circles_intersection_eq_R_G X2 X3 R G hX2_ne_X3 hX2perp hX3perp hR_ne_G\n    have hZ2_in_inter : Z2 \u2208 Metric.sphere X2 (dist X2 G) \u2229 Metric.sphere X3 (dist X3 G) :=\n      Set.mem_inter hZ2 hZ2_in_X3_sphere\n    have hZ2_in_set : Z2 \u2208 ({R, G} : Set (EuclideanSpace \u211d (Fin 2))) := by\n      rw [\u2190 h_intersect_eq]\n      exact hZ2_in_inter\n    have hcases : Z2 = R \u2228 Z2 = G := by\n      simpa [Set.mem_insert_iff, Set.mem_singleton_iff] using hZ2_in_set\n    rcases hcases with (hZ2_eq_R | hZ2_eq_G)\n    \u00b7 -- Z2 = R\n      have hdist_eq : dist R G = dist R G / 2 := by\n        calc\n          dist R G = dist Z2 G := by rw [hZ2_eq_R]\n          _ = dist R G / 2 := hZ2'\n      have hdist_pos : dist R G > 0 := dist_pos.mpr hR_ne_G\n      have hzero : dist R G = 0 := by\n        nlinarith\n      nlinarith\n    \u00b7 -- Z2 = G\n      have hdist_eq : dist G G = dist R G / 2 := by\n        calc\n          dist G G = dist Z2 G := by rw [hZ2_eq_G]\n          _ = dist R G / 2 := hZ2'\n      have hself : dist G G = 0 := dist_self G\n      have hzero2 : dist R G / 2 = 0 := by\n        calc\n          dist R G / 2 = dist G G := by symm; exact hdist_eq\n          _ = 0 := hself\n      have hdist_pos : dist R G > 0 := dist_pos.mpr hR_ne_G\n      have hzero_dist : dist R G = 0 := by\n        nlinarith\n      nlinarith\n  exact And.intro h12 (And.intro h13 h23)"
+    },
+    {
+      "id": "exists_five_distinct_points_on_perp_bisector",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.46,
+      "proof_length": 29,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The perpendicular bisector of two distinct points is a line, hence infinite. Therefore, we can choose five distinct points on it.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- The perpendicular bisector of two distinct points is a line, hence infinite. Therefore, we can choose five distinct points on it. -/)\n  (proof := /-- Since `R \u2260 G`, the perpendicular bisector is an affine line (infinite). In Euclidean plane, an infinite set has infinitely many points; in particular, there exist five distinct points. -/)]\nlemma exists_five_distinct_points_on_perp_bisector (R G : EuclideanSpace \u211d (Fin 2)) (hR_ne_G : R \u2260 G) :\n    \u2203 (P : Fin 5 \u2192 EuclideanSpace \u211d (Fin 2)), (\u2200 i, P i \u2208 perp_bisector R G) \u2227 (\u2200 i j, i \u2260 j \u2192 P i \u2260 P j) := by\n  set d := G - R with hd\n  have hd_ne_zero : d \u2260 0 := by\n    intro hzero\n    apply hR_ne_G\n    calc\n      R = R + 0 := by simp\n      _ = R + d := by simp [hzero]\n      _ = R + (G - R) := rfl\n      _ = G := by simp\n  set v : EuclideanSpace \u211d (Fin 2) := !\u2082[-d 1, d 0] with hv\n  have hv_orth : inner (\ud835\udd5c := \u211d) d v = 0 := by\n    rw [EuclideanSpace.inner_eq_star_dotProduct]\n    have h1 : v.ofLp = ![ -d 1, d 0] := by\n      ext i; fin_cases i <;> simp [v]\n    have h2 : d.ofLp = ![d 0, d 1] := by\n      ext i; fin_cases i <;> simp\n    rw [h1, h2]\n    simp [Matrix.vec2_dotProduct', mul_comm, add_comm]\n  have hv_ne_zero : v \u2260 0 := by\n    intro hzero\n    apply hd_ne_zero\n    have h0 := congrArg (fun x : EuclideanSpace \u211d (Fin 2) => x 0) hzero\n    have h1 := congrArg (fun x : EuclideanSpace \u211d (Fin 2) => x 1) hzero\n    simp [v] at h0 h1\n    have hd0 : d 0 = 0 := h1\n    have hd1 : d 1 = 0 := by linarith\n    ext i\n    fin_cases i <;> simp [hd0, hd1]\n  set M := (1/2 : \u211d) \u2022 (R + G) with hM\n  let t : Fin 5 \u2192 \u211d := fun i => (i.val : \u211d)\n  have ht_inj : \u2200 i j, i \u2260 j \u2192 t i \u2260 t j := by\n    intro i j hne\n    intro h_eq\n    apply hne\n    have hval_eq : (i : \u2115) = (j : \u2115) := (Nat.cast_inj (R := \u211d)).mp (by simpa [t] using h_eq)\n    exact Fin.val_injective hval_eq\n  set P : Fin 5 \u2192 EuclideanSpace \u211d (Fin 2) := fun i => M + (t i) \u2022 v with hP\n  have h_sub_eq : (1/2 : \u211d) \u2022 (R + G) - R = (1/2 : \u211d) \u2022 (G - R) := by\n    calc\n      (1/2 : \u211d) \u2022 (R + G) - R = (1/2 : \u211d) \u2022 R + (1/2 : \u211d) \u2022 G - R := by simp [add_smul]\n      _ = ((1/2 : \u211d) \u2022 R - R) + (1/2 : \u211d) \u2022 G := by\n        abel\n      _ = (-(1/2 : \u211d)) \u2022 R + (1/2 : \u211d) \u2022 G := by\n        have h : (1/2 : \u211d) \u2022 R - R = (-(1/2 : \u211d)) \u2022 R := by\n          calc\n            (1/2 : \u211d) \u2022 R - R = (1/2 : \u211d) \u2022 R - 1 \u2022 R := by simp\n            _ = ((1/2 : \u211d) - 1) \u2022 R := by simp [sub_smul, one_smul]\n            _ = (-(1/2 : \u211d)) \u2022 R := by ring\n        rw [h]\n      _ = (1/2 : \u211d) \u2022 G - (1/2 : \u211d) \u2022 R := by\n        simp [sub_eq_add_neg, add_comm, add_left_comm, add_assoc]\n      _ = (1/2 : \u211d) \u2022 (G - R) := by simp [smul_sub]\n  have h_sub_eq2 : (1/2 : \u211d) \u2022 (R + G) - G = (-(1/2 : \u211d)) \u2022 (G - R) := by\n    calc\n      (1/2 : \u211d) \u2022 (R + G) - G = (1/2 : \u211d) \u2022 R + (1/2 : \u211d) \u2022 G - G := by simp [add_smul]\n      _ = (1/2 : \u211d) \u2022 R + ((1/2 : \u211d) \u2022 G - G) := by abel\n      _ = (1/2 : \u211d) \u2022 R + (-(1/2 : \u211d)) \u2022 G := by\n        have h : (1/2 : \u211d) \u2022 G - G = (-(1/2 : \u211d)) \u2022 G := by\n          calc\n            (1/2 : \u211d) \u2022 G - G = (1/2 : \u211d) \u2022 G - 1 \u2022 G := by simp\n            _ = ((1/2 : \u211d) - 1) \u2022 G := by simp [sub_smul, one_smul]\n            _ = (-(1/2 : \u211d)) \u2022 G := by ring\n        rw [h]\n      _ = (1/2 : \u211d) \u2022 R - (1/2 : \u211d) \u2022 G := by\n        simp [sub_eq_add_neg, add_comm, add_left_comm, add_assoc]\n      _ = (1/2 : \u211d) \u2022 (R - G) := by simp [smul_sub]\n      _ = (-(1/2 : \u211d)) \u2022 (G - R) := by\n        simp [sub_eq_add_neg, add_comm, add_left_comm, add_assoc, smul_add, add_smul, smul_neg, neg_smul]\n  refine \u27e8P, ?_, ?_\u27e9\n  \u00b7 intro i\n    rw [perp_bisector, Set.mem_setOf_eq]\n    rw [dist_eq_norm, dist_eq_norm]\n    have hPi_sub_R : P i - R = (1/2 : \u211d) \u2022 d + (t i) \u2022 v := by\n      calc\n        P i - R = (M + (t i) \u2022 v) - R := rfl\n        _ = ((1/2 : \u211d) \u2022 (R + G) - R) + (t i) \u2022 v := by\n          simp [hM, add_sub_assoc, add_comm, add_left_comm, add_assoc]\n        _ = ((1/2 : \u211d) \u2022 (G - R)) + (t i) \u2022 v := by rw [h_sub_eq]\n        _ = (1/2 : \u211d) \u2022 d + (t i) \u2022 v := by simp [hd]\n    have hPi_sub_G : P i - G = (-(1/2 : \u211d) \u2022 d) + (t i) \u2022 v := by\n      calc\n        P i - G = (M + (t i) \u2022 v) - G := rfl\n        _ = ((1/2 : \u211d) \u2022 (R + G) - G) + (t i) \u2022 v := by\n          simp [hM, add_sub_assoc, add_comm, add_left_comm, add_assoc]\n        _ = ((-(1/2 : \u211d)) \u2022 (G - R)) + (t i) \u2022 v := by rw [h_sub_eq2]\n        _ = (-(1/2 : \u211d) \u2022 d) + (t i) \u2022 v := by simp [hd]\n    have htemp : inner (\ud835\udd5c := \u211d) ((1/2 : \u211d) \u2022 d) ((t i) \u2022 v) = 0 := by\n      simp [inner_smul_right, inner_smul_left, hv_orth]\n    have h_norm_eq : \u2016(1/2 : \u211d) \u2022 d + (t i) \u2022 v\u2016 = \u2016(-(1/2 : \u211d) \u2022 d) + (t i) \u2022 v\u2016 := by\n      calc\n        \u2016(1/2 : \u211d) \u2022 d + (t i) \u2022 v\u2016 = \u2016(t i) \u2022 v + (1/2 : \u211d) \u2022 d\u2016 := by rw [add_comm]\n        _ = \u2016(t i) \u2022 v - (1/2 : \u211d) \u2022 d\u2016 := by\n          symm\n          apply norm_sub_eq_norm_add htemp\n        _ = \u2016(-(1/2 : \u211d) \u2022 d) + (t i) \u2022 v\u2016 := by\n          simp [sub_eq_add_neg, add_comm, neg_smul]\n    calc\n      \u2016P i - R\u2016 = \u2016(1/2 : \u211d) \u2022 d + (t i) \u2022 v\u2016 := by rw [hPi_sub_R]\n      _ = \u2016(-(1/2 : \u211d) \u2022 d) + (t i) \u2022 v\u2016 := by rw [h_norm_eq]\n      _ = \u2016P i - G\u2016 := by rw [hPi_sub_G]\n  \u00b7 intro i j hne\n    intro h_eq\n    have h_smul : ((t i) - (t j)) \u2022 v = 0 := by\n      calc\n        ((t i) - (t j)) \u2022 v = (t i) \u2022 v - (t j) \u2022 v := by\n          simp [sub_smul]\n        _ = (M + (t i) \u2022 v) - (M + (t j) \u2022 v) := by\n          simp\n        _ = P i - P j := by simp [hP]\n        _ = 0 := by rw [h_eq, sub_self]\n    have h_zero_or : (t i - t j = 0) \u2228 (v = 0) := by\n      exact smul_eq_zero.mp h_smul\n    rcases h_zero_or with (hsub | hzero)\n    \u00b7 apply ht_inj i j hne\n      linarith\n    \u00b7 exact hv_ne_zero hzero"
+    },
+    {
+      "id": "exists_point_of_color_G_on_sphere_case2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let R, G be points with color R \u2260 color G, r = dist R G / 2. For any X on the perpendicular bisector of RG with color X = color G, there exists a point Z on the circles Metric.sphere X (dist X R) and Metric.sphere R r such that color Z = color G.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Let `R`, `G` be points with `color R \u2260 color G`, `r = dist R G / 2`. For any `X` on the perpendicular bisector of `RG` with `color X = color G`, there exists a point `Z` on the circles `Metric.sphere X (dist X R)` and `Metric.sphere R r` such that `color Z = color G`. -/)\n  (proof := /-- Symmetric to case 1, swapping R and G. Use `exists_two_intersection_points`, `at_most_one_other_color_point` (with R and G swapped), `dist_X_G_ge_half_RG` (which is symmetric). -/)]\nlemma exists_point_of_color_G_on_sphere_case2 (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (h : \u2200 (s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2), (\u2200 i j : Fin 3, color (s.points i) = color (s.points j)) \u2192 color s.circumcenter = color (s.points 0))\n    (R G X : EuclideanSpace \u211d (Fin 2)) (hR_ne_G : color R \u2260 color G) (hXperp : X \u2208 perp_bisector R G)\n    (hXcolor : color X = color G) : \u2203 Z : EuclideanSpace \u211d (Fin 2), Z \u2208 Metric.sphere X (dist X R) \u2227 Z \u2208 Metric.sphere R ((dist R G)/2) \u2227 color Z = color G := by\n  have h_dist_pos : dist R G > 0 := by\n    have h_ne : R \u2260 G := by\n      intro h_eq\n      apply hR_ne_G\n      exact congrArg color h_eq\n    exact dist_pos.mpr h_ne\n  have hr_pos : (dist R G) / 2 > 0 := by nlinarith\n  have h_dist_eq : dist X R = dist X G := hXperp\n  have h_half : dist X G \u2265 dist R G / 2 := dist_X_G_ge_half_RG R G X hXperp\n  have hR_ge_r : dist X R \u2265 (dist R G) / 2 := by\n    rw [h_dist_eq]\n    exact h_half\n  rcases exists_two_intersection_points X R ((dist R G)/2) hR_ge_r hr_pos with \u27e8A, B, hA_ne_B, hA_X, hA_R, hB_X, hB_R\u27e9\n  have hA_X' : A \u2208 Metric.sphere X (dist X G) := by\n    rw [\u2190 h_dist_eq]\n    exact hA_X\n  have hB_X' : B \u2208 Metric.sphere X (dist X G) := by\n    rw [\u2190 h_dist_eq]\n    exact hB_X\n  have hA_ne_G : A \u2260 G := by\n    intro h_eq\n    have hdistA : dist A R = (dist R G) / 2 := hA_R\n    have hdistG : dist G R = (dist R G) / 2 := by simpa [h_eq] using hdistA\n    have hdistGR : dist G R = dist R G := dist_comm G R\n    nlinarith\n  have hB_ne_G : B \u2260 G := by\n    intro h_eq\n    have hdistB : dist B R = (dist R G) / 2 := hB_R\n    have hdistG : dist G R = (dist R G) / 2 := by simpa [h_eq] using hdistB\n    have hdistGR : dist G R = dist R G := dist_comm G R\n    nlinarith\n  have hA_ne_R : A \u2260 R := by\n    intro h_eq\n    have hdistA : dist A R = (dist R G) / 2 := hA_R\n    have : dist R R = (dist R G) / 2 := by simpa [h_eq] using hdistA\n    have : dist R R = 0 := by simp\n    nlinarith\n  have hB_ne_R : B \u2260 R := by\n    intro h_eq\n    have hdistB : dist B R = (dist R G) / 2 := hB_R\n    have : dist R R = (dist R G) / 2 := by simpa [h_eq] using hdistB\n    have : dist R R = 0 := by simp\n    nlinarith\n  by_cases hA_G : color A = color G\n  \u00b7 refine \u27e8A, hA_X, hA_R, hA_G\u27e9\n  \u00b7 by_cases hB_G : color B = color G\n    \u00b7 refine \u27e8B, hB_X, hB_R, hB_G\u27e9\n    \u00b7 -- both A and B are not color G; then they must be color R (since only two colors)\n      have hA_R_color : color A = color R := by\n        have hA_not_G : color A \u2260 color G := hA_G\n        have hR_not_G : color R \u2260 color G := hR_ne_G\n        cases hG : color G\n        \u00b7 -- color G = false\n          have hA_true : color A = true := by\n            have : color A \u2260 false := by simpa [hG] using hA_not_G\n            exact Bool.eq_true_of_not_eq_false this\n          have hR_true : color R = true := by\n            have : color R \u2260 false := by simpa [hG] using hR_not_G\n            exact Bool.eq_true_of_not_eq_false this\n          simp [hA_true, hR_true]\n        \u00b7 -- color G = true\n          have hA_false : color A = false := by\n            have : color A \u2260 true := by simpa [hG] using hA_not_G\n            exact Bool.eq_false_of_not_eq_true this\n          have hR_false : color R = false := by\n            have : color R \u2260 true := by simpa [hG] using hR_not_G\n            exact Bool.eq_false_of_not_eq_true this\n          simp [hA_false, hR_false]\n      have hB_R_color : color B = color R := by\n        have hB_not_G : color B \u2260 color G := hB_G\n        have hR_not_G : color R \u2260 color G := hR_ne_G\n        cases hG : color G\n        \u00b7 -- color G = false\n          have hB_true : color B = true := by\n            have : color B \u2260 false := by simpa [hG] using hB_not_G\n            exact Bool.eq_true_of_not_eq_false this\n          have hR_true : color R = true := by\n            have : color R \u2260 false := by simpa [hG] using hR_not_G\n            exact Bool.eq_true_of_not_eq_false this\n          simp [hB_true, hR_true]\n        \u00b7 -- color G = true\n          have hB_false : color B = false := by\n            have : color B \u2260 true := by simpa [hG] using hB_not_G\n            exact Bool.eq_false_of_not_eq_true this\n          have hR_false : color R = false := by\n            have : color R \u2260 true := by simpa [hG] using hR_not_G\n            exact Bool.eq_false_of_not_eq_true this\n          simp [hB_false, hR_false]\n      have hXperp' : X \u2208 perp_bisector G R := by\n        simpa [perp_bisector] using hXperp.symm\n      have h_contra : color X = color R :=\n        at_most_one_other_color_point color h G R X A B hXperp' hA_X hB_X hA_ne_R hB_ne_R hA_ne_B hA_R_color hB_R_color\n      rw [hXcolor] at h_contra\n      exfalso\n      apply hR_ne_G\n      exact h_contra.symm"
+    },
+    {
+      "id": "exists_point_of_color_R_on_sphere_case1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.52,
+      "proof_length": 63,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let R, G be points with color R \u2260 color G, r = dist R G / 2. For any X on the perpendicular bisector of RG with color X = color R, there exists a point Z on the circles Metric.sphere X (dist X G) and Metric.sphere G r such that color Z = color R.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Let `R`, `G` be points with `color R \u2260 color G`, `r = dist R G / 2`. For any `X` on the perpendicular bisector of `RG` with `color X = color R`, there exists a point `Z` on the circles `Metric.sphere X (dist X G)` and `Metric.sphere G r` such that `color Z = color R`. -/)\n  (proof := /-- By `exists_two_intersection_points`, there exist two distinct intersection points `A`, `B` of the two circles. If both had color `color G`, then by `at_most_one_other_color_point` (applied to `A` and `B`), we would have `color X = color G`, contradicting `color X = color R` and `color R \u2260 color G`. Therefore at least one of `A`, `B` has color `color R`. Choose that as `Z`. -/)]\nlemma exists_point_of_color_R_on_sphere_case1 (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (h : \u2200 (s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2), (\u2200 i j : Fin 3, color (s.points i) = color (s.points j)) \u2192 color s.circumcenter = color (s.points 0))\n    (R G X : EuclideanSpace \u211d (Fin 2)) (hR_ne_G : color R \u2260 color G) (hXperp : X \u2208 perp_bisector R G)\n    (hXcolor : color X = color R) : \u2203 Z : EuclideanSpace \u211d (Fin 2), Z \u2208 Metric.sphere X (dist X G) \u2227 Z \u2208 Metric.sphere G ((dist R G)/2) \u2227 color Z = color R := by\n  have hdist_pos : dist R G > 0 := by\n    by_contra! hle\n    have hzero : dist R G = 0 := by\n      have hge0 : 0 \u2264 dist R G := dist_nonneg\n      have hle' : dist R G \u2264 0 := by linarith\n      linarith\n    have hRG_eq : R = G := dist_eq_zero.mp hzero\n    have hcolor_eq : color R = color G := by simpa [hRG_eq]\n    exact hR_ne_G hcolor_eq\n  have hr_pos : (dist R G)/2 > 0 := by linarith\n  have hdist_X_G_ge_r : dist X G \u2265 (dist R G)/2 := dist_X_G_ge_half_RG R G X hXperp\n  rcases exists_two_intersection_points X G ((dist R G)/2) hdist_X_G_ge_r hr_pos with \u27e8A, B, hA_ne_B, hA_X, hA_G, hB_X, hB_G\u27e9\n  have hA_ne_G : A \u2260 G := by\n    intro hA_eq_G\n    have hdist_A_G : dist A G = (dist R G)/2 := by\n      simpa [Metric.mem_sphere] using hA_G\n    have : dist A G = 0 := by simpa [hA_eq_G] using dist_self G\n    rw [this] at hdist_A_G\n    linarith\n  have hB_ne_G : B \u2260 G := by\n    intro hB_eq_G\n    have hdist_B_G : dist B G = (dist R G)/2 := by\n      simpa [Metric.mem_sphere] using hB_G\n    have : dist B G = 0 := by simpa [hB_eq_G] using dist_self G\n    rw [this] at hdist_B_G\n    linarith\n  by_cases hA_color_G : color A = color G\n  \u00b7 by_cases hB_color_G : color B = color G\n    \u00b7 -- both are G color, contradiction\n      have hXcolorG : color X = color G :=\n        at_most_one_other_color_point color h R G X A B hXperp hA_X hB_X hA_ne_G hB_ne_G hA_ne_B hA_color_G hB_color_G\n      exfalso\n      apply hR_ne_G\n      calc\n        color R = color X := by symm; exact hXcolor\n        _ = color G := hXcolorG\n    \u00b7 -- B is not color G, so must be color R\n      have hcolorB_R : color B = color R := by\n        have hG := Bool.dichotomy (color G)\n        rcases hG with (hG | hG)\n        \u00b7 -- hG: color G = false\n          have hRtrue : color R = true := by\n            by_contra! hRfalse\n            have hRfalse' : color R = false := Bool.eq_false_of_not_eq_true hRfalse\n            have hcolor_eq : color R = color G := by rw [hRfalse', hG]\n            exact hR_ne_G hcolor_eq\n          have hBtrue : color B = true := by\n            by_contra! hBfalse\n            have hBfalse' : color B = false := Bool.eq_false_of_not_eq_true hBfalse\n            have hcolor_eq : color B = color G := by rw [hBfalse', hG]\n            exact hB_color_G hcolor_eq\n          rw [hRtrue, hBtrue]\n        \u00b7 -- hG: color G = true\n          have hRfalse : color R = false := by\n            by_contra! hRtrue\n            have hRtrue' : color R = true := Bool.eq_true_of_not_eq_false hRtrue\n            have hcolor_eq : color R = color G := by rw [hRtrue', hG]\n            exact hR_ne_G hcolor_eq\n          have hBfalse : color B = false := by\n            by_contra! hBtrue\n            have hBtrue' : color B = true := Bool.eq_true_of_not_eq_false hBtrue\n            have hcolor_eq : color B = color G := by rw [hBtrue', hG]\n            exact hB_color_G hcolor_eq\n          rw [hRfalse, hBfalse]\n      refine \u27e8B, hB_X, hB_G, hcolorB_R\u27e9\n  \u00b7 -- A is not color G, so must be color R\n    have hcolorA_R : color A = color R := by\n      have hG := Bool.dichotomy (color G)\n      rcases hG with (hG | hG)\n      \u00b7 -- hG: color G = false\n        have hRtrue : color R = true := by\n          by_contra! hRfalse\n          have hRfalse' : color R = false := Bool.eq_false_of_not_eq_true hRfalse\n          have hcolor_eq : color R = color G := by rw [hRfalse', hG]\n          exact hR_ne_G hcolor_eq\n        have hAtrue : color A = true := by\n          by_contra! hAfalse\n          have hAfalse' : color A = false := Bool.eq_false_of_not_eq_true hAfalse\n          have hcolor_eq : color A = color G := by rw [hAfalse', hG]\n          exact hA_color_G hcolor_eq\n        rw [hRtrue, hAtrue]\n      \u00b7 -- hG: color G = true\n        have hRfalse : color R = false := by\n          by_contra! hRtrue\n          have hRtrue' : color R = true := Bool.eq_true_of_not_eq_false hRtrue\n          have hcolor_eq : color R = color G := by rw [hRtrue', hG]\n          exact hR_ne_G hcolor_eq\n        have hAfalse : color A = false := by\n          by_contra! hAtrue\n          have hAtrue' : color A = true := Bool.eq_true_of_not_eq_false hAtrue\n          have hcolor_eq : color A = color G := by rw [hAtrue', hG]\n          exact hA_color_G hcolor_eq\n        rw [hRfalse, hAfalse]\n    refine \u27e8A, hA_X, hA_G, hcolorA_R\u27e9"
+    },
+    {
+      "id": "exists_three_same_color_five",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.05,
+      "proof_length": 45,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Among any five points, there are three distinct points all of the same color.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Among any five points, there are three distinct points all of the same color. -/)\n  (proof := /-- By pigeonhole principle: since there are only two colors, by the Dirichlet principle, among 5 points at least 3 have the same color. This can be argued by counting: if each color appears at most twice, then there can be at most 4 points. Contradiction. -/)]\nlemma exists_three_same_color_five (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool) (P : Fin 5 \u2192 EuclideanSpace \u211d (Fin 2)) :\n    \u2203 (i j k : Fin 5), i \u2260 j \u2227 j \u2260 k \u2227 i \u2260 k \u2227 color (P i) = color (P j) \u2227 color (P j) = color (P k) := by\n  -- Let A be indices where color(P i) = true, B indices where color(P i) = false.\n  let s : Finset (Fin 5) := Finset.univ\n  let A : Finset (Fin 5) := s.filter (\u03bb i => color (P i) = true)\n  let B : Finset (Fin 5) := s.filter (\u03bb i => color (P i) = false)\n  have hcard_total : Finset.card A + Finset.card B = 5 := by\n    have h := Finset.filter_card_add_filter_neg_card_eq_card (\u03bb i => color (P i) = true) (s := Finset.univ)\n    -- h : #(filter p s) + #({a \u2208 s | \u00acp a}) = #s\n    simpa [A, B, s] using h\n  have h_or : Finset.card A \u2265 3 \u2228 Finset.card B \u2265 3 := by\n    by_contra! h\n    -- h : \u00ac (Finset.card A \u2265 3 \u2228 Finset.card B \u2265 3)\n    have h' : Finset.card A < 3 \u2227 Finset.card B < 3 := by\n      simpa [not_or] using h\n    rcases h' with \u27e8hA, hB\u27e9\n    have hA2 : Finset.card A \u2264 2 := by omega\n    have hB2 : Finset.card B \u2264 2 := by omega\n    have htotal' : Finset.card A + Finset.card B \u2264 4 := by\n      omega\n    omega\n  rcases h_or with (hA | hB)\n  \u00b7 -- card A \u2265 3, pick three distinct elements from A.\n    have h_two_lt : 2 < Finset.card A := by omega\n    rcases (Finset.two_lt_card.mp h_two_lt) with \u27e8i, hi, j, hj, k, hk, hij, hik, hjk\u27e9\n    refine \u27e8i, j, k, hij, hjk, hik, ?_, ?_\u27e9\n    \u00b7 -- color(P i) = color(P j) because both in A (color true)\n      have hi_color : color (P i) = true := by\n        simpa [A, s] using hi\n      have hj_color : color (P j) = true := by\n        simpa [A, s] using hj\n      rw [hi_color, hj_color]\n    \u00b7 -- color(P j) = color(P k) similarly\n      have hj_color : color (P j) = true := by\n        simpa [A, s] using hj\n      have hk_color : color (P k) = true := by\n        simpa [A, s] using hk\n      rw [hj_color, hk_color]\n  \u00b7 -- card B \u2265 3, similar with false\n    have h_two_lt : 2 < Finset.card B := by omega\n    rcases (Finset.two_lt_card.mp h_two_lt) with \u27e8i, hi, j, hj, k, hk, hij, hik, hjk\u27e9\n    refine \u27e8i, j, k, hij, hjk, hik, ?_, ?_\u27e9\n    \u00b7 -- color(P i) = color(P j) because both in B (color false)\n      have hi_color : color (P i) = false := by\n        simpa [B, s] using hi\n      have hj_color : color (P j) = false := by\n        simpa [B, s] using hj\n      rw [hi_color, hj_color]\n    \u00b7 -- color(P j) = color(P k) similarly\n      have hj_color : color (P j) = false := by\n        simpa [B, s] using hj\n      have hk_color : color (P k) = false := by\n        simpa [B, s] using hk\n      rw [hj_color, hk_color]"
+    },
+    {
+      "id": "exists_two_intersection_points",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.68,
+      "proof_length": 41,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For two circles in the plane with centers X and G, radii R and r, where R = dist X G, R \u2265 r > 0, the circles intersect in exactly two distinct points.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For two circles in the plane with centers `X` and `G`, radii `R` and `r`, where `R = dist X G`, `R \u2265 r > 0`, the circles intersect in exactly two distinct points. -/)\n  (proof := /-- By the triangle inequality, the strict triangle inequalities `|R - r| < R < R + r` hold because `R \u2265 r > 0`. These are sufficient for two circles to intersect in two points in Euclidean geometry (a known result). -/)]\nlemma exists_two_intersection_points (X G : EuclideanSpace \u211d (Fin 2)) (r : \u211d)\n    (hR_ge_r : dist X G \u2265 r) (hr_pos : r > 0) :\n    \u2203 (A B : EuclideanSpace \u211d (Fin 2)), A \u2260 B \u2227 A \u2208 Metric.sphere X (dist X G) \u2227 A \u2208 Metric.sphere G r \u2227 B \u2208 Metric.sphere X (dist X G) \u2227 B \u2208 Metric.sphere G r := by\n  set d := dist X G with hd_def\n  have hd_pos : d > 0 := by\n    linarith\n  have hd_pos' : d \u2260 0 := by linarith\n  set u := (1/d) \u2022 (G - X) with hu_def\n  have hnorm_u : \u2016u\u2016 = 1 := by\n    calc\n      \u2016u\u2016 = \u2016(1/d) \u2022 (G - X)\u2016 := rfl\n      _ = |(1/d : \u211d)| * \u2016G - X\u2016 := norm_smul _ _\n      _ = (1/d) * \u2016G - X\u2016 := by\n        simp [hd_pos.le]\n      _ = (1/d) * d := by\n        calc\n          (1/d) * \u2016G - X\u2016 = (1/d) * (dist G X) := by simp [dist_eq_norm]\n          _ = (1/d) * (dist X G) := by rw [dist_comm]\n          _ = (1/d) * d := by rw [hd_def]\n      _ = 1 := by field_simp [hd_pos.ne']\n  have hinner_uu : inner (\ud835\udd5c := \u211d) u u = 1 := by\n    calc\n      inner (\ud835\udd5c := \u211d) u u = \u2016u\u2016^2 := by\n        simp [real_inner_self_eq_norm_sq]\n      _ = 1 := by simp [hnorm_u]\n  have hG_sub_X_eq : G - X = d \u2022 u := by\n    calc\n      G - X = (1 : \u211d) \u2022 (G - X) := by simp\n      _ = (d * (1/d)) \u2022 (G - X) := by field_simp [hd_pos.ne']\n      _ = d \u2022 ((1/d) \u2022 (G - X)) := by simp [smul_smul]\n      _ = d \u2022 u := rfl\n  have hG_eq : G = X + d \u2022 u := by\n    calc\n      G = X + (G - X) := by abel\n      _ = X + d \u2022 u := by rw [hG_sub_X_eq]\n  -- define a perpendicular unit vector w\n  set w := (WithLp.equiv 2 ((i : Fin 2) \u2192 \u211d)).symm (fun i => match i with\n    | 0 => -u.ofLp 1\n    | 1 => u.ofLp 0) with hw_def\n  have hinner_uw : inner (\ud835\udd5c := \u211d) u w = 0 := by\n    simp [w, PiLp.inner_apply, Fin.sum_univ_two, mul_comm, add_comm]\n  have hnorm_w_sq : \u2016w\u2016^2 = 1 := by\n    calc\n      \u2016w\u2016^2 = (w.ofLp 0)^2 + (w.ofLp 1)^2 := by\n        simp [EuclideanSpace.norm_sq_eq, Fin.sum_univ_two]\n      _ = (-u.ofLp 1)^2 + (u.ofLp 0)^2 := by\n        simp [w]\n      _ = (u.ofLp 0)^2 + (u.ofLp 1)^2 := by ring\n      _ = \u2016u\u2016^2 := by\n        simp [EuclideanSpace.norm_sq_eq, Fin.sum_univ_two]\n      _ = 1 := by\n        rw [hnorm_u]; norm_num\n  have hnorm_w : \u2016w\u2016 = 1 := by\n    nlinarith [hnorm_w_sq, norm_nonneg w]\n  have hinner_ww : inner (\ud835\udd5c := \u211d) w w = 1 := by\n    calc\n      inner (\ud835\udd5c := \u211d) w w = \u2016w\u2016^2 := by\n        simp [real_inner_self_eq_norm_sq]\n      _ = 1 := by rw [hnorm_w_sq]\n  have hw_ne_zero : w \u2260 0 := by\n    intro hzero\n    have : \u2016w\u2016 = 0 := by simpa [hzero] using norm_zero\n    linarith [hnorm_w, this]\n  -- define alpha and beta\n  set \u03b1 := d - r^2/(2*d) with h\u03b1_def\n  set \u03b2 := Real.sqrt (r^2 - (r^4)/(4*d^2)) with h\u03b2_def\n  have h\u03b2_sq_pos : r^2 - (r^4)/(4*d^2) > 0 := by\n    have hnum : 0 < r^2*(4*d^2 - r^2) := by\n      have h1 : r^2 > 0 := pow_pos hr_pos 2\n      have h2 : 4*d^2 - r^2 > 0 := by\n        nlinarith\n      positivity\n    have hden : 0 < 4*d^2 := by positivity\n    have h_eq : r^2 - (r^4)/(4*d^2) = (r^2*(4*d^2 - r^2))/(4*d^2) := by\n      field_simp [hd_pos.ne']\n    rw [h_eq]\n    positivity\n  have h\u03b2_pos : \u03b2 > 0 := by\n    refine Real.sqrt_pos.mpr h\u03b2_sq_pos\n  have h\u03b2_sq_eq : \u03b2^2 = r^2 - (r^4)/(4*d^2) := by\n    rw [Real.sq_sqrt (h\u03b2_sq_pos.le)]\n  have h\u03b1_sq_add_\u03b2_sq : \u03b1^2 + \u03b2^2 = d^2 := by\n    calc\n      \u03b1^2 + \u03b2^2 = (d - r^2/(2*d))^2 + (r^2 - (r^4)/(4*d^2)) := by\n        simp [h\u03b1_def, h\u03b2_sq_eq]\n      _ = d^2 := by\n        field_simp [hd_pos.ne']\n        ring\n  have h\u03b1_sub_d_sq_add_\u03b2_sq : (\u03b1 - d)^2 + \u03b2^2 = r^2 := by\n    calc\n      (\u03b1 - d)^2 + \u03b2^2 = ((d - r^2/(2*d)) - d)^2 + (r^2 - (r^4)/(4*d^2)) := by\n        simp [h\u03b1_def, h\u03b2_sq_eq]\n      _ = (r^2/(2*d))^2 + (r^2 - (r^4)/(4*d^2)) := by ring\n      _ = r^2 := by\n        field_simp [hd_pos.ne']\n        ring\n  -- define points A and B\n  set A := X + \u03b1 \u2022 u + \u03b2 \u2022 w with hA_def\n  set B := X + \u03b1 \u2022 u - \u03b2 \u2022 w with hB_def\n  have hA_ne_B : A \u2260 B := by\n    intro h_eq\n    have htemp : \u03b2 \u2022 w = -(\u03b2 \u2022 w) := by\n      calc\n        \u03b2 \u2022 w = A - X - \u03b1 \u2022 u := by\n          calc\n            \u03b2 \u2022 w = (X + \u03b1 \u2022 u + \u03b2 \u2022 w) - X - \u03b1 \u2022 u := by\n              abel\n            _ = A - X - \u03b1 \u2022 u := by rw [hA_def]\n        _ = B - X - \u03b1 \u2022 u := by rw [h_eq]\n        _ = -(\u03b2 \u2022 w) := by\n          calc\n            B - X - \u03b1 \u2022 u = (X + \u03b1 \u2022 u - \u03b2 \u2022 w) - X - \u03b1 \u2022 u := by rw [hB_def]\n            _ = -(\u03b2 \u2022 w) := by abel\n    have hsum : \u03b2 \u2022 w + \u03b2 \u2022 w = 0 := by\n      nth_rw 2 [htemp]\n      simp\n    have h2 : (2 : \u211d) \u2022 (\u03b2 \u2022 w) = 0 := by\n      calc\n        (2 : \u211d) \u2022 (\u03b2 \u2022 w) = \u03b2 \u2022 w + \u03b2 \u2022 w := by simp [two_smul]\n        _ = 0 := hsum\n    have htwo_ne_zero : (2 : \u211d) \u2260 0 := by norm_num\n    have hzero : \u03b2 \u2022 w = 0 := (smul_eq_zero.mp h2).resolve_left htwo_ne_zero\n    have h\u03b2w_ne_zero : \u03b2 \u2022 w \u2260 0 := smul_ne_zero h\u03b2_pos.ne' hw_ne_zero\n    exact h\u03b2w_ne_zero hzero\n  have h_norm_sq_add_of_orthonormal {\u03b1 \u03b2 : \u211d} (hu : inner (\ud835\udd5c := \u211d) u u = 1) (hw : inner (\ud835\udd5c := \u211d) w w = 1) (huw : inner (\ud835\udd5c := \u211d) u w = 0) : \u2016\u03b1 \u2022 u + \u03b2 \u2022 w\u2016^2 = \u03b1^2 + \u03b2^2 := by\n    rw [norm_add_sq (\ud835\udd5c := \u211d)]\n    simp [norm_smul, sq_abs, inner_smul_left, inner_smul_right, hu, hw, huw, hnorm_u, hnorm_w]\n  have h_norm_A_sub_X_sq : \u2016A - X\u2016^2 = d^2 := by\n    calc\n      \u2016A - X\u2016^2 = \u2016\u03b1 \u2022 u + \u03b2 \u2022 w\u2016^2 := by\n        have h : A - X = \u03b1 \u2022 u + \u03b2 \u2022 w := by\n          dsimp [A]\n          abel\n        rw [h]\n      _ = \u03b1^2 + \u03b2^2 := h_norm_sq_add_of_orthonormal hinner_uu hinner_ww hinner_uw\n      _ = d^2 := h\u03b1_sq_add_\u03b2_sq\n  have h_dist_A_X : A \u2208 Metric.sphere X d := by\n    rw [Metric.mem_sphere, dist_eq_norm]\n    have h_nonneg : 0 \u2264 \u2016A - X\u2016 := norm_nonneg _\n    have h_sq_eq : \u2016A - X\u2016^2 = d^2 := h_norm_A_sub_X_sq\n    have h_nonneg_d : 0 \u2264 d := hd_pos.le\n    nlinarith\n  have h_norm_A_sub_G_sq : \u2016A - G\u2016^2 = r^2 := by\n    have hAG : A - G = (\u03b1 - d) \u2022 u + \u03b2 \u2022 w := by\n      calc\n        A - G = (X + \u03b1 \u2022 u + \u03b2 \u2022 w) - (X + d \u2022 u) := by\n          rw [hA_def, hG_eq]\n        _ = \u03b1 \u2022 u + \u03b2 \u2022 w - d \u2022 u := by abel\n        _ = (\u03b1 - d) \u2022 u + \u03b2 \u2022 w := by\n          calc\n            \u03b1 \u2022 u + \u03b2 \u2022 w - d \u2022 u = (\u03b1 \u2022 u - d \u2022 u) + \u03b2 \u2022 w := by abel\n            _ = (\u03b1 - d) \u2022 u + \u03b2 \u2022 w := by rw [\u2190 sub_smul]\n    calc\n      \u2016A - G\u2016^2 = \u2016(\u03b1 - d) \u2022 u + \u03b2 \u2022 w\u2016^2 := by rw [hAG]\n      _ = (\u03b1 - d)^2 + \u03b2^2 := h_norm_sq_add_of_orthonormal hinner_uu hinner_ww hinner_uw\n      _ = r^2 := h\u03b1_sub_d_sq_add_\u03b2_sq\n  have h_dist_A_G : A \u2208 Metric.sphere G r := by\n    rw [Metric.mem_sphere, dist_eq_norm]\n    have h_nonneg : 0 \u2264 \u2016A - G\u2016 := norm_nonneg _\n    have h_sq_eq : \u2016A - G\u2016^2 = r^2 := h_norm_A_sub_G_sq\n    have h_nonneg_r : 0 \u2264 r := hr_pos.le\n    nlinarith\n  have h_norm_B_sub_X_sq : \u2016B - X\u2016^2 = d^2 := by\n    calc\n      \u2016B - X\u2016^2 = \u2016\u03b1 \u2022 u - \u03b2 \u2022 w\u2016^2 := by\n        have h : B - X = \u03b1 \u2022 u - \u03b2 \u2022 w := by\n          dsimp [B]\n          abel\n        rw [h]\n      _ = \u2016\u03b1 \u2022 u + (-\u03b2) \u2022 w\u2016^2 := by\n        simp [sub_eq_add_neg]\n      _ = \u03b1^2 + (-\u03b2)^2 := h_norm_sq_add_of_orthonormal hinner_uu hinner_ww hinner_uw\n      _ = \u03b1^2 + \u03b2^2 := by ring\n      _ = d^2 := h\u03b1_sq_add_\u03b2_sq\n  have h_dist_B_X : B \u2208 Metric.sphere X d := by\n    rw [Metric.mem_sphere, dist_eq_norm]\n    have h_nonneg : 0 \u2264 \u2016B - X\u2016 := norm_nonneg _\n    have h_sq_eq : \u2016B - X\u2016^2 = d^2 := h_norm_B_sub_X_sq\n    have h_nonneg_d : 0 \u2264 d := hd_pos.le\n    nlinarith\n  have h_norm_B_sub_G_sq : \u2016B - G\u2016^2 = r^2 := by\n    have hBG : B - G = (\u03b1 - d) \u2022 u - \u03b2 \u2022 w := by\n      calc\n        B - G = (X + \u03b1 \u2022 u - \u03b2 \u2022 w) - (X + d \u2022 u) := by\n          rw [hB_def, hG_eq]\n        _ = \u03b1 \u2022 u - \u03b2 \u2022 w - d \u2022 u := by abel\n        _ = (\u03b1 \u2022 u - d \u2022 u) - \u03b2 \u2022 w := by abel\n        _ = (\u03b1 - d) \u2022 u - \u03b2 \u2022 w := by rw [\u2190 sub_smul]\n    calc\n      \u2016B - G\u2016^2 = \u2016(\u03b1 - d) \u2022 u - \u03b2 \u2022 w\u2016^2 := by rw [hBG]\n      _ = \u2016(\u03b1 - d) \u2022 u + (-\u03b2) \u2022 w\u2016^2 := by simp [sub_eq_add_neg]\n      _ = (\u03b1 - d)^2 + (-\u03b2)^2 := h_norm_sq_add_of_orthonormal hinner_uu hinner_ww hinner_uw\n      _ = (\u03b1 - d)^2 + \u03b2^2 := by ring\n      _ = r^2 := h\u03b1_sub_d_sq_add_\u03b2_sq\n  have h_dist_B_G : B \u2208 Metric.sphere G r := by\n    rw [Metric.mem_sphere, dist_eq_norm]\n    have h_nonneg : 0 \u2264 \u2016B - G\u2016 := norm_nonneg _\n    have h_sq_eq : \u2016B - G\u2016^2 = r^2 := h_norm_B_sub_G_sq\n    have h_nonneg_r : 0 \u2264 r := hr_pos.le\n    nlinarith\n  refine \u27e8A, B, hA_ne_B, h_dist_A_X, h_dist_A_G, h_dist_B_X, h_dist_B_G\u27e9"
+    },
+    {
+      "id": "exists_two_points_diff_color",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.14,
+      "proof_length": 58,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If the plane is not monochromatic (i.e., no single color for all points), then there exist two points with different colors.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If the plane is not monochromatic (i.e., no single color for all points), then there exist two points with different colors. -/)\n  (proof := /-- By definition, not monochromatic means `\u00ac \u2203 c, \u2200 P, color P = c`. This is equivalent to `\u2200 c, \u2203 P, color P \u2260 c`. In particular, choose any point `R0`. Since there exists `G0` with `color G0 \u2260 color R0`, we are done. More directly, the logical equivalence yields existence of two points of different colors. -/)]\nlemma exists_two_points_diff_color (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (h_non_mono : \u00ac \u2203 c : Bool, \u2200 P : EuclideanSpace \u211d (Fin 2), color P = c) :\n    \u2203 (R G : EuclideanSpace \u211d (Fin 2)), color R \u2260 color G := by\n  by_contra h\n  -- h: \u00ac \u2203 (R G : EuclideanSpace \u211d (Fin 2)), color R \u2260 color G\n  push_neg at h\n  -- h: \u2200 (R G : EuclideanSpace \u211d (Fin 2)), color R = color G\n  let R0 : EuclideanSpace \u211d (Fin 2) := 0\n  have hconst : \u2200 P : EuclideanSpace \u211d (Fin 2), color P = color R0 := by\n    intro P\n    apply h P R0\n  have hc : \u2203 c : Bool, \u2200 P : EuclideanSpace \u211d (Fin 2), color P = c := by\n    refine \u27e8color R0, hconst\u27e9\n  exact h_non_mono hc"
+    },
+    {
+      "id": "perp_bisector",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The perpendicular bisector of segment RG is the set of points equidistant from R and G.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The perpendicular bisector of segment `RG` is the set of points equidistant from `R` and `G`. -/)]\ndef perp_bisector (R G : EuclideanSpace \u211d (Fin 2)) : Set (EuclideanSpace \u211d (Fin 2)) :=\n  {X | dist X R = dist X G}"
+    },
+    {
+      "id": "perp_bisector_equidistant",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any point X on the perpendicular bisector of RG, we have dist X R = dist X G.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- For any point `X` on the perpendicular bisector of `RG`, we have `dist X R = dist X G`. -/)\n  (proof := /-- By definition of `perp_bisector`. -/)]\nlemma perp_bisector_equidistant (R G X : EuclideanSpace \u211d (Fin 2)) (hX : X \u2208 perp_bisector R G) : dist X R = dist X G := by\n  exact hX"
+    },
+    {
+      "id": "putnam_2025_b1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 35.07,
+      "proof_length": 76,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The main theorem: If every 2-simplex with all vertices the same color has its circumcenter the same color, then all points in the plane share the same color.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The main theorem: If every 2-simplex with all vertices the same color has its circumcenter the same color, then all points in the plane share the same color. -/)\n  (proof := /-- Assume for contradiction that the plane is not monochromatic. Then `exists_two_points_diff_color` provides `R`, `G` with `color R \u2260 color G`. Since `R \u2260 G`, `three_points_on_perp_bisector_same_color` yields three distinct points on the perpendicular bisector all of the same color. If that color is `color R`, then `contradiction_case1` gives a contradiction. If that color is `color G`, then `contradiction_case2` gives a contradiction. Since both cases lead to a contradiction, the assumption is false, so the plane is monochromatic. -/)]\ntheorem putnam_2025_b1\n    (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (h : \u2200 (s : Simplex \u211d (EuclideanSpace \u211d (Fin 2)) 2),\n      (\u2200 i j : Fin 3, color (s.points i) = color (s.points j)) \u2192\n      color s.circumcenter = color (s.points 0)) :\n    \u2203 c : Bool, \u2200 P : EuclideanSpace \u211d (Fin 2), color P = c := by\n  by_contra h_not_mono\n  -- h_not_mono : \u00ac \u2203 c : Bool, \u2200 P : EuclideanSpace \u211d (Fin 2), color P = c\n  rcases exists_two_points_diff_color color h_not_mono with \u27e8R, G, hR_ne_G_color\u27e9\n  have hR_ne_G : R \u2260 G := by\n    intro h_eq\n    apply hR_ne_G_color\n    rw [h_eq]\n  have h_three := three_points_on_perp_bisector_same_color color R G hR_ne_G\n  rcases h_three with \u27e8X1, X2, X3, hX1_ne_X2, hX2_ne_X3, hX1_ne_X3, hX1perp, hX2perp, hX3perp, hX1X2color, hX2X3color\u27e9\n  have h_color_case : color X1 = color R \u2228 color X1 = color G := by\n    have h_aux : \u2200 (x y z : Bool), y \u2260 z \u2192 (x = y \u2228 x = z) := by\n      decide\n    exact h_aux (color X1) (color R) (color G) hR_ne_G_color\n  rcases h_color_case with (hcase | hcase)\n  \u00b7 apply contradiction_case1 color h R G hR_ne_G_color X1 X2 X3 hX1_ne_X2 hX1_ne_X3 hX2_ne_X3 hX1perp hX2perp hX3perp hcase\n    \u00b7 rw [\u2190 hX1X2color, hcase]\n    \u00b7 rw [\u2190 hX2X3color, \u2190 hX1X2color, hcase]\n  \u00b7 apply contradiction_case2 color h R G hR_ne_G_color X1 X2 X3 hX1_ne_X2 hX1_ne_X3 hX2_ne_X3 hX1perp hX2perp hX3perp hcase\n    \u00b7 rw [\u2190 hX1X2color, hcase]\n    \u00b7 rw [\u2190 hX2X3color, \u2190 hX1X2color, hcase]"
+    },
+    {
+      "id": "three_points_on_perp_bisector_same_color",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.89,
+      "proof_length": 33,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Given R \u2260 G, there exist three distinct points on the perpendicular bisector of RG all of the same color.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Given `R \u2260 G`, there exist three distinct points on the perpendicular bisector of `RG` all of the same color. -/)\n  (proof := /-- Choose five distinct points on the perpendicular bisector (by `exists_five_distinct_points_on_perp_bisector`). By `exists_three_same_color_five`, among these five points there are three distinct points all of the same color. These three lie on the perpendicular bisector. -/)]\nlemma three_points_on_perp_bisector_same_color (color : EuclideanSpace \u211d (Fin 2) \u2192 Bool)\n    (R G : EuclideanSpace \u211d (Fin 2)) (hR_ne_G : R \u2260 G) :\n    \u2203 (X Y Z : EuclideanSpace \u211d (Fin 2)), X \u2260 Y \u2227 Y \u2260 Z \u2227 X \u2260 Z \u2227 X \u2208 perp_bisector R G \u2227 Y \u2208 perp_bisector R G \u2227 Z \u2208 perp_bisector R G \u2227 color X = color Y \u2227 color Y = color Z := by\n  rcases exists_five_distinct_points_on_perp_bisector R G hR_ne_G with \u27e8P, hP_mem, hP_distinct\u27e9\n  rcases exists_three_same_color_five color P with \u27e8i, j, k, hi_ne_j, hj_ne_k, hi_ne_k, hc1, hc2\u27e9\n  refine \u27e8P i, P j, P k, hP_distinct i j hi_ne_j, hP_distinct j k hj_ne_k, hP_distinct i k hi_ne_k, hP_mem i, hP_mem j, hP_mem k, hc1, hc2\u27e9"
+    },
+    {
+      "id": "two_circles_intersection_eq_R_G",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.22,
+      "proof_length": 59,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Two distinct circles each passing through both R and G intersect exactly at R and G.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Two distinct circles each passing through both `R` and `G` intersect exactly at `R` and `G`. -/)\n  (proof := /-- Since both circles pass through `R` and `G`, their intersection contains `{R, G}`. If they shared another point `P`, then three distinct points `R, G, P` would lie on both circles, implying the two circles are identical (since three non-collinear points determine a unique circle). But the circles are distinct (centers differ), contradiction. Therefore intersection is exactly `{R, G}`. -/)]\nlemma two_circles_intersection_eq_R_G (X1 X2 R G : EuclideanSpace \u211d (Fin 2))\n    (hX1_ne_X2 : X1 \u2260 X2) (hX1perp : X1 \u2208 perp_bisector R G) (hX2perp : X2 \u2208 perp_bisector R G) (hR_ne_G : R \u2260 G) :\n    (Metric.sphere X1 (dist X1 G) \u2229 Metric.sphere X2 (dist X2 G)) = {R, G} := by\n  -- Helper lemmas\n  have inner_eq_of_dist_eq (a b c d : EuclideanSpace \u211d (Fin 2)) (h1 : dist a c = dist b c) (h2 : dist a d = dist b d) : \n      inner \u211d a (d - c) = inner \u211d b (d - c) := by\n    have h1_norm_sq : \u2016a - c\u2016^2 = \u2016b - c\u2016^2 := by\n      have h_norm : \u2016a - c\u2016 = \u2016b - c\u2016 := by simpa [dist_eq_norm] using h1\n      exact congrArg (fun t => t^2) h_norm\n    have h2_norm_sq : \u2016a - d\u2016^2 = \u2016b - d\u2016^2 := by\n      have h_norm : \u2016a - d\u2016 = \u2016b - d\u2016 := by simpa [dist_eq_norm] using h2\n      exact congrArg (fun t => t^2) h_norm\n    have hdiff : \u2016a - c\u2016^2 - \u2016a - d\u2016^2 = \u2016b - c\u2016^2 - \u2016b - d\u2016^2 := by rw [h1_norm_sq, h2_norm_sq]\n    have h_expand_a : \u2016a - c\u2016^2 - \u2016a - d\u2016^2 = 2 * inner \u211d a (d - c) + \u2016c\u2016^2 - \u2016d\u2016^2 := by\n      calc\n        \u2016a - c\u2016^2 - \u2016a - d\u2016^2 = (\u2016a\u2016^2 - 2 * inner \u211d a c + \u2016c\u2016^2) - (\u2016a\u2016^2 - 2 * inner \u211d a d + \u2016d\u2016^2) := by\n          simp [norm_sub_sq_real]\n        _ = 2 * (inner \u211d a d - inner \u211d a c) + \u2016c\u2016^2 - \u2016d\u2016^2 := by ring\n        _ = 2 * inner \u211d a (d - c) + \u2016c\u2016^2 - \u2016d\u2016^2 := by simp [inner_sub_right]\n    have h_expand_b : \u2016b - c\u2016^2 - \u2016b - d\u2016^2 = 2 * inner \u211d b (d - c) + \u2016c\u2016^2 - \u2016d\u2016^2 := by\n      calc\n        \u2016b - c\u2016^2 - \u2016b - d\u2016^2 = (\u2016b\u2016^2 - 2 * inner \u211d b c + \u2016c\u2016^2) - (\u2016b\u2016^2 - 2 * inner \u211d b d + \u2016d\u2016^2) := by\n          simp [norm_sub_sq_real]\n        _ = 2 * (inner \u211d b d - inner \u211d b c) + \u2016c\u2016^2 - \u2016d\u2016^2 := by ring\n        _ = 2 * inner \u211d b (d - c) + \u2016c\u2016^2 - \u2016d\u2016^2 := by simp [inner_sub_right]\n    rw [h_expand_a, h_expand_b] at hdiff\n    linarith\n  have norm_add_smul_sq (u d : EuclideanSpace \u211d (Fin 2)) (t : \u211d) : \u2016u + t \u2022 d\u2016^2 = \u2016u\u2016^2 + 2*t*inner \u211d u d + t^2*\u2016d\u2016^2 := by\n    have h_norm_smul_sq : \u2016t \u2022 d\u2016^2 = t^2 * \u2016d\u2016^2 := by\n      calc\n        \u2016t \u2022 d\u2016^2 = (|t| * \u2016d\u2016)^2 := by simp [norm_smul]\n        _ = (|t|^2) * \u2016d\u2016^2 := by ring\n        _ = t^2 * \u2016d\u2016^2 := by simp [sq_abs]\n    calc\n      \u2016u + t \u2022 d\u2016^2 = \u2016u\u2016^2 + 2*RCLike.re (inner \u211d u (t \u2022 d)) + \u2016t \u2022 d\u2016^2 := by rw [norm_add_sq (\ud835\udd5c := \u211d)]\n      _ = \u2016u\u2016^2 + 2*inner \u211d u (t \u2022 d) + \u2016t \u2022 d\u2016^2 := by simp\n      _ = \u2016u\u2016^2 + 2*(t*inner \u211d u d) + \u2016t \u2022 d\u2016^2 := by simp [inner_smul_right]\n      _ = \u2016u\u2016^2 + 2*(t*inner \u211d u d) + (t^2*\u2016d\u2016^2) := by rw [h_norm_smul_sq]\n      _ = \u2016u\u2016^2 + 2*t*inner \u211d u d + t^2*\u2016d\u2016^2 := by ring\n  have inner_u_d_eq_neg_half_norm_sq (u d : EuclideanSpace \u211d (Fin 2)) (h : \u2016u + d\u2016^2 = \u2016u\u2016^2) : 2*inner \u211d u d + \u2016d\u2016^2 = 0 := by\n    have h_expand : \u2016u + d\u2016^2 = \u2016u\u2016^2 + 2*inner \u211d u d + \u2016d\u2016^2 := by\n      rw [norm_add_sq (\ud835\udd5c := \u211d)]\n      simp\n    rw [h_expand] at h\n    linarith\n  -- end helpers\n  have hR1 : dist R X1 = dist X1 G := by\n    have h := perp_bisector_equidistant R G X1 hX1perp\n    simpa [dist_comm] using h\n  have hG1 : dist G X1 = dist X1 G := by\n    simpa [dist_comm]\n  have hR2 : dist R X2 = dist X2 G := by\n    have h := perp_bisector_equidistant R G X2 hX2perp\n    simpa [dist_comm] using h\n  have hG2 : dist G X2 = dist X2 G := by\n    simpa [dist_comm]\n  ext x\n  constructor\n  \u00b7 intro hx\n    rcases hx with \u27e8hx1, hx2\u27e9\n    have hxS1 : dist x X1 = dist X1 G := by\n      simpa [Metric.mem_sphere] using hx1\n    have hxS2 : dist x X2 = dist X2 G := by\n      simpa [Metric.mem_sphere] using hx2\n    have hx_eq_R_or_G : x = R \u2228 x = G := by\n      -- let v := X2 - X1\n      set v := X2 - X1 with hv\n      have h_v_ne_zero : v \u2260 0 := by\n        intro hzero\n        apply hX1_ne_X2\n        exact (sub_eq_zero.mp hzero).symm\n      -- inner product equalities\n      have hx_inner : inner \u211d x v = inner \u211d G v := by\n        apply inner_eq_of_dist_eq x G X1 X2 ?_ ?_\n        \u00b7 simpa [dist_comm] using hxS1\n        \u00b7 simpa [dist_comm] using hxS2\n      have hR_inner : inner \u211d R v = inner \u211d G v := by\n        apply inner_eq_of_dist_eq R G X1 X2 ?_ ?_\n        \u00b7 simpa [dist_comm] using hR1\n        \u00b7 simpa [dist_comm] using hR2\n      have hx_minus_R_inner : inner \u211d (x - R) v = 0 := by\n        rw [inner_sub_left, hx_inner, hR_inner, sub_self]\n      have hG_minus_R_inner : inner \u211d (G - R) v = 0 := by\n        rw [inner_sub_left, hR_inner, sub_self]\n      -- membership in the orthogonal complement\n      have hx_mem : (x - R) \u2208 (\u211d \u2219 v)\u15ee := by\n        rw [Submodule.mem_orthogonal_singleton_iff_inner_left]\n        exact hx_minus_R_inner\n      have hG_mem : (G - R) \u2208 (\u211d \u2219 v)\u15ee := by\n        rw [Submodule.mem_orthogonal_singleton_iff_inner_left]\n        exact hG_minus_R_inner\n      -- finrank argument to get linear dependence\n      have h_fact : Fact (Module.finrank \u211d (EuclideanSpace \u211d (Fin 2)) = 1 + 1) := by\n        have h : Module.finrank \u211d (EuclideanSpace \u211d (Fin 2)) = 2 := by simp\n        exact \u27e8by linarith\u27e9\n      haveI := h_fact\n      have h_finrank_orth : Module.finrank \u211d ((\u211d \u2219 v)\u15ee) = 1 :=\n        Submodule.finrank_orthogonal_span_singleton (v := v) (hv := h_v_ne_zero)\n      haveI : Module.Free \u211d ((\u211d \u2219 v)\u15ee) := by infer_instance\n      have h_exists : \u2203 (u : (\u211d \u2219 v)\u15ee) (hu : u \u2260 0), \u2200 (w : (\u211d \u2219 v)\u15ee), \u2203 (c : \u211d), c \u2022 u = w := by\n        have htemp := (finrank_eq_one_iff' (K := \u211d) (V := (\u211d \u2219 v)\u15ee)).mp h_finrank_orth\n        rcases htemp with \u27e8u, hu, h_all\u27e9\n        exact \u27e8u, hu, h_all\u27e9\n      rcases h_exists with \u27e8u, hu, h_all\u27e9\n      have hx_smul : \u2203 (c : \u211d), c \u2022 u = \u27e8x - R, hx_mem\u27e9 := h_all \u27e8x - R, hx_mem\u27e9\n      have hG_smul : \u2203 (c : \u211d), c \u2022 u = \u27e8G - R, hG_mem\u27e9 := h_all \u27e8G - R, hG_mem\u27e9\n      rcases hx_smul with \u27e8c1, hc1\u27e9\n      rcases hG_smul with \u27e8c2, hc2\u27e9\n      have hc1_val : c1 \u2022 (u : EuclideanSpace \u211d (Fin 2)) = x - R := by\n        apply congr_arg Subtype.val hc1\n      have hc2_val : c2 \u2022 (u : EuclideanSpace \u211d (Fin 2)) = G - R := by\n        apply congr_arg Subtype.val hc2\n      have hc2_ne_zero : c2 \u2260 0 := by\n        intro hzero\n        apply hR_ne_G\n        have hzero_vec : G - R = 0 := by\n          calc\n            G - R = c2 \u2022 (u : EuclideanSpace \u211d (Fin 2)) := by symm; exact hc2_val\n            _ = 0 := by simp [hzero]\n        exact (sub_eq_zero.mp hzero_vec).symm\n      set t := c1 / c2 with ht\n      have hx_minus_R_eq_t_smul_G_minus_R : x - R = t \u2022 (G - R) := by\n        calc\n          x - R = c1 \u2022 (u : EuclideanSpace \u211d (Fin 2)) := by symm; exact hc1_val\n          _ = t \u2022 (G - R) := by\n            calc\n              c1 \u2022 (u : EuclideanSpace \u211d (Fin 2)) = (c1 / c2) \u2022 (c2 \u2022 (u : EuclideanSpace \u211d (Fin 2))) := by\n                symm\n                calc\n                  (c1 / c2) \u2022 (c2 \u2022 (u : EuclideanSpace \u211d (Fin 2))) = ((c1 / c2) * c2) \u2022 u := by simp [smul_smul]\n                  _ = c1 \u2022 u := by field_simp [hc2_ne_zero]\n              _ = t \u2022 (c2 \u2022 (u : EuclideanSpace \u211d (Fin 2))) := rfl\n              _ = t \u2022 (G - R) := by rw [hc2_val]\n      -- now we have x = R + t \u2022 (G - R)\n      set d := G - R with hd\n      set u' := R - X1 with hu'\n      have hG_norm_sq_eq : \u2016u' + d\u2016^2 = \u2016u'\u2016^2 := by\n        calc\n          \u2016u' + d\u2016^2 = \u2016(R - X1) + (G - R)\u2016^2 := rfl\n          _ = \u2016G - X1\u2016^2 := by\n            apply congrArg (fun w => \u2016w\u2016^2)\n            calc\n              (R - X1) + (G - R) = (G - R) + (R - X1) := by abel\n              _ = G - X1 := by rw [sub_add_sub_cancel]\n          _ = \u2016R - X1\u2016^2 := by\n            have h_norm : \u2016R - X1\u2016 = \u2016G - X1\u2016 := by\n              calc\n                \u2016R - X1\u2016 = dist R X1 := by rw [dist_eq_norm]\n                _ = dist X1 G := hR1\n                _ = dist G X1 := by rw [dist_comm]\n                _ = \u2016G - X1\u2016 := by rw [dist_eq_norm]\n            exact congrArg (fun t => t^2) h_norm.symm\n          _ = \u2016u'\u2016^2 := rfl\n      have h_inner_eq : 2*inner \u211d u' d + \u2016d\u2016^2 = 0 :=\n        inner_u_d_eq_neg_half_norm_sq u' d hG_norm_sq_eq\n      have h_vec_eq : (R - X1) + (G - R) = G - X1 := by\n        calc\n          (R - X1) + (G - R) = (G - R) + (R - X1) := by abel\n          _ = G - X1 := by rw [sub_add_sub_cancel]\n      have hx_norm_sq_eq : \u2016u' + t \u2022 d\u2016^2 = \u2016u'\u2016^2 := by\n        calc\n          \u2016u' + t \u2022 d\u2016^2 = \u2016(R - X1) + t \u2022 (G - R)\u2016^2 := rfl\n          _ = \u2016x - X1\u2016^2 := by\n            apply congrArg (fun w => \u2016w\u2016^2)\n            calc\n              (R - X1) + t \u2022 (G - R) = (R - X1) + (x - R) := by\n                rw [hx_minus_R_eq_t_smul_G_minus_R]\n              _ = x - X1 := by abel\n          _ = \u2016G - X1\u2016^2 := by\n            have h_norm : \u2016x - X1\u2016 = \u2016G - X1\u2016 := by\n              calc\n                \u2016x - X1\u2016 = dist x X1 := by rw [dist_eq_norm]\n                _ = dist X1 G := hxS1\n                _ = dist G X1 := by rw [dist_comm]\n                _ = \u2016G - X1\u2016 := by rw [dist_eq_norm]\n            exact congrArg (fun t => t^2) h_norm\n          _ = \u2016u' + d\u2016^2 := by\n            calc\n              \u2016G - X1\u2016^2 = \u2016(R - X1) + (G - R)\u2016^2 := by rw [h_vec_eq]\n              _ = \u2016u' + d\u2016^2 := rfl\n          _ = \u2016u'\u2016^2 := hG_norm_sq_eq\n      have h_eq : \u2016u'\u2016^2 + 2*t*inner \u211d u' d + t^2*\u2016d\u2016^2 = \u2016u'\u2016^2 := by\n        calc\n          \u2016u'\u2016^2 + 2*t*inner \u211d u' d + t^2*\u2016d\u2016^2 = \u2016u' + t \u2022 d\u2016^2 := by rw [norm_add_smul_sq]\n          _ = \u2016u'\u2016^2 := hx_norm_sq_eq\n      have h_eq2 : 2*t*inner \u211d u' d + t^2*\u2016d\u2016^2 = 0 := by linarith\n      have h_inner_eq' : inner \u211d u' d = -\u2016d\u2016^2 / 2 := by linarith\n      rw [h_inner_eq'] at h_eq2\n      ring_nf at h_eq2\n      -- h_eq2 : (t^2 - t) * \u2016d\u2016^2 = 0\n      have h_norm_d_sq_ne_zero : \u2016d\u2016^2 \u2260 0 := by\n        intro hzero\n        apply hR_ne_G\n        have hzero_norm : \u2016d\u2016 = 0 := by nlinarith\n        have hzero_vec : d = 0 := norm_eq_zero.mp hzero_norm\n        exact (sub_eq_zero.mp hzero_vec).symm\n      have h_factor : t*(t-1) = 0 := by\n        have htemp : \u2016d\u2016^2 * (t^2 - t) = 0 := by\n          nlinarith\n        have htemp2 : t^2 - t = 0 := by\n          cases mul_eq_zero.mp htemp with\n          | inl h => exact (h_norm_d_sq_ne_zero h).elim\n          | inr h => exact h\n        nlinarith\n      rcases eq_zero_or_eq_zero_of_mul_eq_zero h_factor with (ht0 | ht1)\n      \u00b7 -- case ht0: t = 0\n        have ht0' : t = 0 := ht0\n        have hx_eq_R_plus_td : x = R + t \u2022 d := by\n          calc\n            x = (x - R) + R := by abel\n            _ = (t \u2022 d) + R := by rw [hx_minus_R_eq_t_smul_G_minus_R]\n            _ = R + t \u2022 d := by abel\n        left\n        calc\n          x = R + t \u2022 d := hx_eq_R_plus_td\n          _ = R + 0 \u2022 d := by simp [ht0']\n          _ = R := by simp\n      \u00b7 -- case ht1: t - 1 = 0\n        have ht1' : t = 1 := by linarith\n        have hx_eq_R_plus_td : x = R + t \u2022 d := by\n          calc\n            x = (x - R) + R := by abel\n            _ = (t \u2022 d) + R := by rw [hx_minus_R_eq_t_smul_G_minus_R]\n            _ = R + t \u2022 d := by abel\n        right\n        calc\n          x = R + t \u2022 d := hx_eq_R_plus_td\n          _ = R + 1 \u2022 d := by simp [ht1']\n          _ = R + d := by simp\n          _ = G := by\n            dsimp [d]\n            simp\n    -- now hx_eq_R_or_G is proved\n    simp [hx_eq_R_or_G]\n  \u00b7 intro hx\n    rcases hx with (hx | hx)\n    \u00b7 subst hx\n      constructor\n      \u00b7 simpa [Metric.mem_sphere] using hR1\n      \u00b7 simpa [Metric.mem_sphere] using hR2\n    \u00b7 subst hx\n      constructor\n      \u00b7 simpa [Metric.mem_sphere] using hG1\n      \u00b7 simpa [Metric.mem_sphere] using hG2"
+    }
+  ],
+  "edges": [
+    {
+      "source": "affineIndependent_three_points_on_circle",
+      "target": "at_most_one_other_color_point",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "perp_bisector_equidistant",
+      "target": "at_most_one_other_color_point",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "distinct_Z",
+      "target": "contradiction_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_point_of_color_R_on_sphere_case1",
+      "target": "contradiction_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "affineIndependent_three_points_on_circle",
+      "target": "contradiction_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "distinct_Z",
+      "target": "contradiction_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_point_of_color_G_on_sphere_case2",
+      "target": "contradiction_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "perp_bisector_equidistant",
+      "target": "dist_X_G_ge_half_RG",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "two_circles_intersection_eq_R_G",
+      "target": "distinct_Z",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "dist_X_G_ge_half_RG",
+      "target": "exists_point_of_color_G_on_sphere_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_two_intersection_points",
+      "target": "exists_point_of_color_G_on_sphere_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "at_most_one_other_color_point",
+      "target": "exists_point_of_color_G_on_sphere_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "dist_X_G_ge_half_RG",
+      "target": "exists_point_of_color_R_on_sphere_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_two_intersection_points",
+      "target": "exists_point_of_color_R_on_sphere_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "at_most_one_other_color_point",
+      "target": "exists_point_of_color_R_on_sphere_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "perp_bisector",
+      "target": "putnam_2025_b1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_two_points_diff_color",
+      "target": "putnam_2025_b1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "contradiction_case1",
+      "target": "putnam_2025_b1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "three_points_on_perp_bisector_same_color",
+      "target": "putnam_2025_b1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "contradiction_case2",
+      "target": "putnam_2025_b1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_five_distinct_points_on_perp_bisector",
+      "target": "three_points_on_perp_bisector_same_color",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_three_same_color_five",
+      "target": "three_points_on_perp_bisector_same_color",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "perp_bisector_equidistant",
+      "target": "two_circles_intersection_eq_R_G",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

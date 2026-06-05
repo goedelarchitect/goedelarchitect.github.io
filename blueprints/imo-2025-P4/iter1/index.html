@@ -1,0 +1,1698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">IMO 2025 P4. 2,178 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item current">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item current">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "a0_form",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 19.26,
+      "proof_length": 88,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There exist k,m with gcd(m,10)=1 such that a_0 = 6\u00b7 12^k\u00b7 m.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- There exist $k,m$ with $\\gcd(m,10)=1$ such that $a_0 = 6\\cdot 12^k\\cdot m$. -/)\n  (proof := /-- From `all_dvd_6`, each $a_n$ is divisible by $6$. Consider the sequence; by the classification `f_dvd_6_dvd_4`, `f_dvd_6_not_dvd_4_not_dvd_5`, `f_dvd_6_not_dvd_4_dvd_5` and `preserves_odd_or_not_dvd_3`, the only way for the sequence to be infinite is to eventually reach a constant term $a_k$ with $6\\mid a_k$, $4\\nmid a_k$, $5\\nmid a_k$. Then $a_k = 6m$ with $\\gcd(m,10)=1$. Working backwards using $a_{i+1}=13a_i/12$ for $i<k$ (since $4\\mid a_i$ for $i<k$), we get $a_0 = a_k\\cdot (12/13)^k = 6\\cdot 12^k\\cdot m / 13^k$. For $a_0$ integer, $13^k$ divides $m$; write $m=13^km_0$. Then $\\gcd(m_0,10)=1$ and $a_0 = 6\\cdot 12^k\\cdot m_0$. -/)]\nlemma a0_form (a : \u2115 \u2192 \u2115) (hpos : \u2200 n : \u2115, a n > 0) (h1 : \u2200 n : \u2115, \u2203 b c d : \u2115, b < c \u2227 c < d \u2227 d < a n \u2227 b \u2223 a n \u2227 c \u2223 a n \u2227 d \u2223 a n \u2227 (\u2200 e : \u2115, e < a n \u2192 e \u2223 a n \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a (n + 1) = b + c + d) : \u2203 (k : \u2115) (m : \u2115), Nat.gcd m 10 = 1 \u2227 a 0 = 6 * 12 ^ k * m := by\n  have h6 : \u2200 n, 6 \u2223 a n := all_dvd_6 a hpos h1\n  have h6_0 : 6 \u2223 a 0 := h6 0\n  have h_exists_not_4 : \u2203 n, \u00ac 4 \u2223 a n := by\n    by_contra! h_all_4\n    -- h_all_4: \u2200 n, 4 \u2223 a n\n    have h12_a_n (n : \u2115) : 12 \u2223 a n := by\n      have h4n : 4 \u2223 a n := h_all_4 n\n      have h6n : 6 \u2223 a n := h6 n\n      have h3n : 3 \u2223 a n := by\n        have h3_6 : 3 \u2223 6 := by norm_num\n        exact Nat.dvd_trans h3_6 h6n\n      have h_coprime_3_4 : Nat.Coprime 3 4 := by norm_num\n      have h_mul : 3*4 = 12 := by norm_num\n      rw [\u2190 h_mul]\n      exact h_coprime_3_4.mul_dvd_of_dvd_of_dvd h3n h4n\n    have h_rec_eq : \u2200 n, a (n+1) = 13 * a n / 12 := by\n      intro n\n      have h6n : 6 \u2223 a n := h6 n\n      have h4n : 4 \u2223 a n := h_all_4 n\n      have hf := f_dvd_6_dvd_4 (a n) h6n h4n\n      have hsucc := a_succ_eq_f a h1 n\n      rw [hsucc, hf]\n    have h_mul_eq : \u2200 n, 12 * a (n+1) = 13 * a n := by\n      intro n\n      have h12_n : 12 \u2223 a n := h12_a_n n\n      calc\n        12 * a (n+1) = 12 * (13 * a n / 12) := by rw [h_rec_eq n]\n        _ = 13 * a n := by rw [Nat.mul_div_cancel' (by\n          apply Nat.dvd_mul_left_of_dvd h12_n 13\n        )]\n    have h_prod_eq : \u2200 k, 13 ^ k * a 0 = 12 ^ k * a k := by\n      intro k\n      induction' k with k ih\n      \u00b7 simp\n      \u00b7 have h_eq : 12 * a (k+1) = 13 * a k := h_mul_eq k\n        calc\n          13 ^ (k+1) * a 0 = 13 * (13 ^ k * a 0) := by ring\n          _ = 13 * (12 ^ k * a k) := by rw [ih]\n          _ = (13 * 12 ^ k) * a k := by ring\n          _ = 12 ^ k * (13 * a k) := by ring\n          _ = 12 ^ k * (12 * a (k+1)) := by rw [h_eq]\n          _ = (12 ^ k * 12) * a (k+1) := by ring\n          _ = 12 ^ (k+1) * a (k+1) := by ring\n    have h_dvd_a0 : \u2200 k, 12 ^ k \u2223 a 0 := by\n      intro k\n      have h_coprime_pow : Nat.Coprime (12 ^ k) (13 ^ k) := by\n        have h_coprime_12_13 : Nat.Coprime 12 13 := by\n          norm_num [Nat.coprime_iff_gcd_eq_one]\n        exact h_coprime_12_13.pow k k\n      have h_prod_eq_k : 13 ^ k * a 0 = 12 ^ k * a k := h_prod_eq k\n      have h_dvd_mul : 12 ^ k \u2223 13 ^ k * a 0 := by\n        rw [h_prod_eq_k]\n        exact dvd_mul_right (12 ^ k) (a k)\n      exact h_coprime_pow.dvd_of_dvd_mul_left h_dvd_mul\n    have h_exists_k : \u2203 k, a 0 < 12 ^ k := by\n      refine \u27e8a 0, ?_\u27e9\n      exact Nat.lt_pow_self (by norm_num : 1 < 12)\n    rcases h_exists_k with \u27e8k, hk\u27e9\n    have h_dvd : 12 ^ k \u2223 a 0 := h_dvd_a0 k\n    have h_le : 12 ^ k \u2264 a 0 := Nat.le_of_dvd (hpos 0) h_dvd\n    linarith\n  set k0 := Nat.find h_exists_not_4 with hk0_def\n  have hk0_not_4 : \u00ac 4 \u2223 a k0 := Nat.find_spec h_exists_not_4\n  have hk0_min : \u2200 i < k0, 4 \u2223 a i := by\n    intro i hi\n    have := Nat.find_min h_exists_not_4 hi\n    simpa using this\n  have hk0_6 : 6 \u2223 a k0 := h6 k0\n  have hk0_not_5 : \u00ac 5 \u2223 a k0 := by\n    by_contra! h5\n    have h30 : 30 \u2223 a k0 := by\n      have h_coprime_6_5 : Nat.Coprime 6 5 := by norm_num\n      have h_mul : 6*5 = 30 := by norm_num\n      rw [\u2190 h_mul]\n      exact h_coprime_6_5.mul_dvd_of_dvd_of_dvd hk0_6 h5\n    rcases h30 with \u27e8t, ht\u27e9\n    have h31 : a (k0+1) = 31 * a k0 / 30 := by\n      have h6k0 : 6 \u2223 a k0 := hk0_6\n      have h4k0 : \u00ac 4 \u2223 a k0 := hk0_not_4\n      have h5k0 : 5 \u2223 a k0 := h5\n      have hf := f_dvd_6_not_dvd_4_dvd_5 (a k0) h6k0 h4k0 h5k0\n      rcases hf with \u27e8hf_eq, hf_odd\u27e9\n      have hsucc := a_succ_eq_f a h1 k0\n      rw [hsucc, hf_eq]\n    have h_a_succ : a (k0+1) = 31 * t := by\n      rw [h31, ht]\n      calc\n        31*(30*t)/30 = (30*(31*t))/30 := by ring\n        _ = 31*t := by\n          rw [Nat.mul_div_cancel_left (31*t) (by norm_num : 0 < 30)]\n    have h6_succ : 6 \u2223 a (k0+1) := h6 (k0+1)\n    rw [h_a_succ] at h6_succ\n    have h_coprime_31_6 : Nat.Coprime 31 6 := by norm_num\n    have h6_t : 6 \u2223 t := h_coprime_31_6.symm.dvd_of_dvd_mul_left h6_succ\n    rcases h6_t with \u27e8u, hu\u27e9\n    have ha_k0_eq : a k0 = 180*u := by\n      calc\n        a k0 = 30*t := ht\n        _ = 30*(6*u) := by rw [hu]\n        _ = 180*u := by ring\n    have h4_180 : 4 \u2223 180 := by norm_num\n    have h4_a_k0 : 4 \u2223 a k0 := by\n      rw [ha_k0_eq]\n      exact h4_180.mul_right u\n    exact hk0_not_4 h4_a_k0\n  have h_coprime_m0_10 : Nat.gcd (a k0 / 6) 10 = 1 := by\n    set m0 := a k0 / 6 with hm0_def\n    have hm0_eq : a k0 = 6 * m0 := by\n      rw [hm0_def]\n      exact (Nat.mul_div_cancel' hk0_6).symm\n    have h_coprime_m0_2 : Nat.Coprime m0 2 := by\n      have h_odd : \u00ac 2 \u2223 m0 := by\n        intro h2\n        have h4_a_k0 : 4 \u2223 a k0 := by\n          rw [hm0_eq]\n          rcases h2 with \u27e8t, ht\u27e9\n          rw [ht]\n          use 3*t\n          ring\n        exact hk0_not_4 h4_a_k0\n      have h_prime_2 : Nat.Prime 2 := by norm_num\n      exact (h_prime_2.coprime_iff_not_dvd.mpr h_odd).symm\n    have h_coprime_m0_5 : Nat.Coprime m0 5 := by\n      have h_not_5 : \u00ac 5 \u2223 m0 := by\n        intro h5'\n        have h5_a_k0 : 5 \u2223 a k0 := by\n          rw [hm0_eq]\n          exact h5'.mul_left 6\n        exact hk0_not_5 h5_a_k0\n      have h_prime_5 : Nat.Prime 5 := by norm_num\n      exact (h_prime_5.coprime_iff_not_dvd.mpr h_not_5).symm\n    have h_coprime_m0_10 : Nat.Coprime m0 10 :=\n      Nat.Coprime.mul_right h_coprime_m0_2 h_coprime_m0_5\n    have h_gcd_m0_10 : Nat.gcd m0 10 = 1 := Nat.coprime_iff_gcd_eq_one.mp h_coprime_m0_10\n    rw [hm0_def]\n    exact h_gcd_m0_10\n  have prod_eq (n : \u2115) (h4 : \u2200 i < n, 4 \u2223 a i) : 13 ^ n * a 0 = 12 ^ n * a n := by\n    induction' n with m ih\n    \u00b7 simp\n    \u00b7 have h4_m : 4 \u2223 a m := h4 m (by omega)\n      have h6_m : 6 \u2223 a m := h6 m\n      have h12_m : 12 \u2223 a m := by\n        have h3_m : 3 \u2223 a m := by\n          have h3_6 : 3 \u2223 6 := by norm_num\n          exact Nat.dvd_trans h3_6 h6_m\n        have h_coprime_3_4 : Nat.Coprime 3 4 := by norm_num\n        have h_mul : 3*4 = 12 := by norm_num\n        rw [\u2190 h_mul]\n        exact h_coprime_3_4.mul_dvd_of_dvd_of_dvd h3_m h4_m\n      have h_rec_eq_m : a (m+1) = 13 * a m / 12 := by\n        have hf := f_dvd_6_dvd_4 (a m) h6_m h4_m\n        have hsucc := a_succ_eq_f a h1 m\n        rw [hsucc, hf]\n      have h_mul_eq_m : 12 * a (m+1) = 13 * a m := by\n        calc\n          12 * a (m+1) = 12 * (13 * a m / 12) := by rw [h_rec_eq_m]\n          _ = 13 * a m := by rw [Nat.mul_div_cancel' (by\n            apply Nat.dvd_mul_left_of_dvd h12_m 13\n          )]\n      have ih_eq : 13 ^ m * a 0 = 12 ^ m * a m := ih (fun i hi => h4 i (Nat.lt_of_lt_of_le hi (by omega)))\n      calc\n        13 ^ (m+1) * a 0 = 13 * (13 ^ m * a 0) := by ring\n        _ = 13 * (12 ^ m * a m) := by rw [ih_eq]\n        _ = (13 * 12 ^ m) * a m := by ring\n        _ = 12 ^ m * (13 * a m) := by ring\n        _ = 12 ^ m * (12 * a (m+1)) := by rw [h_mul_eq_m]\n        _ = (12 ^ m * 12) * a (m+1) := by ring\n        _ = 12 ^ (m+1) * a (m+1) := by ring\n  have h_prod_eq_k0 : 13 ^ k0 * a 0 = 12 ^ k0 * a k0 := prod_eq k0 hk0_min\n  set m0 := a k0 / 6 with hm0_def\n  have hm0_eq : a k0 = 6 * m0 := by\n    rw [hm0_def]\n    exact (Nat.mul_div_cancel' hk0_6).symm\n  have h_m0_dvd : 13 ^ k0 \u2223 m0 := by\n    have h_coprime_13_12 : Nat.Coprime (13 ^ k0) (12 ^ k0) := by\n      have h_coprime_13_12_base : Nat.Coprime 13 12 := by norm_num\n      exact h_coprime_13_12_base.pow k0 k0\n    have h_prod_eq_k0' : 13 ^ k0 * a 0 = 12 ^ k0 * (6 * m0) := by\n      rw [hm0_eq] at h_prod_eq_k0\n      exact h_prod_eq_k0\n    have h_dvd_mul : 13 ^ k0 \u2223 12 ^ k0 * (6 * m0) := by\n      rw [\u2190 h_prod_eq_k0']\n      exact dvd_mul_of_dvd_left (dvd_refl (13 ^ k0)) (a 0)\n    have h_dvd_mul' : 13 ^ k0 \u2223 (12 ^ k0 * 6) * m0 := by\n      simpa [mul_assoc] using h_dvd_mul\n    have h_coprime_13_6 : Nat.Coprime (13 ^ k0) 6 := by\n      have : Nat.Coprime 13 6 := by norm_num\n      exact this.pow k0 1\n    have h_coprime_13_6_12 : Nat.Coprime (13 ^ k0) (12 ^ k0 * 6) :=\n      Nat.Coprime.mul_right h_coprime_13_12 h_coprime_13_6\n    exact h_coprime_13_6_12.dvd_of_dvd_mul_left h_dvd_mul'\n  rcases h_m0_dvd with \u27e8m, hm\u27e9\n  have hm_def : m0 = 13 ^ k0 * m := hm\n  have h_a0_eq : a 0 = 6 * 12 ^ k0 * m := by\n    calc\n      a 0 = (13 ^ k0 * a 0) / (13 ^ k0) := by\n        have hpos13 : 13 ^ k0 > 0 := pow_pos (by norm_num : 0 < 13) k0\n        rw [Nat.mul_div_cancel_left (a 0) hpos13]\n      _ = (12 ^ k0 * a k0) / (13 ^ k0) := by rw [h_prod_eq_k0]\n      _ = (12 ^ k0 * (6 * m0)) / (13 ^ k0) := by rw [hm0_eq]\n      _ = (12 ^ k0 * (6 * (13 ^ k0 * m))) / (13 ^ k0) := by rw [hm_def]\n      _ = (12 ^ k0 * 6 * 13 ^ k0 * m) / (13 ^ k0) := by ring\n      _ = 12 ^ k0 * 6 * m := by\n        have hpos13' : 13 ^ k0 > 0 := pow_pos (by norm_num : 0 < 13) k0\n        have h_num : 12 ^ k0 * 6 * 13 ^ k0 * m = (12 ^ k0 * 6 * m) * 13 ^ k0 := by ring\n        rw [h_num]\n        rw [mul_comm (12 ^ k0 * 6 * m) (13 ^ k0)]\n        rw [Nat.mul_div_cancel_left (12 ^ k0 * 6 * m) hpos13']\n      _ = 6 * 12 ^ k0 * m := by ring\n  have h_coprime_m_10 : Nat.gcd m 10 = 1 := by\n    have h_coprime_m0_10' : Nat.Coprime m0 10 := by\n      rw [Nat.coprime_iff_gcd_eq_one]\n      exact h_coprime_m0_10\n    have hm_dvd_m0 : m \u2223 m0 := by\n      rw [hm_def, mul_comm]\n      exact \u27e813 ^ k0, rfl\u27e9\n    have h_coprime_m_10' : Nat.Coprime m 10 :=\n      h_coprime_m0_10'.coprime_dvd_left hm_dvd_m0\n    rwa [Nat.coprime_iff_gcd_eq_one] at h_coprime_m_10'\n  refine \u27e8k0, m, h_coprime_m_10, h_a0_eq\u27e9"
+    },
+    {
+      "id": "a_succ_eq_f",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.1,
+      "proof_length": 35,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For every n, a_{n+1} = f(a_n).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For every $n$, $a_{n+1} = f(a_n)$. -/)\n  (proof := /-- From `h1`, there exist $b<c<d$ proper divisors of $a_n$ such that any proper divisor of $a_n$ is $\\le b$ or $=c$ or $=d$, and $a_{n+1}=b+c+d$. Hence $b,c,d$ are the three largest proper divisors, so $f(a_n)=b+c+d=a_{n+1}$. -/)]\nlemma a_succ_eq_f (a : \u2115 \u2192 \u2115) (h1 : \u2200 n : \u2115, \u2203 b c d : \u2115, b < c \u2227 c < d \u2227 d < a n \u2227 b \u2223 a n \u2227 c \u2223 a n \u2227 d \u2223 a n \u2227 (\u2200 e : \u2115, e < a n \u2192 e \u2223 a n \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a (n + 1) = b + c + d) (n : \u2115) : a (n + 1) = f (a n) := by\n  have h_ex := h1 n\n  rcases h_ex with \u27e8b, c, d, hb_lt_c, hc_lt_d, hd_lt_x, hb_div, hc_div, hd_div, h_all, h_eq\u27e9\n  rw [h_eq]\n  let x := a n\n  have hxpos : x \u2265 0 := by omega\n  have hd_lt_x' : d < x := hd_lt_x\n  have hc_lt_x : c < x := lt_trans hc_lt_d hd_lt_x\n  have hb_lt_x : b < x := lt_trans hb_lt_c hc_lt_x\n  let s := Finset.filter (\u03bb d' => d' \u2223 x \u2227 d' < x) (Finset.range (x+1))\n  have hd_mem : d \u2208 s := by\n    apply Finset.mem_filter.mpr\n    refine \u27e8Finset.mem_range.mpr (by omega), ?_\u27e9\n    exact \u27e8hd_div, hd_lt_x\u27e9\n  have hc_mem : c \u2208 s := by\n    apply Finset.mem_filter.mpr\n    refine \u27e8Finset.mem_range.mpr (by omega), ?_\u27e9\n    exact \u27e8hc_div, hc_lt_x\u27e9\n  have hb_mem : b \u2208 s := by\n    apply Finset.mem_filter.mpr\n    refine \u27e8Finset.mem_range.mpr (by omega), ?_\u27e9\n    exact \u27e8hb_div, hb_lt_x\u27e9\n  have hd_max : \u2200 e \u2208 s, e \u2264 d := by\n    intro e he\n    rcases Finset.mem_filter.mp he with \u27e8he_range, \u27e8he_div, he_lt\u27e9\u27e9\n    have he_lt_x' : e < x := he_lt\n    have := h_all e he_lt_x' he_div\n    rcases this with (h | h | h)\n    \u00b7 omega\n    \u00b7 subst h; omega\n    \u00b7 subst h; rfl\n  have hc_max_lt_d : \u2200 e \u2208 s, e < d \u2192 e \u2264 c := by\n    intro e he he_lt_d\n    rcases Finset.mem_filter.mp he with \u27e8he_range, \u27e8he_div, he_lt\u27e9\u27e9\n    have he_lt_x' : e < x := he_lt\n    have := h_all e he_lt_x' he_div\n    rcases this with (h | h | h)\n    \u00b7 omega\n    \u00b7 subst h; omega\n    \u00b7 subst h; omega\n  have hb_max_lt_c : \u2200 e \u2208 s, e < c \u2192 e \u2264 b := by\n    intro e he he_lt_c\n    rcases Finset.mem_filter.mp he with \u27e8he_range, \u27e8he_div, he_lt\u27e9\u27e9\n    have he_lt_x' : e < x := he_lt\n    have := h_all e he_lt_x' he_div\n    rcases this with (h | h | h)\n    \u00b7 omega\n    \u00b7 subst h; omega\n    \u00b7 subst h; omega\n  let l := s.sort (\u00b7\u2265\u00b7)\n  have h_pairwise : l.Pairwise (\u00b7\u2265\u00b7) := Finset.sort_sorted s (\u00b7\u2265\u00b7)\n  have h_nodup : l.Nodup := Finset.sort_nodup s (\u00b7\u2265\u00b7)\n  have h_mem_d : d \u2208 l := by\n    rw [Finset.mem_sort (\u00b7\u2265\u00b7)]\n    exact hd_mem\n  have h_mem_c : c \u2208 l := by\n    rw [Finset.mem_sort (\u00b7\u2265\u00b7)]\n    exact hc_mem\n  have h_mem_b : b \u2208 l := by\n    rw [Finset.mem_sort (\u00b7\u2265\u00b7)]\n    exact hb_mem\n  have h_l_nonempty : l \u2260 [] := by\n    intro h_empty\n    have : d \u2209 l := by\n      rw [h_empty]\n      simp\n    exact this h_mem_d\n  rcases List.exists_cons_of_ne_nil h_l_nonempty with \u27e8a', l', h_l_eq\u27e9\n  rw [h_l_eq] at h_pairwise h_nodup h_mem_d h_mem_c h_mem_b\n  -- now l = a' :: l'\n  have ha'_mem_s : a' \u2208 s := by\n    have : a' \u2208 l := by\n      rw [h_l_eq]\n      simp\n    rw [Finset.mem_sort (\u00b7\u2265\u00b7)] at this\n    exact this\n  have ha'_ge_all : \u2200 y \u2208 l', a' \u2265 y := by\n    rcases List.pairwise_cons.mp h_pairwise with \u27e8h_ge, _\u27e9\n    exact h_ge\n  have ha'_eq_d : a' = d := by\n    have ha'_le_d : a' \u2264 d := hd_max a' ha'_mem_s\n    have hd_le_a' : d \u2264 a' := by\n      have hd_mem_list : d \u2208 a' :: l' := h_mem_d\n      cases hd_mem_list with\n      | head =>\n          rfl\n      | tail _ hd_mem_l' =>\n          have : a' \u2265 d := ha'_ge_all d hd_mem_l'\n          omega\n    omega\n  rw [ha'_eq_d] at h_l_eq h_pairwise h_nodup h_mem_d h_mem_c h_mem_b ha'_mem_s ha'_ge_all\n  clear ha'_eq_d a'\n  -- now l = d :: l'\n  have hd_not_mem_l' : d \u2209 l' := by\n    rcases List.nodup_cons.mp h_nodup with \u27e8hd_not_mem, _\u27e9\n    exact hd_not_mem\n  have hc_ne_d : c \u2260 d := by omega\n  have hb_ne_d : b \u2260 d := by omega\n  have hb_ne_c : b \u2260 c := by omega\n  have hc_mem_l' : c \u2208 l' := by\n    simpa [hc_ne_d] using h_mem_c\n  have h_l'_nonempty : l' \u2260 [] := by\n    intro h_empty\n    have : c \u2209 l' := by\n      rw [h_empty]\n      simp\n    exact this hc_mem_l'\n  rcases List.exists_cons_of_ne_nil h_l'_nonempty with \u27e8a'', l'', h_l'_eq\u27e9\n  rw [h_l'_eq] at h_pairwise h_nodup h_mem_c h_mem_b hc_mem_l'\n  -- now l' = a'' :: l''\n  have ha''_mem_s : a'' \u2208 s := by\n    have : a'' \u2208 l := by\n      rw [h_l_eq, h_l'_eq]\n      simp\n    rw [Finset.mem_sort (\u00b7\u2265\u00b7)] at this\n    exact this\n  have ha''_lt_d : a'' < d := by\n    have ha''_le_d : a'' \u2264 d := by\n      rcases List.pairwise_cons.mp h_pairwise with \u27e8h_ge, _\u27e9\n      have : a'' \u2208 a'' :: l'' := by simp\n      exact h_ge a'' this\n    have ha''_ne_d : a'' \u2260 d := by\n      intro h_eq\n      apply hd_not_mem_l'\n      rw [h_l'_eq]\n      simp [h_eq]\n    omega\n  have ha''_eq_c : a'' = c := by\n    have ha''_le_c : a'' \u2264 c := hc_max_lt_d a'' ha''_mem_s ha''_lt_d\n    have hc_le_a'' : c \u2264 a'' := by\n      cases hc_mem_l' with\n      | head => rfl\n      | tail _ hc_mem_l'' =>\n          have h_pairwise_tail : (a'' :: l'').Pairwise (\u00b7\u2265\u00b7) := by\n            rcases List.pairwise_cons.mp h_pairwise with \u27e8_, h_tail\u27e9\n            exact h_tail\n          rcases List.pairwise_cons.mp h_pairwise_tail with \u27e8h_ge, _\u27e9\n          have : a'' \u2265 c := h_ge c hc_mem_l''\n          omega\n    omega\n  rw [ha''_eq_c] at h_pairwise h_nodup h_mem_c h_mem_b hc_mem_l' ha''_mem_s ha''_lt_d h_l'_eq\n  clear ha''_eq_c a''\n  -- now l' = c :: l''\n  have hb_mem_l'' : b \u2208 l'' := by\n    simpa [hb_ne_d, hb_ne_c] using h_mem_b\n  have h_l''_nonempty : l'' \u2260 [] := by\n    intro h_empty\n    have : b \u2209 l'' := by\n      rw [h_empty]\n      simp\n    exact this hb_mem_l''\n  rcases List.exists_cons_of_ne_nil h_l''_nonempty with \u27e8a''', l''', h_l''_eq\u27e9\n  rw [h_l''_eq] at h_pairwise h_nodup h_mem_b hb_mem_l''\n  -- now l'' = a''' :: l'''\n  have ha'''_mem_s : a''' \u2208 s := by\n    have : a''' \u2208 l := by\n      rw [h_l_eq, h_l'_eq, h_l''_eq]\n      simp\n    rw [Finset.mem_sort (\u00b7\u2265\u00b7)] at this\n    exact this\n  have ha'''_lt_c : a''' < c := by\n    have ha'''_le_c : a''' \u2264 c := by\n      rcases List.pairwise_cons.mp h_pairwise with \u27e8_h_ge_d, h_pairwise_tail\u27e9\n      rcases List.pairwise_cons.mp h_pairwise_tail with \u27e8h_ge_c, _\u27e9\n      have : a''' \u2208 a''' :: l''' := by simp\n      exact h_ge_c a''' this\n    have ha'''_ne_c : a''' \u2260 c := by\n      intro h_eq\n      rcases List.nodup_cons.mp h_nodup with \u27e8_hd_not_mem, h_nodup_tail\u27e9\n      rcases List.nodup_cons.mp h_nodup_tail with \u27e8hc_not_mem, _\u27e9\n      apply hc_not_mem\n      simp [h_eq]\n    omega\n  have ha'''_eq_b : a''' = b := by\n    have ha'''_le_b : a''' \u2264 b := hb_max_lt_c a''' ha'''_mem_s ha'''_lt_c\n    have hb_le_a''' : b \u2264 a''' := by\n      cases hb_mem_l'' with\n      | head => rfl\n      | tail _ hb_mem_l''' =>\n          rcases List.pairwise_cons.mp h_pairwise with \u27e8_h_ge_d, h_pairwise_tail\u27e9\n          rcases List.pairwise_cons.mp h_pairwise_tail with \u27e8_h_ge_c, h_pairwise_tail'\u27e9\n          rcases List.pairwise_cons.mp h_pairwise_tail' with \u27e8h_ge_a''', _\u27e9\n          have : a''' \u2265 b := h_ge_a''' b hb_mem_l'''\n          omega\n    omega\n  rw [ha'''_eq_b] at h_l''_eq\n  rw [ha'''_eq_b] at *\n  -- now l'' = b :: l'''\n  -- We can now compute (s.sort (\u00b7\u2265\u00b7)).take 3 = [d, c, b]\n  have h_l_eq_full : l = d :: c :: b :: l''' := by\n    calc\n      l = d :: l' := h_l_eq\n      _ = d :: (c :: l'') := by rw [h_l'_eq]\n      _ = d :: c :: l'' := rfl\n      _ = d :: c :: (b :: l''') := by rw [h_l''_eq]\n      _ = d :: c :: b :: l''' := rfl\n  have h_l_take3 : (s.sort (\u00b7\u2265\u00b7)).take 3 = [d, c, b] := by\n    calc\n      (s.sort (\u00b7\u2265\u00b7)).take 3 = l.take 3 := rfl\n      _ = (d :: c :: b :: l''').take 3 := by rw [h_l_eq_full]\n      _ = [d, c, b] := by simp\n  have h_f_eq : f (a n) = b + c + d := by\n    calc\n      f (a n) = ((s.sort (\u00b7\u2265\u00b7)).take 3).sum := rfl\n      _ = [d, c, b].sum := by rw [h_l_take3]\n      _ = d + c + b := by simp [add_assoc]\n      _ = b + c + d := by omega\n  exact h_f_eq.symm"
+    },
+    {
+      "id": "all_dvd_6",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.74,
+      "proof_length": 53,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For every n, 6 divides a_n.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For every $n$, $6$ divides $a_n$. -/)\n  (proof := /-- Assume there exists $n$ with $6\\nmid a_n$. Choose the minimal such $n$. Then $a_n$ is either odd or $3\\nmid a_n$. By `preserves_odd_or_not_dvd_3`, $a_{n+1}<a_n$ and also $6\\nmid a_{n+1}$ (since $a_{n+1}$ is odd or not divisible by $3$). Repeating, we get an infinite strictly decreasing sequence of positive integers, impossible. Hence no such $n$ exists. -/)]\nlemma all_dvd_6 (a : \u2115 \u2192 \u2115) (hpos : \u2200 n : \u2115, a n > 0) (h1 : \u2200 n : \u2115, \u2203 b c d : \u2115, b < c \u2227 c < d \u2227 d < a n \u2227 b \u2223 a n \u2227 c \u2223 a n \u2227 d \u2223 a n \u2227 (\u2200 e : \u2115, e < a n \u2192 e \u2223 a n \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a (n + 1) = b + c + d) (n : \u2115) : 6 \u2223 a n := by\n  have not6_dvd_implies (x : \u2115) (hxpos : x > 0) (h : \u00ac 6 \u2223 x) : Odd x \u2228 \u00ac 3 \u2223 x := by\n    by_cases h2 : 2 \u2223 x\n    \u00b7 right\n      intro h3\n      apply h\n      have h_coprime : Nat.Coprime 2 3 := by decide\n      exact h_coprime.mul_dvd_of_dvd_of_dvd h2 h3\n    \u00b7 left\n      have h_not2 : \u00ac 2 \u2223 x := h2\n      have h_mod : x % 2 = 1 := (Nat.two_dvd_ne_zero.mp h_not2)\n      exact (Nat.odd_iff.mpr h_mod)\n  by_contra! h6\n  -- h6 : \u00ac 6 \u2223 a n\n  classical\n    let S : Set \u2115 := {k | \u2203 m : \u2115, a m = k \u2227 \u00ac 6 \u2223 k}\n    have hS_nonempty : \u2203 k, k \u2208 S := by\n      use a n\n      refine \u27e8n, rfl, h6\u27e9\n    let k := Nat.find hS_nonempty\n    have hk_mem : k \u2208 S := Nat.find_spec hS_nonempty\n    have hk_min : \u2200 m < k, m \u2209 S := \u03bb m hm => Nat.find_min hS_nonempty hm\n    rcases hk_mem with \u27e8m, hm_eq, hm_not6\u27e9\n    have hm_not6' : \u00ac 6 \u2223 a m := by\n      simpa [hm_eq] using hm_not6\n    have hm_pos : a m > 0 := hpos m\n    have h_odd_or_not3 : Odd (a m) \u2228 \u00ac 3 \u2223 a m :=\n      not6_dvd_implies (a m) hm_pos hm_not6'\n    have h_next_lt_and_odd_or_not3 : a (m + 1) < a m \u2227 (Odd (a (m + 1)) \u2228 \u00ac 3 \u2223 a (m + 1)) :=\n      preserves_odd_or_not_dvd_3 a h1 m h_odd_or_not3\n    rcases h_next_lt_and_odd_or_not3 with \u27e8h_lt, h_odd_or_not3_next\u27e9\n    have hm_not6_next : \u00ac 6 \u2223 a (m + 1) := by\n      intro h6_next\n      rcases h_odd_or_not3_next with (h_odd_next | h_not3_next)\n      \u00b7 have h2 : 2 \u2223 a (m + 1) :=\n          Nat.dvd_trans (by decide : 2 \u2223 6) h6_next\n        have : \u00ac 2 \u2223 a (m + 1) := h_odd_next.not_two_dvd_nat\n        exact this h2\n      \u00b7 have h3 : 3 \u2223 a (m + 1) :=\n          Nat.dvd_trans (by decide : 3 \u2223 6) h6_next\n        exact h_not3_next h3\n    have h_next_mem_S : a (m + 1) \u2208 S := by\n      refine \u27e8m + 1, rfl, hm_not6_next\u27e9\n    have h_lt_k : a (m + 1) < k := by\n      calc\n        a (m + 1) < a m := h_lt\n        _ = k := hm_eq\n    have : a (m + 1) \u2209 S := hk_min (a (m + 1)) h_lt_k\n    exact this h_next_mem_S"
+    },
+    {
+      "id": "f",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The sum of the three largest proper divisors of x.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- The sum of the three largest proper divisors of $x$. -/)]\nnoncomputable def f (x : \u2115) : \u2115 :=\n  let divisors : Finset \u2115 := (Finset.filter (\u03bb d => d \u2223 x \u2227 d < x) (Finset.range (x+1)))\n  let sorted := divisors.sort (\u00b7\u2265\u00b7)\n  (sorted.take 3).sum"
+    },
+    {
+      "id": "f_dvd_6_dvd_4",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.63,
+      "proof_length": 22,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If 6| x and 4| x, then f(x) = 13x/12.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If $6\\mid x$ and $4\\mid x$, then $f(x) = 13x/12$. -/)\n  (proof := /-- From $6\\mid x$ we have $d_2=2,d_3=3$. Since $4\\mid x$, $d_4=4$, and the three largest proper divisors are $x/2,x/3,x/4$. Hence $f(x)=x/2+x/3+x/4 = 13x/12$. -/)]\nlemma f_dvd_6_dvd_4 (x : \u2115) (hx6 : 6 \u2223 x) (hx4 : 4 \u2223 x) : f x = 13*x/12 := by\n  by_cases hx0 : x = 0\n  \u00b7 subst x; simp [f]\n  \u00b7 have hxpos : 0 < x := Nat.pos_of_ne_zero hx0\n    have h2x : 2 \u2223 x := Nat.dvd_trans (by norm_num : 2 \u2223 6) hx6\n    have h3x : 3 \u2223 x := Nat.dvd_trans (by norm_num : 3 \u2223 6) hx6\n    have h4x : 4 \u2223 x := hx4\n    have h12 : 12 \u2223 x := by\n      have h := Nat.lcm_dvd hx6 hx4\n      simpa [show Nat.lcm 6 4 = 12 from by norm_num] using h\n    -- lemmas about proper divisors\n    have le_half (d : \u2115) (hd : d \u2208 Nat.properDivisors x) : d \u2264 x/2 := by\n      by_contra! h\n      have hgt : d > x/2 := h\n      have hxpos' : 0 < x := by\n        have hx1 : 1 < x := Nat.one_lt_of_mem_properDivisors hd\n        omega\n      rcases (Nat.mem_properDivisors_iff_exists (Nat.ne_of_gt hxpos')).mp hd with \u27e8k, hk, hx_eq\u27e9\n      have h2x_eq : (x/2)*2 = x := Nat.div_mul_cancel h2x\n      have htemp2 : (x/2)*2 < d*2 := Nat.mul_lt_mul_of_pos_right hgt (by norm_num : 0 < 2)\n      have htemp2' : d*2 > x := by\n        calc\n          d*2 > (x/2)*2 := htemp2\n          _ = x := h2x_eq\n      have htemp : d*k < d*2 := by\n        calc\n          d*k = x := hx_eq.symm\n          _ < d*2 := htemp2'\n      have htemp_mul : k*d < 2*d := by\n        simpa [Nat.mul_comm] using htemp\n      have hk_lt_2 : k < 2 := Nat.lt_of_mul_lt_mul_right htemp_mul\n      have : k > 1 := hk\n      omega\n    have le_third (d : \u2115) (hd : d \u2208 Nat.properDivisors x) (hne : d \u2260 x/2) : d \u2264 x/3 := by\n      by_contra! h\n      have hgt : d > x/3 := h\n      have hxpos' : 0 < x := by\n        have hx1 : 1 < x := Nat.one_lt_of_mem_properDivisors hd\n        omega\n      rcases (Nat.mem_properDivisors_iff_exists (Nat.ne_of_gt hxpos')).mp hd with \u27e8k, hk, hx_eq\u27e9\n      have h3x_eq : (x/3)*3 = x := Nat.div_mul_cancel h3x\n      have htemp3 : (x/3)*3 < d*3 := Nat.mul_lt_mul_of_pos_right hgt (by norm_num : 0 < 3)\n      have htemp3' : d*3 > x := by\n        calc\n          d*3 > (x/3)*3 := htemp3\n          _ = x := h3x_eq\n      have htemp : d*k < d*3 := by\n        calc\n          d*k = x := hx_eq.symm\n          _ < d*3 := htemp3'\n      have htemp_mul : k*d < 3*d := by\n        simpa [Nat.mul_comm] using htemp\n      have hk_lt_3 : k < 3 := Nat.lt_of_mul_lt_mul_right htemp_mul\n      have hk_val : k = 2 := by\n        have : k > 1 := hk\n        omega\n      have hx_eq2 : x = d*2 := by simpa [hk_val] using hx_eq\n      have hd_eq_half : d = x/2 :=\n        Nat.mul_right_cancel (by norm_num : 0 < 2) (by\n          calc\n            d*2 = x := hx_eq2.symm\n            _ = (x/2)*2 := by\n              simpa [Nat.mul_comm] using (Nat.div_mul_cancel h2x).symm\n        )\n      exact hne hd_eq_half\n    have le_quarter (d : \u2115) (hd : d \u2208 Nat.properDivisors x) (hne2 : d \u2260 x/2) (hne3 : d \u2260 x/3) : d \u2264 x/4 := by\n      by_contra! h\n      have hgt : d > x/4 := h\n      have hxpos' : 0 < x := by\n        have hx1 : 1 < x := Nat.one_lt_of_mem_properDivisors hd\n        omega\n      rcases (Nat.mem_properDivisors_iff_exists (Nat.ne_of_gt hxpos')).mp hd with \u27e8k, hk, hx_eq\u27e9\n      have h4x_eq : (x/4)*4 = x := Nat.div_mul_cancel h4x\n      have htemp4 : (x/4)*4 < d*4 := Nat.mul_lt_mul_of_pos_right hgt (by norm_num : 0 < 4)\n      have htemp4' : d*4 > x := by\n        calc\n          d*4 > (x/4)*4 := htemp4\n          _ = x := h4x_eq\n      have htemp : d*k < d*4 := by\n        calc\n          d*k = x := hx_eq.symm\n          _ < d*4 := htemp4'\n      have htemp_mul : k*d < 4*d := by\n        simpa [Nat.mul_comm] using htemp\n      have hk_lt_4 : k < 4 := Nat.lt_of_mul_lt_mul_right htemp_mul\n      have hk_val : k = 2 \u2228 k = 3 := by\n        have : k > 1 := hk\n        omega\n      rcases hk_val with (hk2|hk3)\n      \u00b7 have hx_eq2 : x = d*2 := by simpa [hk2] using hx_eq\n        have hd_eq_half : d = x/2 :=\n          Nat.mul_right_cancel (by norm_num : 0 < 2) (by\n            calc\n              d*2 = x := hx_eq2.symm\n              _ = (x/2)*2 := by\n                simpa [Nat.mul_comm] using (Nat.div_mul_cancel h2x).symm\n          )\n        exact hne2 hd_eq_half\n      \u00b7 have hx_eq3 : x = d*3 := by simpa [hk3] using hx_eq\n        have hd_eq_third : d = x/3 :=\n          Nat.mul_right_cancel (by norm_num : 0 < 3) (by\n            calc\n              d*3 = x := hx_eq3.symm\n              _ = (x/3)*3 := by\n                simpa [Nat.mul_comm] using (Nat.div_mul_cancel h3x).symm\n          )\n        exact hne3 hd_eq_third\n    have mem_half : x/2 \u2208 Nat.properDivisors x := by\n      rw [Nat.mem_properDivisors_iff_exists (Nat.ne_of_gt hxpos)]\n      refine \u27e82, by norm_num, ?_\u27e9\n      exact (Nat.div_mul_cancel h2x).symm\n    have mem_third : x/3 \u2208 Nat.properDivisors x := by\n      rw [Nat.mem_properDivisors_iff_exists (Nat.ne_of_gt hxpos)]\n      refine \u27e83, by norm_num, ?_\u27e9\n      exact (Nat.div_mul_cancel h3x).symm\n    have mem_fourth : x/4 \u2208 Nat.properDivisors x := by\n      rw [Nat.mem_properDivisors_iff_exists (Nat.ne_of_gt hxpos)]\n      refine \u27e84, by norm_num, ?_\u27e9\n      exact (Nat.div_mul_cancel h4x).symm\n    let s := Nat.properDivisors x\n    have hne_s : s.Nonempty := by\n      exact \u27e8x/2, mem_half\u27e9\n    have hmax1 : s.max' hne_s = x/2 := by\n      apply (Finset.max'_eq_iff s hne_s (x/2)).mpr\n      constructor\n      \u00b7 exact mem_half\n      \u00b7 intro b hb\n        exact le_half b hb\n    let s1 := s.erase (x/2)\n    have hne_s1 : s1.Nonempty := by\n      have hne : x/3 \u2260 x/2 := by\n        intro h_eq\n        have : x = 0 := by\n          omega\n        omega\n      exact \u27e8x/3, Finset.mem_erase.mpr \u27e8hne, mem_third\u27e9\u27e9\n    have hmax2 : s1.max' hne_s1 = x/3 := by\n      apply (Finset.max'_eq_iff s1 hne_s1 (x/3)).mpr\n      constructor\n      \u00b7 apply Finset.mem_erase.mpr\n        constructor\n        \u00b7 intro h_eq\n          have : x = 0 := by\n            omega\n          omega\n        \u00b7 exact mem_third\n      \u00b7 intro b hb\n        rcases Finset.mem_erase.mp hb with \u27e8hne_b, hb_mem\u27e9\n        exact le_third b hb_mem hne_b\n    let s2 := s1.erase (x/3)\n    have hne_s2 : s2.Nonempty := by\n      have hne1 : x/4 \u2260 x/2 := by\n        intro h_eq\n        have : x = 0 := by\n          omega\n        omega\n      have hne2 : x/4 \u2260 x/3 := by\n        intro h_eq\n        have : x = 0 := by\n          omega\n        omega\n      have hmem_s1 : x/4 \u2208 s1 := Finset.mem_erase.mpr \u27e8hne1, mem_fourth\u27e9\n      have hmem_s2 : x/4 \u2208 s2 := Finset.mem_erase.mpr \u27e8hne2, hmem_s1\u27e9\n      exact \u27e8x/4, hmem_s2\u27e9\n    have hmax3 : s2.max' hne_s2 = x/4 := by\n      apply (Finset.max'_eq_iff s2 hne_s2 (x/4)).mpr\n      constructor\n      \u00b7 apply Finset.mem_erase.mpr\n        constructor\n        \u00b7 intro h_eq\n          have : x = 0 := by\n            omega\n          omega\n        \u00b7 apply Finset.mem_erase.mpr\n          constructor\n          \u00b7 intro h_eq\n            have : x = 0 := by\n              omega\n            omega\n          \u00b7 exact mem_fourth\n      \u00b7 intro b hb\n        rcases Finset.mem_erase.mp hb with \u27e8hne_b2, hb_mem\u27e9\n        rcases Finset.mem_erase.mp hb_mem with \u27e8hne_b1, hb_mem_s\u27e9\n        exact le_quarter b hb_mem_s hne_b1 hne_b2\n    -- lemma sort_desc_cons_max' as a local lemma\n    have sort_desc_cons_max' (s' : Finset \u2115) (hne' : s'.Nonempty) : s'.sort (\u00b7\u2265\u00b7) = s'.max' hne' :: ((s'.erase (s'.max' hne')).sort (\u00b7\u2265\u00b7)) := by\n      have hmax'_mem : s'.max' hne' \u2208 s' := Finset.max'_mem _ hne'\n      have hmax'_ge_all : \u2200 b \u2208 s', s'.max' hne' \u2265 b := \u03bb b hb => Finset.le_max' s' b hb\n      have hmax'_not_mem_erase : s'.max' hne' \u2209 s'.erase (s'.max' hne') := by simp\n      have h_sort_insert : (insert (s'.max' hne') (s'.erase (s'.max' hne'))).sort (\u00b7\u2265\u00b7) = s'.max' hne' :: ((s'.erase (s'.max' hne')).sort (\u00b7\u2265\u00b7)) := by\n        apply Finset.sort_insert (\u00b7\u2265\u00b7) ?_ hmax'_not_mem_erase\n        intro b hb\n        have hb_s' : b \u2208 s' := Finset.mem_of_mem_erase hb\n        exact hmax'_ge_all b hb_s'\n      have h_insert_eq_s' : insert (s'.max' hne') (s'.erase (s'.max' hne')) = s' := by\n        apply Finset.insert_erase hmax'_mem\n      calc\n        s'.sort (\u00b7\u2265\u00b7) = (insert (s'.max' hne') (s'.erase (s'.max' hne'))).sort (\u00b7\u2265\u00b7) := by rw [h_insert_eq_s']\n        _ = s'.max' hne' :: ((s'.erase (s'.max' hne')).sort (\u00b7\u2265\u00b7)) := h_sort_insert\n    have h1 : s.sort (\u00b7\u2265\u00b7) = x/2 :: (s1.sort (\u00b7\u2265\u00b7)) := by\n      have h_eq := sort_desc_cons_max' s hne_s\n      rw [hmax1] at h_eq\n      have h_erase_eq : s.erase (x/2) = s1 := rfl\n      rw [h_erase_eq] at h_eq\n      exact h_eq\n    have h2 : s1.sort (\u00b7\u2265\u00b7) = x/3 :: (s2.sort (\u00b7\u2265\u00b7)) := by\n      have h_eq := sort_desc_cons_max' s1 hne_s1\n      rw [hmax2] at h_eq\n      have h_erase_eq : s1.erase (x/3) = s2 := rfl\n      rw [h_erase_eq] at h_eq\n      exact h_eq\n    have h3 : s2.sort (\u00b7\u2265\u00b7) = x/4 :: ((s2.erase (x/4)).sort (\u00b7\u2265\u00b7)) := by\n      have h_eq := sort_desc_cons_max' s2 hne_s2\n      rw [hmax3] at h_eq\n      simpa using h_eq\n    have h_list : (s.sort (\u00b7\u2265\u00b7)).take 3 = [x/2, x/3, x/4] := by\n      calc\n        (s.sort (\u00b7\u2265\u00b7)).take 3 = (x/2 :: (s1.sort (\u00b7\u2265\u00b7))).take 3 := by rw [h1]\n        _ = x/2 :: ((s1.sort (\u00b7\u2265\u00b7)).take 2) := by simp\n        _ = x/2 :: ((x/3 :: (s2.sort (\u00b7\u2265\u00b7))).take 2) := by rw [h2]\n        _ = x/2 :: (x/3 :: ((s2.sort (\u00b7\u2265\u00b7)).take 1)) := by simp\n        _ = x/2 :: (x/3 :: [x/4]) := by\n          rw [h3]\n          simp\n        _ = [x/2, x/3, x/4] := by simp\n    have hf : f x = x/2 + x/3 + x/4 := by\n      unfold f\n      have hdivisors_eq : (Finset.filter (\u03bb d => d \u2223 x \u2227 d < x) (Finset.range (x+1))) = s := by\n        ext d\n        simp [s, Nat.properDivisors, Finset.mem_filter, Finset.mem_range, Finset.mem_Ico]\n        constructor\n        \u00b7 rintro \u27e8hd_range, hd_div, hd_lt\u27e9\n          have hd_pos : 1 \u2264 d := by\n            by_contra! h\n            have : d = 0 := by omega\n            subst this\n            have hx0 : x = 0 := (Nat.zero_dvd.mp hd_div)\n            exact hxpos.ne' hx0\n          exact \u27e8\u27e8hd_pos, hd_lt\u27e9, hd_div\u27e9\n        \u00b7 rintro \u27e8\u27e8hd_pos, hd_lt\u27e9, hd_div\u27e9\n          exact \u27e8by omega, hd_div, hd_lt\u27e9\n      simp [hdivisors_eq, h_list]\n      omega\n    rw [hf]\n    omega"
+    },
+    {
+      "id": "f_dvd_6_not_dvd_4_dvd_5",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.78,
+      "proof_length": 42,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If 6| x, 4nmid x, and 5| x, then f(x)=31x/30 and f(x) is odd.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If $6\\mid x$, $4\\nmid x$, and $5\\mid x$, then $f(x)=31x/30$ and $f(x)$ is odd. -/)\n  (proof := /-- From $6\\mid x$, $d_2=2,d_3=3$. Since $4\\nmid x$, the third smallest divisor is $5$, so $d_4=5$. The three largest proper divisors are $x/2,x/3,x/5$, sum $31x/30$. Moreover $v_2(x)=1$ because $4\\nmid x$, and $30$ has $v_2=1$, $31$ is odd, so $v_2(f(x))=0$, i.e., $f(x)$ is odd. -/)]\nlemma f_dvd_6_not_dvd_4_dvd_5 (x : \u2115) (hx6 : 6 \u2223 x) (hx4 : \u00ac 4 \u2223 x) (hx5 : 5 \u2223 x) : f x = 31*x/30 \u2227 Odd (f x) := by\n  have hx2 : 2 \u2223 x := by\n    have h2_6 : 2 \u2223 6 := by norm_num\n    exact Nat.dvd_trans h2_6 hx6\n  have hx3 : 3 \u2223 x := by\n    have h3_6 : 3 \u2223 6 := by norm_num\n    exact Nat.dvd_trans h3_6 hx6\n  have hxpos' : x > 0 := by\n    by_contra! H\n    have hx0 : x = 0 := by omega\n    have h4x : 4 \u2223 x := by\n      rw [hx0]\n      exact dvd_zero 4\n    exact hx4 h4x\n  set A := x/2 with hA\n  set B := x/3 with hB\n  set C := x/5 with hC\n  have hA_eq : 2*A = x := by\n    calc\n      2*A = 2*(x/2) := rfl\n      _ = x := by simpa [Nat.mul_div_cancel' hx2]\n  have hB_eq : 3*B = x := by\n    calc\n      3*B = 3*(x/3) := rfl\n      _ = x := by simpa [Nat.mul_div_cancel' hx3]\n  have hC_eq : 5*C = x := by\n    calc\n      5*C = 5*(x/5) := rfl\n      _ = x := by simpa [Nat.mul_div_cancel' hx5]\n  have hA_proper : A \u2223 x \u2227 A < x := by\n    constructor\n    \u00b7 rw [\u2190 hA_eq]; exact \u27e82, by ring\u27e9\n    \u00b7 calc\n        A = x/2 := rfl\n        _ < x := Nat.div_lt_self hxpos' (by norm_num)\n  have hB_proper : B \u2223 x \u2227 B < x := by\n    constructor\n    \u00b7 rw [\u2190 hB_eq]; exact \u27e83, by ring\u27e9\n    \u00b7 calc\n        B = x/3 := rfl\n        _ < x := Nat.div_lt_self hxpos' (by norm_num)\n  have hC_proper : C \u2223 x \u2227 C < x := by\n    constructor\n    \u00b7 rw [\u2190 hC_eq]; exact \u27e85, by ring\u27e9\n    \u00b7 calc\n        C = x/5 := rfl\n        _ < x := Nat.div_lt_self hxpos' (by norm_num)\n  -- Lemma: any proper divisor d of x satisfies d \u2264 A\n  have le_of_proper_divisor (d : \u2115) (hd : d \u2223 x) (hd_lt : d < x) : d \u2264 A := by\n    rcases hd with \u27e8k, hx_eq\u27e9\n    have hkpos : k \u2260 0 := by\n      intro hzero\n      rw [hzero, mul_zero] at hx_eq\n      omega\n    have hk_ge_2 : 2 \u2264 k := by\n      by_contra! H\n      have hk_lt_2 : k < 2 := by omega\n      have hk1 : k = 1 := by omega\n      rw [hk1, mul_one] at hx_eq\n      rw [hx_eq] at hd_lt\n      exact lt_irrefl d hd_lt\n    have hd_eq : d = x / k := by\n      calc\n        d = (d*k)/k := by\n          rw [mul_comm, Nat.mul_div_cancel_left d (Nat.pos_of_ne_zero hkpos)]\n        _ = x/k := by rw [hx_eq]\n    rw [hd_eq]\n    have h2k : 2 \u2264 k := hk_ge_2\n    have hpos2 : 0 < 2 := by norm_num\n    exact Nat.div_le_div_left h2k hpos2\n  -- Lemma: any proper divisor d of x with d > C must be A or B.\n  have h_gt_C_eq_A_or_B (d : \u2115) (hd : d \u2223 x) (hd_lt : d < x) (hdgt : d > C) : d = A \u2228 d = B := by\n    rcases hd with \u27e8k, hx_eq\u27e9\n    have hkpos : k \u2260 0 := by\n      intro hzero\n      rw [hzero, mul_zero] at hx_eq\n      omega\n    have hk_ge_2 : 2 \u2264 k := by\n      by_contra! H\n      have hk_lt_2 : k < 2 := by omega\n      have hk1 : k = 1 := by omega\n      rw [hk1, mul_one] at hx_eq\n      rw [hx_eq] at hd_lt\n      exact lt_irrefl d hd_lt\n    have h_x_le_5d : x \u2264 5*d := by\n      have h_not_div_lt : \u00ac (d < x/5) := by\n        exact Nat.not_lt.mpr (Nat.le_of_lt hdgt)\n      have h_equiv := (Nat.lt_div_iff_mul_lt' hx5 d).not.mp h_not_div_lt\n      exact Nat.le_of_not_lt h_equiv\n    have h_mul : d*k \u2264 5*d := by\n      rw [\u2190 hx_eq]\n      exact h_x_le_5d\n    have hpos_d : d > 0 := by\n      by_contra! H\n      have hd0 : d = 0 := by omega\n      rw [hd0, zero_mul] at hx_eq\n      omega\n    have hk_le_5 : k \u2264 5 := by\n      apply Nat.le_of_mul_le_mul_left ?_ hpos_d\n      simpa [mul_comm, mul_left_comm, mul_assoc] using h_mul\n    have hk_ne_5 : k \u2260 5 := by\n      intro hk5\n      rw [hk5] at hx_eq\n      have hd_eq_C : d = C := by\n        calc\n          d = (d*5)/5 := by simpa using (Nat.mul_div_cancel_left d (by norm_num : 0 < 5))\n          _ = x/5 := by rw [hx_eq]\n          _ = C := rfl\n      rw [hd_eq_C] at hdgt\n      exact lt_irrefl C hdgt\n    have hk_ne_4 : k \u2260 4 := by\n      intro hk4\n      rw [hk4] at hx_eq\n      have h4x : 4 \u2223 x := by\n        rw [hx_eq]\n        exact \u27e8d, by ring\u27e9\n      exact hx4 h4x\n    have hk_cases : k = 2 \u2228 k = 3 := by\n      have hk_range : k \u2265 2 \u2227 k \u2264 5 := \u27e8hk_ge_2, hk_le_5\u27e9\n      interval_cases k\n      \u00b7 left; rfl\n      \u00b7 right; rfl\n      \u00b7 exfalso; exact hk_ne_4 rfl\n      \u00b7 exfalso; exact hk_ne_5 rfl\n    rcases hk_cases with (hk2 | hk3)\n    \u00b7 -- k = 2, then d = x/2 = A\n      have hd_eq_A : d = A := by\n        calc\n          d = x/k := by\n            have htemp : d = (d*k)/k := by\n              rw [mul_comm, Nat.mul_div_cancel_left d (Nat.pos_of_ne_zero hkpos)]\n            rw [htemp, hx_eq]\n          _ = x/2 := by rw [hk2]\n          _ = A := rfl\n      exact Or.inl hd_eq_A\n    \u00b7 -- k = 3, then d = x/3 = B\n      have hd_eq_B : d = B := by\n        calc\n          d = x/k := by\n            have htemp : d = (d*k)/k := by\n              rw [mul_comm, Nat.mul_div_cancel_left d (Nat.pos_of_ne_zero hkpos)]\n            rw [htemp, hx_eq]\n          _ = x/3 := by rw [hk3]\n          _ = B := rfl\n      exact Or.inr hd_eq_B\n  have hC_le_B : C \u2264 B := by\n    rw [hB, hC]\n    have h3_5 : 3 \u2264 5 := by norm_num\n    have hpos3 : 0 < 3 := by norm_num\n    exact Nat.div_le_div_left h3_5 hpos3\n  have hC_le_A : C \u2264 A := by\n    rw [hA, hC]\n    have h2_5 : 2 \u2264 5 := by norm_num\n    have hpos2 : 0 < 2 := by norm_num\n    exact Nat.div_le_div_left h2_5 hpos2\n  have hB_ne_A : B \u2260 A := by\n    intro h_eq\n    have hposA : A > 0 := by\n      have hpos_mul : 0 < 2*A := by\n        rw [hA_eq]\n        exact hxpos'\n      exact Nat.pos_of_mul_pos_left hpos_mul\n    have h_eq' : 2*A = 3*A := by\n      calc\n        2*A = x := hA_eq\n        _ = 3*B := by symm; exact hB_eq\n        _ = 3*A := by rw [h_eq]\n    omega\n  have hC_ne_A : C \u2260 A := by\n    intro h_eq\n    have hposA : A > 0 := by\n      have hpos_mul : 0 < 2*A := by\n        rw [hA_eq]\n        exact hxpos'\n      exact Nat.pos_of_mul_pos_left hpos_mul\n    have h_eq' : 2*A = 5*A := by\n      calc\n        2*A = x := hA_eq\n        _ = 5*C := by symm; exact hC_eq\n        _ = 5*A := by rw [h_eq]\n    omega\n  have hC_ne_B : C \u2260 B := by\n    intro h_eq\n    have hposB : B > 0 := by\n      have hpos_mul : 0 < 3*B := by\n        rw [hB_eq]\n        exact hxpos'\n      exact Nat.pos_of_mul_pos_left hpos_mul\n    have h_eq' : 3*B = 5*B := by\n      calc\n        3*B = x := hB_eq\n        _ = 5*C := by symm; exact hC_eq\n        _ = 5*B := by rw [h_eq]\n    omega\n  -- Lemma: any proper divisor d of x with d \u2260 A satisfies d \u2264 B\n  have le_of_proper_divisor_not_A (d : \u2115) (hd : d \u2208 Nat.properDivisors x) (hd_ne_A : d \u2260 A) : d \u2264 B := by\n    rw [Nat.mem_properDivisors] at hd\n    have hd_div : d \u2223 x := hd.1\n    have hd_lt : d < x := hd.2\n    by_cases hgt : d > C\n    \u00b7 have h_cases := h_gt_C_eq_A_or_B d hd_div hd_lt hgt\n      rcases h_cases with (h | h)\n      \u00b7 exfalso; exact hd_ne_A h\n      \u00b7 rw [h]\n    \u00b7 have hle : d \u2264 C := by omega\n      exact le_trans hle hC_le_B\n  -- Lemma: any proper divisor d of x with d \u2260 A and d \u2260 B satisfies d \u2264 C\n  have le_of_proper_divisor_not_A_not_B (d : \u2115) (hd : d \u2208 Nat.properDivisors x) (hd_ne_A : d \u2260 A) (hd_ne_B : d \u2260 B) : d \u2264 C := by\n    rw [Nat.mem_properDivisors] at hd\n    have hd_div : d \u2223 x := hd.1\n    have hd_lt : d < x := hd.2\n    by_cases hgt : d > C\n    \u00b7 have h_cases := h_gt_C_eq_A_or_B d hd_div hd_lt hgt\n      rcases h_cases with (h | h)\n      \u00b7 exfalso; exact hd_ne_A h\n      \u00b7 exfalso; exact hd_ne_B h\n    \u00b7 omega\n  let S := Nat.properDivisors x\n  have hS_nonempty : S.Nonempty := by\n    refine \u27e8A, ?_\u27e9\n    rw [Nat.mem_properDivisors]\n    exact \u27e8hA_proper.1, hA_proper.2\u27e9\n  have sorted_head?_eq_max' (S : Finset \u2115) (hS : S.Nonempty) : (S.sort (\u00b7\u2265\u00b7)).head? = some (S.max' hS) := by\n    let sorted := S.sort (\u00b7\u2265\u00b7)\n    have h_sorted : sorted.Pairwise (\u00b7\u2265\u00b7) := Finset.sort_sorted S (\u00b7\u2265\u00b7)\n    have h_pairwise_max : sorted.Pairwise (fun a b => max a b = a) := by\n      apply h_sorted.imp; intro a b h; exact Nat.max_eq_left h\n    have h_max?_eq_head : sorted.max? = sorted.head? := List.max?_eq_head? h_pairwise_max\n    have h_max?_eq_max' : sorted.max? = some (S.max' hS) := by\n      apply (List.max?_eq_some_iff).mpr\n      constructor\n      \u00b7 rw [Finset.mem_sort]; exact Finset.max'_mem _ hS\n      \u00b7 intro b hb; rw [Finset.mem_sort] at hb; exact Finset.le_max' S b hb\n    calc\n      sorted.head? = sorted.max? := by rw [h_max?_eq_head]\n      _ = some (S.max' hS) := h_max?_eq_max'\n  have h_max1_eq_A : S.max' hS_nonempty = A := by\n    apply (Finset.max'_eq_iff S hS_nonempty A).mpr\n    constructor\n    \u00b7 rw [Nat.mem_properDivisors]; exact \u27e8hA_proper.1, hA_proper.2\u27e9\n    \u00b7 intro d hd\n      rw [Nat.mem_properDivisors] at hd\n      have hd_div := hd.1\n      have hd_lt := hd.2\n      exact le_of_proper_divisor d hd_div hd_lt\n  have hB_mem_S : B \u2208 S := by\n    rw [Nat.mem_properDivisors]; exact \u27e8hB_proper.1, hB_proper.2\u27e9\n  have hB_mem_S1 : B \u2208 S.erase (S.max' hS_nonempty) := by\n    apply Finset.mem_erase.mpr\n    constructor\n    \u00b7 intro h_eq\n      apply hB_ne_A\n      calc\n        B = S.max' hS_nonempty := h_eq\n        _ = A := h_max1_eq_A\n    \u00b7 exact hB_mem_S\n  have hS1_nonempty : (S.erase (S.max' hS_nonempty)).Nonempty :=\n    \u27e8B, hB_mem_S1\u27e9\n  have h_max2_eq_B : (S.erase (S.max' hS_nonempty)).max' hS1_nonempty = B := by\n    apply (Finset.max'_eq_iff (S.erase (S.max' hS_nonempty)) hS1_nonempty B).mpr\n    constructor\n    \u00b7 exact hB_mem_S1\n    \u00b7 intro d hd\n      rw [Finset.mem_erase] at hd\n      have hd_mem_S : d \u2208 S := hd.2\n      have hd_ne_A : d \u2260 A := by\n        intro h_eq\n        have h_eq' : d = S.max' hS_nonempty := by rw [h_max1_eq_A, h_eq]\n        exact hd.1 h_eq'\n      exact le_of_proper_divisor_not_A d hd_mem_S hd_ne_A\n  have hC_mem_S : C \u2208 S := by\n    rw [Nat.mem_properDivisors]; exact \u27e8hC_proper.1, hC_proper.2\u27e9\n  have hC_mem_S2 : C \u2208 (S.erase (S.max' hS_nonempty)).erase ((S.erase (S.max' hS_nonempty)).max' hS1_nonempty) := by\n    apply Finset.mem_erase.mpr\n    constructor\n    \u00b7 intro h_eq\n      apply hC_ne_B\n      calc\n        C = (S.erase (S.max' hS_nonempty)).max' hS1_nonempty := h_eq\n        _ = B := h_max2_eq_B\n    \u00b7 apply Finset.mem_erase.mpr\n      constructor\n      \u00b7 intro h_eq\n        apply hC_ne_A\n        calc\n          C = S.max' hS_nonempty := h_eq\n          _ = A := h_max1_eq_A\n      \u00b7 exact hC_mem_S\n  have hS2_nonempty : ((S.erase (S.max' hS_nonempty)).erase ((S.erase (S.max' hS_nonempty)).max' hS1_nonempty)).Nonempty :=\n    \u27e8C, hC_mem_S2\u27e9\n  have h_max3_eq_C : ((S.erase (S.max' hS_nonempty)).erase ((S.erase (S.max' hS_nonempty)).max' hS1_nonempty)).max' hS2_nonempty = C := by\n    apply (Finset.max'_eq_iff ((S.erase (S.max' hS_nonempty)).erase ((S.erase (S.max' hS_nonempty)).max' hS1_nonempty)) hS2_nonempty C).mpr\n    constructor\n    \u00b7 exact hC_mem_S2\n    \u00b7 intro d hd\n      rw [Finset.mem_erase] at hd\n      have hd_mem_S1 : d \u2208 S.erase (S.max' hS_nonempty) := hd.2\n      rw [Finset.mem_erase] at hd_mem_S1\n      have hd_mem_S : d \u2208 S := hd_mem_S1.2\n      have hd_ne_A : d \u2260 A := by\n        intro h_eq\n        apply hd_mem_S1.1\n        rw [h_max1_eq_A, h_eq]\n      have hd_ne_B : d \u2260 B := by\n        intro h_eq\n        apply hd.1\n        rw [h_max2_eq_B, h_eq]\n      exact le_of_proper_divisor_not_A_not_B d hd_mem_S hd_ne_A hd_ne_B\n  -- Now we compute f x\n  let sorted := S.sort (\u00b7\u2265\u00b7)\n  have h_sorted_head?_some_A : sorted.head? = some A := by\n    rw [sorted_head?_eq_max' S hS_nonempty, h_max1_eq_A]\n  rcases List.head?_eq_some_iff.mp h_sorted_head?_some_A with \u27e8rest, h_sorted_eq\u27e9\n  -- h_sorted_eq: sorted = A :: rest\n  have h_rest_toFinset : rest.toFinset = S.erase A := by\n    have h_sorted_toFinset : sorted.toFinset = S := Finset.sort_toFinset S (\u00b7\u2265\u00b7)\n    rw [h_sorted_eq] at h_sorted_toFinset\n    rw [List.toFinset_cons] at h_sorted_toFinset\n    -- h_sorted_toFinset: insert A (rest.toFinset) = S\n    have h_not_mem : A \u2209 rest.toFinset := by\n      have h_nodup : (A :: rest).Nodup := by\n        have h := Finset.sort_nodup S (\u00b7\u2265\u00b7)\n        simpa [sorted, h_sorted_eq] using h\n      have h_not_mem_rest : A \u2209 rest := (List.nodup_cons.mp h_nodup).1\n      simpa using h_not_mem_rest\n    have h_erase := Finset.erase_insert h_not_mem\n    -- h_erase: (insert A (rest.toFinset)).erase A = rest.toFinset\n    rw [h_sorted_toFinset] at h_erase\n    -- h_erase: S.erase A = rest.toFinset\n    rw [\u2190 h_erase]\n  have h_rest_sorted : rest.Pairwise (\u00b7\u2265\u00b7) := by\n    have h_sorted_pairwise : (A :: rest).Pairwise (\u00b7\u2265\u00b7) := by\n      have h := Finset.sort_sorted S (\u00b7\u2265\u00b7)\n      simpa [sorted, h_sorted_eq] using h\n    exact h_sorted_pairwise.tail\n  have h_rest_nodup : rest.Nodup := by\n    have h_nodup : (A :: rest).Nodup := by\n      have h := Finset.sort_nodup S (\u00b7\u2265\u00b7)\n      simpa [sorted, h_sorted_eq] using h\n    exact (List.nodup_cons.mp h_nodup).2\n  have h_rest_eq_sort : (rest.toFinset).sort (\u00b7\u2265\u00b7) = rest := by\n    apply ((List.toFinset_sort (\u00b7\u2265\u00b7) h_rest_nodup).mpr)\n    exact h_rest_sorted\n  have h_tail_eq : sorted.tail = (S.erase A).sort (\u00b7\u2265\u00b7) := by\n    calc\n      sorted.tail = rest := by\n        simp [h_sorted_eq]\n      _ = (rest.toFinset).sort (\u00b7\u2265\u00b7) := by rw [h_rest_eq_sort]\n      _ = (S.erase A).sort (\u00b7\u2265\u00b7) := by rw [h_rest_toFinset]\n  have h_max2_eq_B' : (S.erase A).max' (by simpa [h_max1_eq_A] using hS1_nonempty) = B := by\n    simpa [h_max1_eq_A] using h_max2_eq_B\n  have h_rest_head?_some_B : rest.head? = some B := by\n    calc\n      rest.head? = (sorted.tail).head? := by simp [h_sorted_eq]\n      _ = ((S.erase A).sort (\u00b7\u2265\u00b7)).head? := by rw [h_tail_eq]\n      _ = some ((S.erase A).max' (by simpa [h_max1_eq_A] using hS1_nonempty)) := sorted_head?_eq_max' (S.erase A) (by simpa [h_max1_eq_A] using hS1_nonempty)\n      _ = some B := by rw [h_max2_eq_B']\n  rcases List.head?_eq_some_iff.mp h_rest_head?_some_B with \u27e8rest2, h_rest_eq\u27e9\n  -- h_rest_eq: rest = B :: rest2\n  have h_rest2_toFinset : rest2.toFinset = (S.erase A).erase B := by\n    have h_rest_toFinset' : rest.toFinset = S.erase A := h_rest_toFinset\n    rw [h_rest_eq] at h_rest_toFinset'\n    rw [List.toFinset_cons] at h_rest_toFinset'\n    -- h_rest_toFinset' : insert B (rest2.toFinset) = S.erase A\n    have h_not_mem_B : B \u2209 rest2.toFinset := by\n      have h_nodup : (B :: rest2).Nodup := by\n        have h_rest_nodup' : rest.Nodup := h_rest_nodup\n        rw [h_rest_eq] at h_rest_nodup'\n        exact h_rest_nodup'\n      have h_not_mem_rest2 : B \u2209 rest2 := (List.nodup_cons.mp h_nodup).1\n      simpa using h_not_mem_rest2\n    have h_erase_B := Finset.erase_insert h_not_mem_B\n    -- h_erase_B: (insert B (rest2.toFinset)).erase B = rest2.toFinset\n    rw [h_rest_toFinset'] at h_erase_B\n    -- h_erase_B: (S.erase A).erase B = rest2.toFinset\n    rw [\u2190 h_erase_B]\n  have h_rest2_sorted : rest2.Pairwise (\u00b7\u2265\u00b7) := by\n    have h_rest_sorted' : rest.Pairwise (\u00b7\u2265\u00b7) := h_rest_sorted\n    rw [h_rest_eq] at h_rest_sorted'\n    exact h_rest_sorted'.tail\n  have h_rest2_nodup : rest2.Nodup := by\n    have h_rest_nodup' : rest.Nodup := h_rest_nodup\n    rw [h_rest_eq] at h_rest_nodup'\n    exact (List.nodup_cons.mp h_rest_nodup').2\n  have h_rest2_eq_sort : (rest2.toFinset).sort (\u00b7\u2265\u00b7) = rest2 := by\n    apply ((List.toFinset_sort (\u00b7\u2265\u00b7) h_rest2_nodup).mpr)\n    exact h_rest2_sorted\n  have h_tail2_eq : rest2 = ((S.erase A).erase B).sort (\u00b7\u2265\u00b7) := by\n    calc\n      rest2 = (rest2.toFinset).sort (\u00b7\u2265\u00b7) := by rw [h_rest2_eq_sort]\n      _ = ((S.erase A).erase B).sort (\u00b7\u2265\u00b7) := by rw [h_rest2_toFinset]\n  have hS2_nonempty' : ((S.erase A).erase B).Nonempty := by\n    have hmem : C \u2208 (S.erase A).erase B := by\n      have h_set_eq : (S.erase A).erase B = (S.erase (S.max' hS_nonempty)).erase ((S.erase (S.max' hS_nonempty)).max' hS1_nonempty) := by\n        simp [h_max1_eq_A, h_max2_eq_B']\n      rw [h_set_eq]\n      exact hC_mem_S2\n    exact \u27e8C, hmem\u27e9\n  have h_max3_eq_C' : ((S.erase A).erase B).max' hS2_nonempty' = C := by\n    apply (Finset.max'_eq_iff ((S.erase A).erase B) hS2_nonempty' C).mpr\n    constructor\n    \u00b7 -- C \u2208 (S.erase A).erase B\n      have hmem : C \u2208 (S.erase A).erase B := by\n        have h_set_eq : (S.erase A).erase B = (S.erase (S.max' hS_nonempty)).erase ((S.erase (S.max' hS_nonempty)).max' hS1_nonempty) := by\n          simp [h_max1_eq_A, h_max2_eq_B']\n        rw [h_set_eq]\n        exact hC_mem_S2\n      exact hmem\n    \u00b7 -- \u2200 d \u2208 (S.erase A).erase B, d \u2264 C\n      intro d hd\n      rw [Finset.mem_erase] at hd\n      rcases hd with \u27e8hd_ne_B, hd_mem_erase\u27e9\n      rw [Finset.mem_erase] at hd_mem_erase\n      rcases hd_mem_erase with \u27e8hd_ne_A, hd_mem_S\u27e9\n      exact le_of_proper_divisor_not_A_not_B d hd_mem_S hd_ne_A hd_ne_B\n  have h_rest2_head?_some_C : rest2.head? = some C := by\n    rw [h_tail2_eq]\n    rw [sorted_head?_eq_max' ((S.erase A).erase B) hS2_nonempty', h_max3_eq_C']\n  have h_rest2_take1_sum : (rest2.take 1).sum = C := by\n    rcases List.head?_eq_some_iff.mp h_rest2_head?_some_C with \u27e8rest3, h_rest2_eq'\u27e9\n    rw [h_rest2_eq']\n    simp\n  have h_rest2_head_eq_C : rest2.head (by\n    have h_nonempty : rest2 \u2260 [] := by\n      intro h\n      have : rest2.head? = none := by simp [h]\n      rw [h_rest2_head?_some_C] at this\n      simp at this\n    exact h_nonempty) = C := by\n    rcases List.head?_eq_some_iff.mp h_rest2_head?_some_C with \u27e8rest3, h_rest2_eq'\u27e9\n    simp [h_rest2_eq']\n  have h_sorted_take3_sum : (sorted.take 3).sum = A + B + C := by\n    rw [h_sorted_eq, h_rest_eq]\n    simp [h_rest2_take1_sum, List.take_cons, List.sum_cons]\n    omega\n  have h_f_x_eq : f x = (sorted.take 3).sum := by\n    dsimp [f, S, sorted]\n    have h_divisors_eq : (Finset.filter (\u03bb d => d \u2223 x \u2227 d < x) (Finset.range (x+1))) = Nat.properDivisors x := by\n      ext d; simp [Nat.mem_properDivisors, Finset.mem_range, Finset.mem_filter]; omega\n    simp [h_divisors_eq]\n  rw [h_f_x_eq, h_sorted_take3_sum]\n  have h30 : 30 \u2223 x := by\n    have h6 : 6 \u2223 x := by\n      have h_coprime_2_3 : Coprime 2 3 := by norm_num\n      have h6x : 2*3 \u2223 x := Nat.Coprime.mul_dvd_of_dvd_of_dvd h_coprime_2_3 hx2 hx3\n      simpa [show (2:\u2115)*3 = 6 by norm_num] using h6x\n    have h_coprime_6_5 : Coprime 6 5 := by norm_num\n    have h30x : 6*5 \u2223 x := Nat.Coprime.mul_dvd_of_dvd_of_dvd h_coprime_6_5 h6 hx5\n    simpa [show (6:\u2115)*5 = 30 by norm_num] using h30x\n  set k := x/30 with hk\n  have hx_eq : x = 30*k := by\n    rw [hk, Nat.mul_div_cancel' h30]\n  have hA_eq' : A = 15*k := by\n    calc\n      A = x/2 := rfl\n      _ = (30*k)/2 := by rw [hx_eq]\n      _ = 15*k := by omega\n  have hB_eq' : B = 10*k := by\n    calc\n      B = x/3 := rfl\n      _ = (30*k)/3 := by rw [hx_eq]\n      _ = 10*k := by omega\n  have hC_eq' : C = 6*k := by\n    calc\n      C = x/5 := rfl\n      _ = (30*k)/5 := by rw [hx_eq]\n      _ = 6*k := by omega\n  have hLHS : A + B + C = 31*k := by\n    rw [hA_eq', hB_eq', hC_eq']; omega\n  have hRHS : 31*x/30 = 31*k := by\n    rw [hx_eq]\n    omega\n  have h_sum_eq : A + B + C = 31*x/30 := by\n    rw [hLHS, hRHS]\n  have hk_odd : Odd k := by\n    by_contra! H\n    have h_even_k : Even k := by\n      rw [Nat.not_odd_iff_even] at H\n      exact H\n    rcases h_even_k with \u27e8m, hm\u27e9\n    have h4x : 4 \u2223 x := by\n      rw [hx_eq, hm]\n      use 15*m\n      omega\n    exact hx4 h4x\n  have h_odd : Odd (A + B + C) := by\n    rw [hLHS]\n    have h31_odd : Odd (31 : \u2115) := by norm_num\n    exact h31_odd.mul hk_odd\n  exact \u27e8h_sum_eq, h_odd\u27e9"
+    },
+    {
+      "id": "f_even_not_dvd_3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.67,
+      "proof_length": 65,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If x is even and 3nmid x, then f(x) < x and either f(x) is odd or 3nmid f(x).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If $x$ is even and $3\\nmid x$, then $f(x) < x$ and either $f(x)$ is odd or $3\\nmid f(x)$. -/)\n  (proof := /-- Split into cases $4\\mid x$ and $\\neg4\\mid x$. When $4\\mid x$, the three largest proper divisors are $x/2,x/4,x/d$ and a congruence argument shows $3\\nmid f(x)$. When $\\neg4\\mid x$, let $d_2<d_3$ be the second and third smallest proper divisors. If $d_3=2d_2$, then $f(x)=x/2+3x/(2d_2)$ which is even and $3\\nmid f(x)$. If $d_3<2d_2$, then $d_3$ is odd, so all three summands in $f(x)$ are odd making $f(x)$ odd. -/)]\nlemma f_even_not_dvd_3 (x : \u2115) (hx2 : 2 \u2223 x) (hx3 : \u00ac 3 \u2223 x) : f x < x \u2227 (Odd (f x) \u2228 \u00ac 3 \u2223 f x) := by\n  sorry_using [f]"
+    },
+    {
+      "id": "f_odd",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.68,
+      "proof_length": 31,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If x is odd, then f(x) < x.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If $x$ is odd, then $f(x) < x$. -/)\n  (proof := /-- Since $x$ is odd, all its divisors are odd. The largest proper divisor is at most $x/3$, the second at most $x/3$, the third at most $x/5$, so $f(x) < x$. -/)]\nlemma f_odd (x : \u2115) (hx : Odd x) : f x < x := by\n  have f_eq_sum_top_three_proper : f x = (((Nat.properDivisors x).sort (\u00b7\u2265\u00b7)).take 3).sum := by\n    unfold f\n    have h_eq : (Finset.filter (\u03bb d => d \u2223 x \u2227 d < x) (Finset.range (x+1))) = Nat.properDivisors x := by\n      ext d; constructor <;> intro h\n      \u00b7 rcases Finset.mem_filter.mp h with \u27e8hd_range, \u27e8hdvd, hlt\u27e9\u27e9\n        apply Nat.mem_properDivisors.mpr\n        exact \u27e8hdvd, hlt\u27e9\n      \u00b7 have hmem := Nat.mem_properDivisors.mp h\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 apply Finset.mem_range.mpr\n          have hd_lt_x : d < x := hmem.2\n          omega\n        \u00b7 exact \u27e8hmem.1, hmem.2\u27e9\n    simp [h_eq]\n  rw [f_eq_sum_top_three_proper]\n  let sorted := (Nat.properDivisors x).sort (\u00b7\u2265\u00b7)\n  let top3 := sorted.take 3\n  have h_each_bound (d : \u2115) (hd : d \u2208 top3) : 3*d \u2264 x := by\n    have hmem_sorted : d \u2208 sorted := List.mem_of_mem_take hd\n    have hmem_proper : d \u2208 Nat.properDivisors x :=\n      ((Finset.mem_sort (\u00b7\u2265\u00b7) (s := Nat.properDivisors x)).mp hmem_sorted)\n    rcases Nat.mem_properDivisors.mp hmem_proper with \u27e8hdvd, hlt\u27e9\n    -- we need to prove 3*d \u2264 x\n    have proper_divisor_bound (x d : \u2115) (hx : Odd x) (hdvd : d \u2223 x) (hd_lt_x : d < x) : 3*d \u2264 x := by\n      rcases hdvd with \u27e8k, hk\u27e9\n      have hk_odd : Odd k := by\n        rw [hk] at hx\n        exact (Nat.Odd.of_mul_right hx)\n      have hk_gt_one : 1 < k := by\n        by_contra! H\n        have hk_le_one : k \u2264 1 := H\n        have : k = 0 \u2228 k = 1 := by omega\n        rcases this with (hk0 | hk1)\n        \u00b7 rw [hk0, mul_zero] at hk\n          have hx0 : x = 0 := hk\n          have : \u00ac Odd 0 := by decide\n          exact this (by rw [hx0] at hx; exact hx)\n        \u00b7 rw [hk1, mul_one] at hk\n          rw [hk] at hd_lt_x\n          exact lt_irrefl d hd_lt_x\n      have hk_ge_three : 3 \u2264 k := by\n        have odd_gt_one_ge_three {n : \u2115} (hodd : Odd n) (hgt1 : 1 < n) : 3 \u2264 n := by\n          rcases hodd with \u27e8m, hm\u27e9\n          rw [hm]\n          have hm_pos : 1 \u2264 m := by omega\n          omega\n        exact odd_gt_one_ge_three hk_odd hk_gt_one\n      have hx_ge_3d : 3*d \u2264 x := by\n        rw [hk]\n        have htemp : d*3 \u2264 d*k := Nat.mul_le_mul_left d hk_ge_three\n        simpa [mul_comm, mul_left_comm, mul_assoc] using htemp\n      exact hx_ge_3d\n    exact proper_divisor_bound x d hx hdvd hlt\n  have hlen : top3.length \u2264 3 := by\n    simpa [top3] using List.length_take_le 3 sorted\n  have mul_sum_map (l : List \u2115) (c : \u2115) : c * (l.sum) = (l.map (\u03bb d => c*d)).sum := by\n    induction l with\n    | nil => simp\n    | cons h t ih =>\n      simp [List.sum_cons, List.map_cons, mul_add, ih]\n  have hsum_times_3 : 3 * (top3.sum) \u2264 x * (top3.length) := by\n    calc\n      3 * (top3.sum) = (top3.map (\u03bb d => 3*d)).sum := by rw [mul_sum_map]\n      _ \u2264 (top3.map (\u03bb _ => x)).sum := by\n        refine List.sum_le_sum ?_\n        intro d hd\n        exact h_each_bound d hd\n      _ = x * (top3.length) := by\n        simp [List.sum_replicate, mul_comm]\n  have hsum_le_x : top3.sum \u2264 x := by\n    have htemp : 3*(top3.sum) \u2264 3*x := by\n      apply le_trans hsum_times_3\n      -- need x*top3.length \u2264 3*x\n      -- using hlen: top3.length \u2264 3\n      simpa [mul_comm] using Nat.mul_le_mul_left x hlen\n    omega\n  by_cases hsum_ge_x : top3.sum \u2265 x\n  \u00b7 exfalso\n    have hsum_eq_x : top3.sum = x := le_antisymm hsum_le_x hsum_ge_x\n    have hxpos : 0 < x := Odd.pos hx\n    -- from hsum_times_3 and hsum_eq_x, we have 3*x \u2264 x*(top3.length)\n    have h_ineq : 3*x \u2264 x*(top3.length) := by\n      calc\n        3*x = 3*(top3.sum) := by rw [hsum_eq_x]\n        _ \u2264 x*(top3.length) := hsum_times_3\n    have h_ineq' : x*3 \u2264 x*top3.length := by\n      simpa [mul_comm] using h_ineq\n    have hlen_ge_3 : 3 \u2264 top3.length :=\n      Nat.le_of_mul_le_mul_left h_ineq' hxpos\n    have hlen_eq_3 : top3.length = 3 := le_antisymm hlen hlen_ge_3\n    rcases List.length_eq_three.mp hlen_eq_3 with \u27e8a, b, c, htop3_eq\u27e9\n    -- rewrite top3 to [a,b,c] in relevant hypotheses\n    rw [htop3_eq] at hsum_eq_x h_each_bound\n    -- Now hsum_eq_x : ([a,b,c].sum = x), h_each_bound : \u2200 d \u2208 [a,b,c], 3*d \u2264 x\n    have hsum_eq_x' : a + b + c = x := by\n      simp at hsum_eq_x\n      omega\n    have ha_bound : 3*a \u2264 x := by\n      apply h_each_bound a\n      simp\n    have hb_bound : 3*b \u2264 x := by\n      apply h_each_bound b\n      simp\n    have hc_bound : 3*c \u2264 x := by\n      apply h_each_bound c\n      simp\n    by_cases hdiv3 : 3 \u2223 x\n    \u00b7 -- case 3 divides x, write x = 3*k\n      rcases hdiv3 with \u27e8k, hk\u27e9\n      -- hk: x = 3*k\n      have hk_pos : 0 < k := by\n        omega\n      -- For each d \u2208 [a,b,c], we have 3*d \u2264 x = 3*k, so d \u2264 k\n      have ha_le_k : a \u2264 k := by\n        have h3a_le_3k : 3*a \u2264 3*k := by\n          rw [hk] at ha_bound\n          exact ha_bound\n        omega\n      have hb_le_k : b \u2264 k := by\n        have h3b_le_3k : 3*b \u2264 3*k := by\n          rw [hk] at hb_bound\n          exact hb_bound\n        omega\n      have hc_le_k : c \u2264 k := by\n        have h3c_le_3k : 3*c \u2264 3*k := by\n          rw [hk] at hc_bound\n          exact hc_bound\n        omega\n      have hsum_eq_3k : a + b + c = 3*k := by\n        rw [hk] at hsum_eq_x'\n        exact hsum_eq_x'\n      have : a = k \u2227 b = k \u2227 c = k := by omega\n      rcases this with \u27e8ha_eq_k, hb_eq_k, hc_eq_k\u27e9\n      -- Now all three equal k, but they must be distinct because sorted is nodup.\n      have h_sorted_nodup : sorted.Nodup := by\n        unfold sorted\n        exact Finset.sort_nodup (Nat.properDivisors x) (\u00b7\u2265\u00b7)\n      have h_top3_sublist : List.Sublist [a,b,c] sorted := by\n        -- we have that List.take 3 sorted = [a,b,c] (by htop3_eq)\n        -- so use List.take_sublist\n        have htake_eq : List.take 3 sorted = [a,b,c] := by\n          calc\n            List.take 3 sorted = top3 := by rfl\n            _ = [a,b,c] := htop3_eq\n        have h_sublist : List.Sublist (List.take 3 sorted) sorted := List.take_sublist 3 sorted\n        simpa [htake_eq] using h_sublist\n      have h_top3_nodup : [a,b,c].Nodup :=\n        List.Nodup.sublist h_top3_sublist h_sorted_nodup\n      -- But [a,b,c] contains three equal elements, so it's not nodup, contradiction.\n      have : \u00ac [a,b,c].Nodup := by\n        have ha_eq_b : a = b := by rw [ha_eq_k, hb_eq_k]\n        simp [ha_eq_b]\n      exact this h_top3_nodup\n    \u00b7 -- case 3 does not divide x\n      have hmod_ne_zero : x % 3 \u2260 0 := by\n        intro hzero\n        apply hdiv3\n        exact Nat.dvd_of_mod_eq_zero hzero\n      have hmod_lt : x % 3 < 3 := Nat.mod_lt x (by norm_num : 0 < 3)\n      have hx_eq : x = 3*(x/3) + x%3 := by\n        omega\n      have h_3q_lt_x : 3*(x/3) < x := by\n        omega\n      -- For each d \u2208 [a,b,c], we have 3*d \u2264 x, so d \u2264 x/3\n      have hd_le_q (d : \u2115) (hd : d \u2208 [a,b,c]) : d \u2264 x/3 := by\n        have h3d_le_x : 3*d \u2264 x := h_each_bound d hd\n        omega\n      have ha_q : a \u2264 x/3 := hd_le_q a (by simp)\n      have hb_q : b \u2264 x/3 := hd_le_q b (by simp)\n      have hc_q : c \u2264 x/3 := hd_le_q c (by simp)\n      have hsum_le_3q : a + b + c \u2264 3*(x/3) := by\n        omega\n      rw [hsum_eq_x'] at hsum_le_3q\n      -- now hsum_le_3q: x \u2264 3*(x/3)\n      -- but we have h_3q_lt_x: 3*(x/3) < x\n      have h_contra : x < x := by\n        exact lt_of_le_of_lt hsum_le_3q h_3q_lt_x\n      exact lt_irrefl x h_contra\n  \u00b7 -- hsum_ge_x false, so top3.sum < x\n    exact Nat.lt_of_not_ge hsum_ge_x"
+    },
+    {
+      "id": "imo2025_p4_left",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 24,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The main theorem: Under the hypotheses, operatorname{padicValNat}_2(a_0) is odd, operatorname{padicValNat}_2(a_0) < 2\u00b7operatorname{padicValNat}_3(a_0), and operatorname{padicValNat}_5(a_0)=0.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The main theorem: Under the hypotheses, $\\operatorname{padicValNat}_2(a_0)$ is odd, $\\operatorname{padicValNat}_2(a_0) < 2\\cdot\\operatorname{padicValNat}_3(a_0)$, and $\\operatorname{padicValNat}_5(a_0)=0$. -/)\n  (proof := /-- By `a0_form`, there exist $k,m$ with $\\gcd(m,10)=1$ and $a_0 = 6\\cdot 12^k\\cdot m$. Using `padicValNat_2_of_form`, `padicValNat_3_of_form`, `padicValNat_5_of_form`, and `odd_padicValNat_2`, we obtain the desired conclusions. -/)]\ntheorem imo2025_p4_left (a : \u2115 \u2192 \u2115) (hpos : \u2200 n : \u2115, a n > 0)\n  (h1 : \u2200 n : \u2115, \u2203 b c d : \u2115, b < c \u2227 c < d \u2227 d < a n \u2227 b \u2223 a n \u2227 c \u2223 a n \u2227 d \u2223 a n \u2227 (\u2200 e : \u2115, e < a n \u2192 e \u2223 a n \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a (n + 1) = b + c + d) : Odd (padicValNat 2 (a 0)) \u2227 padicValNat 2 (a 0) < 2 * padicValNat 3 (a 0) \u2227 padicValNat 5 (a 0) = 0 := by\n  rcases a0_form a hpos h1 with \u27e8k, m, hgcd, ha0\u27e9\n  have h2 := padicValNat_2_of_form a k m ha0 hgcd\n  have h3 := padicValNat_3_of_form a k m ha0 hgcd\n  have h5 := padicValNat_5_of_form a k m ha0 hgcd\n  have hodd := odd_padicValNat_2 a k h2\n  have hlt : padicValNat 2 (a 0) < 2 * padicValNat 3 (a 0) := by\n    rw [h2]\n    have : 2*k+1 < 2*(k+1) := by omega\n    have hle : 2*(k+1) \u2264 2 * padicValNat 3 (a 0) := Nat.mul_le_mul_left 2 h3\n    exact lt_of_lt_of_le this hle\n  exact And.intro hodd (And.intro hlt h5)"
+    },
+    {
+      "id": "odd_padicValNat_2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If operatorname{padicValNat}_2(a_0)=2k+1, then it is odd.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $\\operatorname{padicValNat}_2(a_0)=2k+1$, then it is odd. -/)\n  (proof := /-- $2k+1$ is obviously odd. -/)]\nlemma odd_padicValNat_2 (a : \u2115 \u2192 \u2115) (k : \u2115) (h : padicValNat 2 (a 0) = 2*k+1) : Odd (padicValNat 2 (a 0)) := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "padicValNat_2_of_form",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.35,
+      "proof_length": 28,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a_0 = 6\u00b7 12^k\u00b7 m and gcd(m,10)=1, then operatorname{padicValNat}_2(a_0) = 2k+1.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $a_0 = 6\\cdot 12^k\\cdot m$ and $\\gcd(m,10)=1$, then $\\operatorname{padicValNat}_2(a_0) = 2k+1$. -/)\n  (proof := /-- Using `padicValNat.mul` and `padicValNat.pow`, we have $\\operatorname{padicValNat}_2(6\\cdot 12^k\\cdot m) = \\operatorname{padicValNat}_2(6) + \\operatorname{padicValNat}_2(12^k) + \\operatorname{padicValNat}_2(m)$. Since $\\gcd(m,10)=1$, $m$ is odd, so $\\operatorname{padicValNat}_2(m)=0$. $\\operatorname{padicValNat}_2(6)=1$ and $\\operatorname{padicValNat}_2(12^k)=2k$. Hence the result. -/)]\nlemma padicValNat_2_of_form (a : \u2115 \u2192 \u2115) (k m : \u2115) (h : a 0 = 6 * 12 ^ k * m) (hgcd : Nat.gcd m 10 = 1) : padicValNat 2 (a 0) = 2*k+1 := by\n  rw [h]\n  have hmz : m \u2260 0 := by\n    intro hmzero\n    have : Nat.gcd m 10 = 10 := by\n      simp [hmzero]\n    rw [hgcd] at this\n    norm_num at this\n  have h2_not_dvd_1 : \u00ac 2 \u2223 1 := by\n    simpa using Nat.not_two_dvd_bit1 0\n  have padicValNat_2_3 : padicValNat 2 3 = 0 := by\n    have h_not_dvd : \u00ac 2 \u2223 3 := by\n      simpa using Nat.not_two_dvd_bit1 1\n    by_contra hne\n    have h_dvd : 2 \u2223 3 := (dvd_iff_padicValNat_ne_zero (by norm_num : 3 \u2260 0)).mpr hne\n    exact h_not_dvd h_dvd\n  have padicValNat_2_6 : padicValNat 2 6 = 1 := by\n    calc\n      padicValNat 2 6 = padicValNat 2 (2*3) := by norm_num\n      _ = padicValNat 2 2 + padicValNat 2 3 := by\n        refine padicValNat.mul (by norm_num : (2 : \u2115) \u2260 0) (by norm_num : (3 : \u2115) \u2260 0)\n      _ = 1 + padicValNat 2 3 := by\n        have h2 : padicValNat 2 2 = 1 := by\n          simpa using padicValNat.self (by norm_num : 1 < (2 : \u2115))\n        simp [h2]\n      _ = 1 := by simp [padicValNat_2_3]\n  have padicValNat_2_12 : padicValNat 2 12 = 2 := by\n    calc\n      padicValNat 2 12 = padicValNat 2 (4*3) := by norm_num\n      _ = padicValNat 2 4 + padicValNat 2 3 := padicValNat.mul (by norm_num : (4 : \u2115) \u2260 0) (by norm_num : (3 : \u2115) \u2260 0)\n      _ = padicValNat 2 (2^2) + padicValNat 2 3 := by norm_num\n      _ = padicValNat 2 3 + padicValNat 2 (2^2) := add_comm _ _\n      _ = padicValNat 2 3 + (2 * padicValNat 2 2) := by\n        rw [padicValNat.pow (by norm_num : (2 : \u2115) \u2260 0) (n := 2)]\n      _ = padicValNat 2 3 + (2 * 1) := by\n        have h2 : padicValNat 2 2 = 1 := by\n          simpa using padicValNat.self (by norm_num : 1 < (2 : \u2115))\n        simp [h2]\n      _ = 0 + 2 := by simp [padicValNat_2_3]\n      _ = 2 := by norm_num\n  have hm : padicValNat 2 m = 0 := by\n    have h_not_dvd : \u00ac 2 \u2223 m := by\n      intro h2m\n      have h2gcd : 2 \u2223 Nat.gcd m 10 := by\n        refine Nat.dvd_gcd h2m ?_\n        norm_num\n      rw [hgcd] at h2gcd\n      exact h2_not_dvd_1 h2gcd\n    by_contra hne\n    have h_dvd : 2 \u2223 m := (dvd_iff_padicValNat_ne_zero hmz).mpr hne\n    exact h_not_dvd h_dvd\n  calc\n    padicValNat 2 (6 * 12 ^ k * m) = padicValNat 2 (6 * 12 ^ k) + padicValNat 2 m := by\n      refine padicValNat.mul (by\n        apply mul_ne_zero (by norm_num : (6 : \u2115) \u2260 0) ?_\n        exact pow_ne_zero k (by norm_num : (12 : \u2115) \u2260 0)) hmz\n    _ = (padicValNat 2 6 + padicValNat 2 (12 ^ k)) + padicValNat 2 m := by\n      rw [padicValNat.mul (by norm_num : (6 : \u2115) \u2260 0) (by\n        exact pow_ne_zero k (by norm_num : (12 : \u2115) \u2260 0))]\n    _ = (1 + padicValNat 2 (12 ^ k)) + padicValNat 2 m := by rw [padicValNat_2_6]\n    _ = (1 + (k * padicValNat 2 12)) + padicValNat 2 m := by\n      rw [padicValNat.pow (by norm_num : (12 : \u2115) \u2260 0) (n := k)]\n    _ = (1 + (k * 2)) + padicValNat 2 m := by rw [padicValNat_2_12]\n    _ = (1 + 2*k) + padicValNat 2 m := by ring\n    _ = 2*k + 1 + padicValNat 2 m := by ring\n    _ = 2*k + 1 := by simp [hm]"
+    },
+    {
+      "id": "padicValNat_3_of_form",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.46,
+      "proof_length": 29,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a_0 = 6\u00b7 12^k\u00b7 m and gcd(m,10)=1, then k+1 \u2264 operatorname{padicValNat}_3(a_0).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $a_0 = 6\\cdot 12^k\\cdot m$ and $\\gcd(m,10)=1$, then $k+1 \\le \\operatorname{padicValNat}_3(a_0)$. -/)\n  (proof := /-- From $h$, $a_0$ contains a factor $6$ and $12^k$, so at least $k+1$ factors of $3$ (since $v_3(6)=1$, $v_3(12^k)=k$). The extra factor $m$ may add more, so $k+1\\le v_3(a_0)$. -/)]\nlemma padicValNat_3_of_form (a : \u2115 \u2192 \u2115) (k m : \u2115) (h : a 0 = 6 * 12 ^ k * m) (hgcd : Nat.gcd m 10 = 1) : k+1 \u2264 padicValNat 3 (a 0) := by\n  have hp3 : Fact (Nat.Prime 3) := \u27e8by decide\u27e9\n  have padicValNat_3_6 : padicValNat 3 6 = 1 := by\n    have h2 : padicValNat 3 2 = 0 := by\n      have hdvd : \u00ac (3 \u2223 2) := by decide\n      have h := (dvd_iff_padicValNat_ne_zero (by norm_num : 2 \u2260 0)).not.mp hdvd\n      simpa using h\n    calc\n      padicValNat 3 6 = padicValNat 3 2 + padicValNat 3 3 := by\n        apply padicValNat.mul (by norm_num : 2 \u2260 0) (by norm_num : 3 \u2260 0)\n      _ = 0 + 1 := by simp [h2, hp3]\n      _ = 1 := by simp\n  have padicValNat_3_12 : padicValNat 3 12 = 1 := by\n    have h2 : padicValNat 3 2 = 0 := by\n      have hdvd : \u00ac (3 \u2223 2) := by decide\n      have h := (dvd_iff_padicValNat_ne_zero (by norm_num : 2 \u2260 0)).not.mp hdvd\n      simpa using h\n    calc\n      padicValNat 3 12 = padicValNat 3 (2^2) + padicValNat 3 3 := by\n        apply padicValNat.mul (by norm_num : 2^2 \u2260 0) (by norm_num : 3 \u2260 0)\n      _ = 2 * padicValNat 3 2 + padicValNat 3 3 := by\n        rw [padicValNat.pow (n:=2) (ha := show 2 \u2260 0 from by norm_num)]\n      _ = 2 * 0 + 1 := by simp [h2, hp3]\n      _ = 1 := by norm_num\n  have padicValNat_3_12_pow (k' : \u2115) : padicValNat 3 (12 ^ k') = k' := by\n    have h12pos : 12 \u2260 0 := by norm_num\n    calc\n      padicValNat 3 (12 ^ k') = k' * padicValNat 3 12 := by rw [padicValNat.pow (n:=k') (ha := h12pos)]\n      _ = k' * 1 := by rw [padicValNat_3_12]\n      _ = k' := by simp\n  have h6pos : 6 \u2260 0 := by norm_num\n  have h12pos : 12 \u2260 0 := by norm_num\n  have h12kpos : 12 ^ k \u2260 0 := pow_ne_zero k h12pos\n  have hmpos : m \u2260 0 := by\n    intro hmzero\n    rw [hmzero] at hgcd\n    simp at hgcd\n  have hpadic : padicValNat 3 (a 0) = padicValNat 3 6 + padicValNat 3 (12 ^ k) + padicValNat 3 m := by\n    rw [h]\n    calc\n      padicValNat 3 (6 * 12 ^ k * m) = padicValNat 3 (6 * (12 ^ k * m)) := by ring\n      _ = padicValNat 3 6 + padicValNat 3 (12 ^ k * m) := padicValNat.mul h6pos (mul_ne_zero h12kpos hmpos)\n      _ = padicValNat 3 6 + (padicValNat 3 (12 ^ k) + padicValNat 3 m) := by rw [padicValNat.mul h12kpos hmpos]\n      _ = padicValNat 3 6 + padicValNat 3 (12 ^ k) + padicValNat 3 m := by ring\n  have h6val : padicValNat 3 6 = 1 := padicValNat_3_6\n  have h12kval : padicValNat 3 (12 ^ k) = k := padicValNat_3_12_pow k\n  rw [h6val, h12kval] at hpadic\n  have hsum : padicValNat 3 (a 0) = 1 + k + padicValNat 3 m := hpadic\n  rw [hsum]\n  omega"
+    },
+    {
+      "id": "padicValNat_5_of_form",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.88,
+      "proof_length": 24,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a_0 = 6\u00b7 12^k\u00b7 m and gcd(m,10)=1, then operatorname{padicValNat}_5(a_0) = 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $a_0 = 6\\cdot 12^k\\cdot m$ and $\\gcd(m,10)=1$, then $\\operatorname{padicValNat}_5(a_0) = 0$. -/)\n  (proof := /-- Since $\\gcd(m,10)=1$, $m$ is not divisible by $5$. The factors $6$ and $12$ are not divisible by $5$ either, so $5\\nmid a_0$, hence $v_5(a_0)=0$. -/)]\nlemma padicValNat_5_of_form (a : \u2115 \u2192 \u2115) (k m : \u2115) (h : a 0 = 6 * 12 ^ k * m) (hgcd : Nat.gcd m 10 = 1) : padicValNat 5 (a 0) = 0 := by\n  have h5prime : Nat.Prime 5 := by decide\n  have hzero : a 0 \u2260 0 := by\n    rw [h]\n    have h6 : 6 \u2260 0 := by norm_num\n    have h12k : 12 ^ k \u2260 0 := pow_ne_zero k (by norm_num : (12 : \u2115) \u2260 0)\n    have hm : m \u2260 0 := by\n      intro hmzero\n      rw [hmzero] at hgcd\n      norm_num at hgcd\n    exact Nat.mul_ne_zero (Nat.mul_ne_zero h6 h12k) hm\n  have h_not_dvd_5_a0 : \u00ac 5 \u2223 a 0 := by\n    rw [h]\n    have h_not_dvd_5_6 : \u00ac 5 \u2223 (6 : \u2115) := by norm_num\n    have h_not_dvd_5_12 : \u00ac 5 \u2223 (12 : \u2115) := by norm_num\n    have h_not_dvd_5_m : \u00ac 5 \u2223 m := by\n      intro h5m\n      have h5_dvd_10 : 5 \u2223 (10 : \u2115) := by norm_num\n      have h5_dvd_gcd : 5 \u2223 Nat.gcd m 10 := Nat.dvd_gcd h5m h5_dvd_10\n      rw [hgcd] at h5_dvd_gcd\n      have : \u00ac 5 \u2223 (1 : \u2115) := by norm_num\n      exact this h5_dvd_gcd\n    have h_not_dvd_5_12k : \u00ac 5 \u2223 (12 ^ k) := by\n      intro h5pow\n      apply h_not_dvd_5_12\n      exact (h5prime.dvd_of_dvd_pow h5pow)\n    have h_not_dvd_5_12k_m : \u00ac 5 \u2223 (12 ^ k * m) :=\n      h5prime.not_dvd_mul h_not_dvd_5_12k h_not_dvd_5_m\n    have h_not_dvd_5_6_12k_m : \u00ac 5 \u2223 (6 * (12 ^ k * m)) :=\n      h5prime.not_dvd_mul h_not_dvd_5_6 h_not_dvd_5_12k_m\n    simpa [mul_assoc] using h_not_dvd_5_6_12k_m\n  haveI : Fact (Nat.Prime 5) := \u27e8h5prime\u27e9\n  have h_dvd_iff : 5 \u2223 a 0 \u2194 padicValNat 5 (a 0) \u2260 0 := dvd_iff_padicValNat_ne_zero hzero\n  have h_not_dvd_iff : \u00ac (5 \u2223 a 0) \u2194 \u00ac (padicValNat 5 (a 0) \u2260 0) := h_dvd_iff.not\n  have h_not_not_dvd : \u00ac (padicValNat 5 (a 0) \u2260 0) := h_not_dvd_iff.mp h_not_dvd_5_a0\n  exact not_not.mp h_not_not_dvd"
+    },
+    {
+      "id": "preserves_odd_or_not_dvd_3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a_n is odd or 3nmid a_n, then a_{n+1}<a_n and a_{n+1} is also odd or not divisible by 3.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If $a_n$ is odd or $3\\nmid a_n$, then $a_{n+1}<a_n$ and $a_{n+1}$ is also odd or not divisible by $3$. -/)\n  (proof := /-- From `a_succ_eq_f`, $a_{n+1}=f(a_n)$. If $a_n$ is odd, apply `f_odd` and `odd_succ_of_odd`. If $3\\nmid a_n$ but $a_n$ is even, apply `f_even_not_dvd_3`. -/)]\nlemma preserves_odd_or_not_dvd_3 (a : \u2115 \u2192 \u2115) (h1 : \u2200 n : \u2115, \u2203 b c d : \u2115, b < c \u2227 c < d \u2227 d < a n \u2227 b \u2223 a n \u2227 c \u2223 a n \u2227 d \u2223 a n \u2227 (\u2200 e : \u2115, e < a n \u2192 e \u2223 a n \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a (n + 1) = b + c + d) (n : \u2115) (h : Odd (a n) \u2228 \u00ac 3 \u2223 a n) : a (n + 1) < a n \u2227 (Odd (a (n + 1)) \u2228 \u00ac 3 \u2223 a (n + 1)) := by\n  have ha_eq_f : a (n + 1) = f (a n) := a_succ_eq_f a h1 n\n  have h_odd_f_helper (h_odd_an : Odd (a n)) : Odd (f (a n)) := by\n    rcases h1 n with \u27e8b, c, d, hb_lt_c, hc_lt_d, hd_lt_an, hb_dvd, hc_dvd, hd_dvd, h_all, ha_succ_eq_bcd\u27e9\n    have hb_odd : Odd b := Odd.of_dvd_nat h_odd_an hb_dvd\n    have hc_odd : Odd c := Odd.of_dvd_nat h_odd_an hc_dvd\n    have hd_odd : Odd d := Odd.of_dvd_nat h_odd_an hd_dvd\n    have hb_not_even : \u00ac Even b := by\n      rw [Nat.not_even_iff_odd]; exact hb_odd\n    have hc_not_even : \u00ac Even c := by\n      rw [Nat.not_even_iff_odd]; exact hc_odd\n    have h_even_bc : Even (b + c) := by\n      rw [Nat.even_add]\n      constructor\n      \u00b7 intro h_even_b; exfalso; exact hb_not_even h_even_b\n      \u00b7 intro h_even_c; exfalso; exact hc_not_even h_even_c\n    have h_odd_bc_d : Odd ((b + c) + d) := Even.add_odd h_even_bc hd_odd\n    have h_f_eq : f (a n) = b + c + d := by\n      calc\n        f (a n) = a (n + 1) := by symm; exact ha_eq_f\n        _ = b + c + d := ha_succ_eq_bcd\n    rw [h_f_eq]\n    exact h_odd_bc_d\n  rcases h with (h_odd | h_not_dvd_3)\n  \u00b7 -- case h_odd : Odd (a n)\n    have h_lt : f (a n) < a n := f_odd (a n) h_odd\n    have h_odd_f : Odd (f (a n)) := h_odd_f_helper h_odd\n    rw [ha_eq_f]\n    exact \u27e8h_lt, Or.inl h_odd_f\u27e9\n  \u00b7 -- case h_not_dvd_3 : \u00ac 3 \u2223 a n\n    by_cases h_even : 2 \u2223 a n\n    \u00b7 -- a n even\n      have h_lt_and := f_even_not_dvd_3 (a n) h_even h_not_dvd_3\n      rcases h_lt_and with \u27e8h_lt, h_odd_or_not\u27e9\n      rw [ha_eq_f]\n      exact \u27e8h_lt, h_odd_or_not\u27e9\n    \u00b7 -- a n not even, so odd\n      have h_not_even : \u00ac Even (a n) := by\n        rw [even_iff_two_dvd]\n        exact h_even\n      have h_odd : Odd (a n) := (Nat.not_even_iff_odd.mp h_not_even)\n      have h_lt : f (a n) < a n := f_odd (a n) h_odd\n      have h_odd_f : Odd (f (a n)) := h_odd_f_helper h_odd\n      rw [ha_eq_f]\n      exact \u27e8h_lt, Or.inl h_odd_f\u27e9"
+    },
+    {
+      "id": "a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The sequence a_i defined by a_i = 6 \u00b7 12^{k-i} \u00b7 (13^i \u00b7 n) for i \u2264 k, and a_i = 6 \u00b7 (13^k \u00b7 n) for i \u2265 k.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The sequence $a_i$ defined by $a_i = 6 \\cdot 12^{k-i} \\cdot (13^i \\cdot n)$ for $i \\le k$, and $a_i = 6 \\cdot (13^k \\cdot n)$ for $i \\ge k$. -/)]\ndef a (k n : \u2115) (i : \u2115) : \u2115 :=\n  if hi : i \u2264 k then\n    6 * (12 : \u2115) ^ (k - i) * ((13 : \u2115) ^ i * n)\n  else\n    6 * ((13 : \u2115) ^ k * n)"
+    },
+    {
+      "id": "a_form_case1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.0,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For i < k, a_i has the form 6 \u00b7 12^{k-i} \u00b7 (13^i \u00b7 n), with k-i \u2265 1 and gcd(13^i \u00b7 n, 10)=1.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $i < k$, $a_i$ has the form $6 \\cdot 12^{k-i} \\cdot (13^i \\cdot n)$, with $k-i \\ge 1$ and $\\gcd(13^i \\cdot n, 10)=1$. -/)\n  (proof := /-- By definition of $a$ and `a`, $a_i = 6 \\cdot 12^{k-i} \\cdot (13^i \\cdot n)$. Since $i < k$, $k-i \\ge 1$. The coprimality follows from `coprime_pow_13` using `hn`. -/)]\nlemma a_form_case1 (k n i : \u2115) (hn : Nat.Coprime n 10) (hi : i < k) : \u2203 (j M : \u2115), j \u2265 1 \u2227 Nat.Coprime M 10 \u2227 a k n i = 6 * 12 ^ j * M := by\n  have hi_le : i \u2264 k := Nat.le_of_lt hi\n  have ha_eq : a k n i = 6 * (12 : \u2115) ^ (k - i) * ((13 : \u2115) ^ i * n) := by\n    dsimp [a]\n    simp [hi_le]\n  have hpos : k - i \u2265 1 := by\n    have : 0 < k - i := Nat.sub_pos_of_lt hi\n    omega\n  have hcop : Nat.Coprime ((13 : \u2115) ^ i * n) 10 :=\n    coprime_pow_13 n hn i\n  refine \u27e8k - i, (13 : \u2115) ^ i * n, hpos, hcop, ?_\u27e9\n  simpa [mul_assoc] using ha_eq"
+    },
+    {
+      "id": "a_form_case2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For i \u2265 k, a_i has the form 6 \u00b7 (13^k \u00b7 n), with gcd(13^k \u00b7 n, 10)=1.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $i \\ge k$, $a_i$ has the form $6 \\cdot (13^k \\cdot n)$, with $\\gcd(13^k \\cdot n, 10)=1$. -/)\n  (proof := /-- By definition of $a$, $a_i = 6 \\cdot (13^k \\cdot n)$. The coprimality follows from `coprime_pow_13` using `hn`. -/)]\nlemma a_form_case2 (k n i : \u2115) (hn : Nat.Coprime n 10) (hi : i \u2265 k) : \u2203 (M : \u2115), Nat.Coprime M 10 \u2227 a k n i = 6 * M := by\n  have ha_eq : a k n i = 6 * ((13 : \u2115) ^ k * n) := by\n    rw [a]\n    by_cases hik : i \u2264 k\n    \u00b7 have heq : i = k := le_antisymm hik hi\n      subst heq\n      simp\n    \u00b7 simp [hik]\n  have h_coprime : Nat.Coprime ((13 : \u2115) ^ k * n) 10 := coprime_pow_13 n hn k\n  refine \u27e8(13 : \u2115) ^ k * n, h_coprime, ha_eq\u27e9"
+    },
+    {
+      "id": "coprime_mul_13",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If m is coprime to 10, then 13 \u00b7 m is also coprime to 10.",
+      "is_main": false,
+      "col": 1,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- If $m$ is coprime to $10$, then $13 \\cdot m$ is also coprime to $10$. -/)\n  (proof := /-- Since $13$ is coprime to $10$ (by `norm_num`), the claim follows from `Nat.Coprime.mul_left`. -/)]\nlemma coprime_mul_13 (m : \u2115) (hm : Nat.Coprime m 10) : Nat.Coprime (13 * m) 10 := by\n  have h13 : Nat.Coprime 13 10 := by norm_num\n  exact (Nat.Coprime.mul_left h13 hm)"
+    },
+    {
+      "id": "coprime_pow_13",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.39,
+      "proof_length": 8,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If m is coprime to 10, then 13^n \u00b7 m is also coprime to 10 for any n.",
+      "is_main": false,
+      "col": 1,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- If $m$ is coprime to $10$, then $13^n \\cdot m$ is also coprime to $10$ for any $n$. -/)\n  (proof := /-- By induction on $n$, using `coprime_mul_13` and `Nat.Coprime.pow_left`. -/)]\nlemma coprime_pow_13 (m : \u2115) (hm : Nat.Coprime m 10) (n : \u2115) : Nat.Coprime ((13 : \u2115) ^ n * m) 10 := by\n  have h13 : Nat.Coprime (13 : \u2115) 10 := by\n    have h1 : Nat.Coprime (1 : \u2115) 10 := by\n      exact Nat.coprime_one_left 10\n    exact coprime_mul_13 1 h1\n  have h13n : Nat.Coprime ((13 : \u2115) ^ n) 10 :=\n    h13.pow_left n\n  exact h13n.mul hm"
+    },
+    {
+      "id": "imo2025_p4_right",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The main theorem: existence of a sequence a with the required properties.",
+      "is_main": true,
+      "col": 1,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The main theorem: existence of a sequence $a$ with the required properties. -/)\n  (proof := /-- Construct $a$ as `a k n`. Positivity follows from `positivity_all`. The divisor property for each index follows from `recurrence`. The initial value matches by `ha0`. -/)]\ntheorem imo2025_p4_right (a0 k n : \u2115)\n  (hn : Nat.Coprime n 10)\n  (ha0 : a0 = 6 * 12 ^ k * n) :\n  \u2203 a : \u2115 \u2192 \u2115, (\u2200 n : \u2115, a n > 0) \u2227 (\u2200 n : \u2115, \u2203 b c d : \u2115, b < c \u2227 c < d \u2227 d < a n \u2227 b \u2223 a n \u2227 c \u2223 a n \u2227 d \u2223 a n \u2227 (\u2200 e : \u2115, e < a n \u2192 e \u2223 a n \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a (n + 1) = b + c + d) \u2227 (a 0 = a0)\n  /- A \\emph{proper divisor} of a positive integer $N$ is a positive divisor of $N$ other than $N$ itself. The infinite sequence $a_1, a_2, \\ldots$ consists of positive integers, each of which has at least three proper divisors. For each $n \\geqslant 1$, the integer $a_{n+1}$  is the sum of the three **largest** proper divisors of~$a_n$.\n  When $a_1$ is $6 * 12^k * m$, where m is coprime to 10. Please prove that a_n exists. -/ := by\n  refine \u27e8\u03bb i => a k n i, ?_, ?_, ?_\u27e9\n  \u00b7 intro i\n    exact positivity_all k n i hn\n  \u00b7 intro i\n    exact recurrence k n i hn\n  \u00b7 calc\n      (\u03bb i => a k n i) 0 = a k n 0 := rfl\n      _ = 6 * 12 ^ k * n := by\n        unfold a\n        simp\n      _ = a0 := by symm; exact ha0"
+    },
+    {
+      "id": "positivity_a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.16,
+      "proof_length": 12,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all i, a_i > 0.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For all $i$, $a_i > 0$. -/)\n  (proof := /-- The definition of $a$ is a product of positive integers, hence positive. -/)]\nlemma positivity_a (k n i : \u2115) (hn : Nat.Coprime n 10) : a k n i > 0 := by\n  have hnpos : n > 0 := by\n    have hgcd : Nat.gcd n 10 = 1 := hn\n    by_contra! h\n    have hzero : n = 0 := by omega\n    subst hzero\n    have : Nat.gcd 0 10 = 10 := by decide\n    rw [this] at hgcd\n    omega\n  dsimp [a]\n  split\n  \u00b7 positivity\n  \u00b7 positivity"
+    },
+    {
+      "id": "positivity_all",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all i, a_i > 0. (Wrapper to match the binder.)",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all $i$, $a_i > 0$. (Wrapper to match the binder.) -/)\n  (proof := /-- Same as `positivity_a`. -/)]\nlemma positivity_all (k n i : \u2115) (hn : Nat.Coprime n 10) : a k n i > 0 := by\n  exact positivity_a k n i hn"
+    },
+    {
+      "id": "recurrence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all i, there exist b,c,d satisfying the condition on proper divisors and a_{i+1} = b + c + d.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all $i$, there exist $b,c,d$ satisfying the condition on proper divisors and $a_{i+1} = b + c + d$. -/)\n  (proof := /-- Split into cases $i < k$ and $i \\ge k$. In the first case, use `recurrence_case1`; in the second, use `recurrence_case2`. -/)]\nlemma recurrence (k n i : \u2115) (hn : Nat.Coprime n 10) : \u2203 (b c d : \u2115), b < c \u2227 c < d \u2227 d < a k n i \u2227 b \u2223 a k n i \u2227 c \u2223 a k n i \u2227 d \u2223 a k n i \u2227 (\u2200 e, e < a k n i \u2192 e \u2223 a k n i \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a k n (i+1) = b + c + d := by\n  by_cases hi : i < k\n  \u00b7 exact recurrence_case1 k n i hn hi\n  \u00b7 have hi' : i \u2265 k := Nat.le_of_not_lt hi\n    exact recurrence_case2 k n i hn hi'"
+    },
+    {
+      "id": "recurrence_case1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.68,
+      "proof_length": 31,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For i < k, the three largest proper divisors of a_i are a_i/2, a_i/3, a_i/4, and their sum equals a_{i+1}.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $i < k$, the three largest proper divisors of $a_i$ are $a_i/2$, $a_i/3$, $a_i/4$, and their sum equals $a_{i+1}$. -/)\n  (proof := /-- By `a_form_case1`, $a_i$ has the form $6 \\cdot 12^j \\cdot M$ with $j \\ge 1$ and $\\gcd(M,10)=1$. Then `three_largest_case1` applies, giving the three divisors and the sum, which matches $a_{i+1}$ by definition of $a$. -/)]\nlemma recurrence_case1 (k n i : \u2115) (hn : Nat.Coprime n 10) (hi : i < k) : \u2203 (b c d : \u2115), b < c \u2227 c < d \u2227 d < a k n i \u2227 b \u2223 a k n i \u2227 c \u2223 a k n i \u2227 d \u2223 a k n i \u2227 (\u2200 e, e < a k n i \u2192 e \u2223 a k n i \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a k n (i+1) = b + c + d := by\n  have hik : i \u2264 k := Nat.le_of_lt hi\n  rcases a_form_case1 k n i hn hi with \u27e8j, M, hj, hM, hx\u27e9\n  have hxpos : a k n i > 0 := by\n    rw [hx]\n    have h12pos : (12 : \u2115) ^ j > 0 := pow_pos (by norm_num : 0 < (12 : \u2115)) j\n    have hMpos : M > 0 := by\n      have hMpos' : M \u2260 0 := by\n        intro hzero\n        have : Nat.Coprime 0 10 := by simpa [hzero] using hM\n        have : \u00ac Nat.Coprime 0 10 := by norm_num\n        contradiction\n      exact Nat.pos_of_ne_zero hMpos'\n    have h6pos : (6 : \u2115) > 0 := by norm_num\n    exact mul_pos (mul_pos h6pos h12pos) hMpos\n  have h := three_largest_case1 (a k n i) j M hj hM hx\n  rcases h with \u27e8hbgt, hcgt, hdlt, hbdiv, hcdiv, hddiv, hall, hsum\u27e9\n  set b' := a k n i / 4 with hb'\n  set c' := a k n i / 3 with hc'\n  set d' := a k n i / 2 with hd'\n  have hb_lt_c' : b' < c' := hcgt\n  have hc_lt_d' : c' < d' := hbgt\n  have hd_lt_x : d' < a k n i := by\n    apply Nat.div_lt_self hxpos\n    norm_num\n  have hb_div : b' \u2223 a k n i := hddiv\n  have hc_div : c' \u2223 a k n i := hcdiv\n  have hd_div : d' \u2223 a k n i := hbdiv\n  have hall' : \u2200 e, e < a k n i \u2192 e \u2223 a k n i \u2192 e \u2264 b' \u2228 e = c' \u2228 e = d' := by\n    intro e he hdiv\n    rcases hall e he hdiv with (h | h | h)\n    \u00b7 left; exact h\n    \u00b7 right; left; exact h\n    \u00b7 right; right; exact h\n  have hsum_eq : a k n (i+1) = b' + c' + d' := by\n    calc\n      a k n (i+1) = 6 * (12 : \u2115) ^ (k - (i+1)) * ((13 : \u2115) ^ (i+1) * n) := by\n        simp [a, show i+1 \u2264 k from by omega]\n      _ = 6 * (12 : \u2115) ^ ((k - i) - 1) * ((13 : \u2115) ^ (i+1) * n) := by\n        have h : k - (i+1) = (k - i) - 1 := by omega\n        rw [h]\n      _ = 13 * (6 * (12 : \u2115) ^ ((k - i) - 1) * ((13 : \u2115) ^ i * n)) := by ring\n      _ = 13 * ((6 * (12 : \u2115) ^ (k - i) * ((13 : \u2115) ^ i * n)) / 12) := by\n        have hdiv : (6 * (12 : \u2115) ^ (k - i) * ((13 : \u2115) ^ i * n)) / 12 = 6 * (12 : \u2115) ^ ((k - i) - 1) * ((13 : \u2115) ^ i * n) := by\n          have hpos12 : 0 < (12 : \u2115) := by norm_num\n          have hpow_eq : (12 : \u2115) ^ (k - i) = (12 : \u2115) * (12 : \u2115) ^ ((k - i) - 1) := by\n            calc\n              (12 : \u2115) ^ (k - i) = (12 : \u2115) ^ (((k - i) - 1) + 1) := by\n                rw [Nat.sub_add_cancel (Nat.sub_pos_of_lt hi)]\n              _ = (12 : \u2115) ^ ((k - i) - 1) * 12 := by ring\n              _ = 12 * (12 : \u2115) ^ ((k - i) - 1) := by ring\n          calc\n            (6 * (12 : \u2115) ^ (k - i) * ((13 : \u2115) ^ i * n)) / 12 = (6 * (12 * (12 : \u2115) ^ ((k - i) - 1)) * ((13 : \u2115) ^ i * n)) / 12 := by rw [hpow_eq]\n            _ = (12 * (6 * (12 : \u2115) ^ ((k - i) - 1) * ((13 : \u2115) ^ i * n))) / 12 := by ring\n            _ = 6 * (12 : \u2115) ^ ((k - i) - 1) * ((13 : \u2115) ^ i * n) := by\n              rw [mul_comm, Nat.mul_div_cancel _ hpos12]\n            _ = 6 * (12 : \u2115) ^ ((k - i) - 1) * ((13 : \u2115) ^ i * n) := rfl\n        rw [hdiv]\n      _ = 13 * ((a k n i) / 12) := by\n        simp [a, hik]\n      _ = b' + c' + d' := by\n        omega\n  exact \u27e8b', c', d', hb_lt_c', hc_lt_d', hd_lt_x, hb_div, hc_div, hd_div, hall', hsum_eq\u27e9"
+    },
+    {
+      "id": "recurrence_case2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.1,
+      "proof_length": 35,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For i \u2265 k, the three largest proper divisors of a_i are a_i/2, a_i/3, a_i/6, and their sum equals a_i, which equals a_{i+1} because the sequence stabilizes.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $i \\ge k$, the three largest proper divisors of $a_i$ are $a_i/2$, $a_i/3$, $a_i/6$, and their sum equals $a_i$, which equals $a_{i+1}$ because the sequence stabilizes. -/)\n  (proof := /-- By `a_form_case2`, $a_i$ has the form $6 \\cdot M$ with $\\gcd(M,10)=1$. Then `three_largest_case2` applies, giving the three divisors and the sum equals $x$, which equals $a_i$. By definition of $a$, $a_{i+1}=a_i$. So the sum equals $a_{i+1}$. -/)]\nlemma recurrence_case2 (k n i : \u2115) (hn : Nat.Coprime n 10) (hi : i \u2265 k) : \u2203 (b c d : \u2115), b < c \u2227 c < d \u2227 d < a k n i \u2227 b \u2223 a k n i \u2227 c \u2223 a k n i \u2227 d \u2223 a k n i \u2227 (\u2200 e, e < a k n i \u2192 e \u2223 a k n i \u2192 e \u2264 b \u2228 e = c \u2228 e = d) \u2227 a k n (i+1) = b + c + d := by\n  have ha_form : \u2203 (M : \u2115), Nat.Coprime M 10 \u2227 a k n i = 6 * M := a_form_case2 k n i hn hi\n  rcases ha_form with \u27e8M, hM, hx\u27e9\n  have hthree := three_largest_case2 (a k n i) M hM hx\n  rcases hthree with \u27e8hdltc, hcltb, hbltx, hbdiv, hcdiv, hddiv, hall, hsum\u27e9\n  have ha_eq : a k n (i+1) = a k n i := by\n    have h_eq : i = k \u2228 i > k := by omega\n    rcases h_eq with (h_eq | h_gt)\n    \u00b7 subst h_eq\n      simp [a]\n    \u00b7 have h_not_le : \u00ac (i \u2264 k) := by omega\n      have h_succ_not_le : \u00ac (i+1 \u2264 k) := by omega\n      simp [a, h_not_le, h_succ_not_le]\n  refine \u27e8a k n i / 6, a k n i / 3, a k n i / 2, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_\u27e9\n  \u00b7 exact hdltc\n  \u00b7 exact hcltb\n  \u00b7 exact hbltx\n  \u00b7 exact hddiv\n  \u00b7 exact hcdiv\n  \u00b7 exact hbdiv\n  \u00b7 exact hall\n  \u00b7 calc\n      a k n (i+1) = a k n i := ha_eq\n      _ = (a k n i / 2) + (a k n i / 3) + (a k n i / 6) := by\n        symm; exact hsum\n      _ = (a k n i / 6) + (a k n i / 3) + (a k n i / 2) := by\n        omega"
+    },
+    {
+      "id": "three_largest_case1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.68,
+      "proof_length": 41,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For x = 6 \u00b7 12^j \u00b7 M with j \u2265 1 and gcd(M,10)=1, the three largest proper divisors of x are x/2, x/3, x/4, and their sum equals 13 \u00b7 (x/12).",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $x = 6 \\cdot 12^j \\cdot M$ with $j \\ge 1$ and $\\gcd(M,10)=1$, the three largest proper divisors of $x$ are $x/2$, $x/3$, $x/4$, and their sum equals $13 \\cdot (x/12)$. -/)\n  (proof := /-- Since $j \\ge 1$, $x$ is divisible by $72$, so $2,3,4$ are the smallest divisors $>1$. Then the largest proper divisors are $x/2$, $x/3$, $x/4$, which are distinct because $x \\ge 72$. Their sum is $x/2 + x/3 + x/4 = 13 \\cdot (x/12)$. -/)]\nlemma three_largest_case1 (x j M : \u2115) (hj : j \u2265 1) (hM : Nat.Coprime M 10) (hx : x = 6 * 12 ^ j * M) :\n    (let b := x / 2; let c := x / 3; let d := x / 4;\n    b > c \u2227 c > d \u2227 d < x \u2227 b \u2223 x \u2227 c \u2223 x \u2227 d \u2223 x \u2227 (\u2200 e, e < x \u2192 e \u2223 x \u2192 e \u2264 d \u2228 e = c \u2228 e = b) \u2227 b + c + d = 13 * (x / 12)) := by\n  intro b c d\n  have hxpos : x > 0 := by\n    have hMpos : M > 0 := by\n      by_contra! hMzero\n      have hzero : M = 0 := by omega\n      have hCop0 : Nat.Coprime 0 10 := by\n        simpa [hzero] using hM\n      have notCop0 : \u00ac Nat.Coprime 0 10 := by decide\n      exact notCop0 hCop0\n    have h12jpos : 12 ^ j > 0 := pow_pos (by norm_num : 0 < 12) j\n    rw [hx]\n    exact mul_pos (mul_pos (by norm_num) h12jpos) hMpos\n  have h12x : 12 \u2223 x := by\n    rw [hx]\n    have h12_12j : 12 \u2223 (12 : \u2115) ^ j := dvd_pow_self (12 : \u2115) (by omega)\n    have h12_6_12j : 12 \u2223 6 * (12 : \u2115) ^ j := h12_12j.mul_left 6\n    exact h12_6_12j.mul_right M\n  have hx_eq : x = 12 * (x / 12) := by\n    calc\n      x = (x / 12) * 12 := (Nat.div_mul_cancel h12x).symm\n      _ = 12 * (x / 12) := by ring\n  have hkpos : x / 12 > 0 := by\n    apply Nat.div_pos\n    \u00b7 exact Nat.le_of_dvd hxpos h12x\n    \u00b7 norm_num\n  set k := x / 12 with hk\n  have hkpos' : k > 0 := hkpos\n  have hb_eq : b = 6 * k := by\n    dsimp [b]\n    calc\n      x / 2 = (12 * k) / 2 := by rw [hx_eq]\n      _ = (12 / 2) * k := by rw [Nat.mul_div_right_comm (by norm_num : 2 \u2223 (12 : \u2115))]\n      _ = 6 * k := by norm_num\n  have hc_eq : c = 4 * k := by\n    dsimp [c]\n    calc\n      x / 3 = (12 * k) / 3 := by rw [hx_eq]\n      _ = (12 / 3) * k := by rw [Nat.mul_div_right_comm (by norm_num : 3 \u2223 (12 : \u2115))]\n      _ = 4 * k := by norm_num\n  have hd_eq : d = 3 * k := by\n    dsimp [d]\n    calc\n      x / 4 = (12 * k) / 4 := by rw [hx_eq]\n      _ = (12 / 4) * k := by rw [Nat.mul_div_right_comm (by norm_num : 4 \u2223 (12 : \u2115))]\n      _ = 3 * k := by norm_num\n  have hb_gt_c : b > c := by\n    rw [hb_eq, hc_eq]\n    have h_lt : (4 : \u2115) < 6 := by norm_num\n    exact Nat.mul_lt_mul_of_pos_right h_lt hkpos'\n  have hc_gt_d : c > d := by\n    rw [hc_eq, hd_eq]\n    have h_lt : (3 : \u2115) < 4 := by norm_num\n    exact Nat.mul_lt_mul_of_pos_right h_lt hkpos'\n  have hd_lt_x : d < x := by\n    rw [hd_eq, hx_eq]\n    nlinarith\n  have hb_dvd : b \u2223 x := by\n    rw [hb_eq, hx_eq]\n    refine Dvd.intro 2 ?_\n    ring\n  have hc_dvd : c \u2223 x := by\n    rw [hc_eq, hx_eq]\n    refine Dvd.intro 3 ?_\n    ring\n  have hd_dvd : d \u2223 x := by\n    rw [hd_eq, hx_eq]\n    refine Dvd.intro 4 ?_\n    ring\n  have hall : \u2200 e, e < x \u2192 e \u2223 x \u2192 e \u2264 d \u2228 e = c \u2228 e = b := by\n    intro e he_lt he_dvd\n    by_cases hle : e \u2264 d\n    \u00b7 left; exact hle\n    \u00b7 right\n      have hgt : e > d := by omega\n      have he_pos : e > 0 := Nat.pos_of_dvd_of_pos he_dvd hxpos\n      set t := x / e with ht\n      have h_mul : e * t = x := by\n        dsimp [t]\n        exact Nat.mul_div_cancel' he_dvd\n      have ht_dvd : t \u2223 x := by\n        rw [\u2190 h_mul]\n        exact \u27e8e, mul_comm e t\u27e9\n      have ht_pos : 0 < t := Nat.pos_of_dvd_of_pos ht_dvd hxpos\n      have ht_gt_one : 1 < t := by\n        by_contra! hle'\n        have hx_le_e : x \u2264 e := by\n          calc\n            x = e * t := by symm; exact h_mul\n            _ \u2264 e * 1 := Nat.mul_le_mul_left e hle'\n            _ = e := by simp\n        omega\n      have ht_lt_four : t < 4 := by\n        dsimp [t]\n        rw [Nat.div_lt_iff_lt_mul he_pos]\n        have hx_eq12k : x = 12 * k := hx_eq\n        rw [hx_eq12k]\n        nlinarith\n      have ht_cases : t = 2 \u2228 t = 3 := by\n        omega\n      have h_e_eq_x_div_t : e = x / t := by\n        apply (Nat.div_eq_of_eq_mul_right ht_pos ?_).symm\n        simpa [mul_comm] using h_mul.symm\n      rcases ht_cases with (ht2 | ht3)\n      \u00b7 -- t = 2\n        have h_e_b : e = b := by\n          calc\n            e = x / t := h_e_eq_x_div_t\n            _ = x / 2 := by simp [ht2]\n            _ = b := rfl\n        exact Or.inr h_e_b\n      \u00b7 -- t = 3\n        have h_e_c : e = c := by\n          calc\n            e = x / t := h_e_eq_x_div_t\n            _ = x / 3 := by simp [ht3]\n            _ = c := rfl\n        exact Or.inl h_e_c\n  have hsum : b + c + d = 13 * (x / 12) := by\n    rw [hb_eq, hc_eq, hd_eq, hk]\n    ring\n  exact \u27e8hb_gt_c, hc_gt_d, hd_lt_x, hb_dvd, hc_dvd, hd_dvd, hall, hsum\u27e9"
+    },
+    {
+      "id": "three_largest_case2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.82,
+      "proof_length": 54,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For x = 6 \u00b7 M with gcd(M,10)=1, the three largest proper divisors of x are x/2, x/3, x/6, and their sum equals x.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For $x = 6 \\cdot M$ with $\\gcd(M,10)=1$, the three largest proper divisors of $x$ are $x/2$, $x/3$, $x/6$, and their sum equals $x$. -/)\n  (proof := /-- Since $M$ is odd and not divisible by 5, $x$ is divisible by 2 and 3 but not by 4 or 5, so the smallest divisors $>1$ are 2,3,6. Then the largest proper divisors are $x/2$, $x/3$, $x/6$, which are distinct because $x \\ge 6$. Their sum is $x/2 + x/3 + x/6 = x$. -/)]\nlemma three_largest_case2 (x M : \u2115) (hM : Nat.Coprime M 10) (hx : x = 6 * M) :\n    (let b := x / 2; let c := x / 3; let d := x / 6;\n    d < c \u2227 c < b \u2227 b < x \u2227 b \u2223 x \u2227 c \u2223 x \u2227 d \u2223 x \u2227 (\u2200 e, e < x \u2192 e \u2223 x \u2192 e \u2264 d \u2228 e = c \u2228 e = b) \u2227 b + c + d = x) := by\n  intro b c d\n  have hMpos : M \u2260 0 := by\n    intro hzero\n    have : Nat.gcd M 10 = 10 := by\n      simpa [hzero] using Nat.gcd_zero_left 10\n    rw [hM] at this\n    linarith\n  have hMpos' : 0 < M := Nat.pos_of_ne_zero hMpos\n  have hxpos : x \u2260 0 := by\n    rw [hx]\n    apply Nat.mul_ne_zero (by decide : 6 \u2260 0) hMpos\n  have hdiv2 : 2 \u2223 x := by\n    rw [hx]\n    exact \u27e83 * M, by ring\u27e9\n  have hdiv3 : 3 \u2223 x := by\n    rw [hx]\n    exact \u27e82 * M, by ring\u27e9\n  have hdiv6 : 6 \u2223 x := by\n    rw [hx]\n    exact \u27e8M, by ring\u27e9\n  have hb_eq : b = 3 * M := by\n    dsimp [b]\n    apply (Nat.div_eq_iff_eq_mul_right (by decide : 0 < 2) hdiv2).mpr\n    calc\n      x = 6 * M := hx\n      _ = 2 * (3 * M) := by ring\n  have hc_eq : c = 2 * M := by\n    dsimp [c]\n    apply (Nat.div_eq_iff_eq_mul_right (by decide : 0 < 3) hdiv3).mpr\n    calc\n      x = 6 * M := hx\n      _ = 3 * (2 * M) := by ring\n  have hd_eq : d = M := by\n    dsimp [d]\n    apply (Nat.div_eq_iff_eq_mul_right (by decide : 0 < 6) hdiv6).mpr\n    calc\n      x = 6 * M := hx\n      _ = 6 * M := rfl\n  have hlt1 : d < c := by\n    rw [hd_eq, hc_eq]\n    nlinarith\n  have hlt2 : c < b := by\n    rw [hc_eq, hb_eq]\n    nlinarith\n  have hlt3 : b < x := by\n    rw [hb_eq, hx]\n    nlinarith\n  have hb_dvd : b \u2223 x := by\n    rw [hb_eq, hx]\n    exact \u27e82, by ring\u27e9\n  have hc_dvd : c \u2223 x := by\n    rw [hc_eq, hx]\n    exact \u27e83, by ring\u27e9\n  have hd_dvd : d \u2223 x := by\n    rw [hd_eq, hx]\n    exact \u27e86, by ring\u27e9\n  have hsum : b + c + d = x := by\n    rw [hb_eq, hc_eq, hd_eq, hx]\n    ring\n  have h2_not_dvd_M : \u00ac 2 \u2223 M := by\n    intro h2\n    have h2gcd : 2 \u2223 Nat.gcd M 10 := Nat.dvd_gcd h2 (by decide : 2 \u2223 (10 : \u2115))\n    rw [hM] at h2gcd\n    have : 2 \u2223 1 := h2gcd\n    have : 2 \u2264 1 := Nat.le_of_dvd (by decide : 0 < 1) this\n    linarith\n  have h5_not_dvd_M : \u00ac 5 \u2223 M := by\n    intro h5\n    have h5gcd : 5 \u2223 Nat.gcd M 10 := Nat.dvd_gcd h5 (by decide : 5 \u2223 (10 : \u2115))\n    rw [hM] at h5gcd\n    have : 5 \u2223 1 := h5gcd\n    have : 5 \u2264 1 := Nat.le_of_dvd (by decide : 0 < 1) this\n    linarith\n  have h4_not_dvd_6M : \u00ac 4 \u2223 6 * M := by\n    intro h4\n    have hpos2 : 0 < 2 := by decide\n    have h2_dvd_3M : 2 \u2223 3 * M := by\n      have : 2*2 \u2223 2*(3*M) := by\n        simpa [mul_comm, mul_left_comm, mul_assoc] using h4\n      exact (Nat.dvd_of_mul_dvd_mul_left hpos2 this)\n    have h_coprime_2_3 : Nat.Coprime 2 3 := by decide\n    have h2_dvd_M : 2 \u2223 M := h_coprime_2_3.dvd_of_dvd_mul_left h2_dvd_3M\n    exact h2_not_dvd_M h2_dvd_M\n  have h5_not_dvd_6M : \u00ac 5 \u2223 6 * M := by\n    intro h5\n    have h_coprime_5_6 : Nat.Coprime 5 6 := by decide\n    have h5_dvd_M : 5 \u2223 M := h_coprime_5_6.dvd_of_dvd_mul_left h5\n    exact h5_not_dvd_M h5_dvd_M\n  have h_forall : \u2200 e, e < x \u2192 e \u2223 x \u2192 e \u2264 d \u2228 e = c \u2228 e = b := by\n    intro e he_lt he_dvd\n    by_cases h : e \u2264 d\n    \u00b7 left; exact h\n    \u00b7 right\n      have h_not_le : d < e := Nat.lt_of_not_ge h\n      have h_gt_M : M < e := by\n        rw [hd_eq] at h_not_le\n        exact h_not_le\n      have h_e_pos : 0 < e := by omega\n      set f := x / e with hf_def\n      have hx_eq' : x = e * f := (Nat.mul_div_cancel' he_dvd).symm\n      have h_eq : e * f = 6 * M := by\n        calc\n          e * f = x := (hx_eq').symm\n          _ = 6 * M := hx\n      have hf_lt_6 : f < 6 := by\n        by_contra! hge\n        have h_mul : e * f \u2265 e * 6 := Nat.mul_le_mul_left e hge\n        have h_gt : e * 6 > 6 * M := by\n          nlinarith\n        nlinarith\n      have hxpos' : 0 < x := by\n        exact Nat.pos_of_ne_zero hxpos\n      have hf_pos : 0 < f :=\n        Nat.div_pos (Nat.le_of_dvd hxpos' he_dvd) h_e_pos\n      have hf_ne_one : f \u2260 1 := by\n        intro h\n        have : e = x := by\n          calc\n            e = e * 1 := by ring\n            _ = e * f := by rw [h]\n            _ = x := hx_eq'.symm\n        rw [this] at he_lt\n        linarith\n      have hf_cases : f = 2 \u2228 f = 3 \u2228 f = 4 \u2228 f = 5 := by\n        have hf_ge_2 : 2 \u2264 f := by\n          by_contra! h\n          have : f \u2264 1 := by omega\n          have : f = 1 := by omega\n          exact hf_ne_one this\n        omega\n      rcases hf_cases with (hf2|hf3|hf4|hf5)\n      \u00b7 -- f = 2\n        have he_eq_b : e = b := by\n          have : e * 2 = 6 * M := by\n            simpa [hf2] using h_eq\n          omega\n        exact Or.inr he_eq_b\n      \u00b7 -- f = 3\n        have he_eq_c : e = c := by\n          have : e * 3 = 6 * M := by\n            simpa [hf3] using h_eq\n          omega\n        exact Or.inl he_eq_c\n      \u00b7 -- f = 4\n        have hf_dvd_6M : f \u2223 6 * M := by\n          rw [\u2190 h_eq]\n          exact \u27e8e, by ring\u27e9\n        rw [hf4] at hf_dvd_6M\n        exact absurd hf_dvd_6M h4_not_dvd_6M\n      \u00b7 -- f = 5\n        have hf_dvd_6M : f \u2223 6 * M := by\n          rw [\u2190 h_eq]\n          exact \u27e8e, by ring\u27e9\n        rw [hf5] at hf_dvd_6M\n        exact absurd hf_dvd_6M h5_not_dvd_6M\n  exact And.intro hlt1 (And.intro hlt2 (And.intro hlt3 (And.intro hb_dvd (And.intro hc_dvd (And.intro hd_dvd (And.intro h_forall hsum))))))"
+    }
+  ],
+  "edges": [
+    {
+      "source": "f_dvd_6_not_dvd_4_dvd_5",
+      "target": "a0_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f",
+      "target": "a0_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "all_dvd_6",
+      "target": "a0_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_dvd_6_dvd_4",
+      "target": "a0_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_succ_eq_f",
+      "target": "a0_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "preserves_odd_or_not_dvd_3",
+      "target": "all_dvd_6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValNat_5_of_form",
+      "target": "imo2025_p4_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValNat_2_of_form",
+      "target": "imo2025_p4_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValNat_3_of_form",
+      "target": "imo2025_p4_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "odd_padicValNat_2",
+      "target": "imo2025_p4_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a0_form",
+      "target": "imo2025_p4_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_even_not_dvd_3",
+      "target": "preserves_odd_or_not_dvd_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f",
+      "target": "preserves_odd_or_not_dvd_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_odd",
+      "target": "preserves_odd_or_not_dvd_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_succ_eq_f",
+      "target": "preserves_odd_or_not_dvd_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "coprime_pow_13",
+      "target": "a_form_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "coprime_pow_13",
+      "target": "a_form_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "coprime_mul_13",
+      "target": "coprime_pow_13",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "recurrence",
+      "target": "imo2025_p4_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "positivity_all",
+      "target": "imo2025_p4_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "imo2025_p4_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "positivity_a",
+      "target": "positivity_all",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "recurrence_case2",
+      "target": "recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "recurrence_case1",
+      "target": "recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "three_largest_case1",
+      "target": "recurrence_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_form_case1",
+      "target": "recurrence_case1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_form_case2",
+      "target": "recurrence_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "three_largest_case2",
+      "target": "recurrence_case2",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

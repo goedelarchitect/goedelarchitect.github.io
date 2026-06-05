@@ -1,0 +1,1698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 B6. 591 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item current">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item current">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "A_gt_C",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.95,
+      "proof_length": 17,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "(A : \u211d) > C when r > 1/4.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $(A : \\mathbb{R}) > C$ when $r > 1/4$. -/)\n  (proof := /-- By definition, $A = \\lfloor C\\rfloor + 2 > C$ because $\\lfloor C\\rfloor \\le C < \\lfloor C\\rfloor + 1$. -/)]\nlemma A_gt_C (r : \u211d) (hr : r > 1/4) : (A_val r hr : \u211d) > C r := by\n  have hposR : r > 0 := by linarith\n  have hposC : 0 \u2264 C r := by\n    apply div_nonneg\n    \u00b7 norm_num\n    \u00b7 exact le_of_lt hposR\n  have hlt : C r < (Nat.floor (C r) : \u211d) + 1 := Nat.lt_floor_add_one (C r)\n  calc\n    C r < (Nat.floor (C r) : \u211d) + 1 := hlt\n    _ < (Nat.floor (C r) : \u211d) + 2 := by nlinarith\n    _ = (A_val r hr : \u211d) := by\n      simp [A_val, C]"
+    },
+    {
+      "id": "A_val",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A = \u230a C\u230b + 2 as a natural number (so that A > C).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- $A = \\lfloor C\\rfloor + 2$ as a natural number (so that $A > C$). -/)]\nnoncomputable def A_val (r : \u211d) (hr : r > 1/4) : \u2115 := Nat.floor (C r) + 2"
+    },
+    {
+      "id": "C",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "C = 1/r.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- $C = 1/r$. -/)]\nnoncomputable def C (r : \u211d) : \u211d := 1 / r"
+    },
+    {
+      "id": "N_seq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Sequence N_m defined by N_0 = 1, N_{m+1} = max(2 N_m, \u2308 (4 \u00b7 2^{r a_m^2})^{1/varepsilon} \u2309).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Sequence $N_m$ defined by $N_0 = 1$, $N_{m+1} = \\max(2 N_m, \\lceil (4 \\cdot 2^{r a_m^2})^{1/\\varepsilon} \\rceil)$. -/)]\nnoncomputable def N_seq (g : \u2115 \u2192 \u2115) (r : \u211d) (hr : r > 1/4) (a_seq' : \u2115 \u2192 \u211d) : \u2115 \u2192 \u2115\n  | 0 => 1\n  | m+1 => max (2 * N_seq g r hr a_seq' m) (Nat.ceil ((4 * ((2 : \u211d) ^ (r * (a_seq' m)^2))) ^ ((1 : \u211d) / eps r hr)))"
+    },
+    {
+      "id": "a_seq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Sequence a_m defined by a_0 = 1, a_{m+1} = r a_m^2 + 1 - varepsilon.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Sequence $a_m$ defined by $a_0 = 1$, $a_{m+1} = r a_m^2 + 1 - \\varepsilon$. -/)]\nnoncomputable def a_seq (r : \u211d) (hr : r > 1/4) : \u2115 \u2192 \u211d\n  | 0 => 1\n  | m+1 => r * (a_seq r hr m)^2 + 1 - eps r hr"
+    },
+    {
+      "id": "a_seq_diff_ge_eps",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "a_{m+1} - a_m \u2265 varepsilon for all m.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- $a_{m+1} - a_m \\ge \\varepsilon$ for all $m$. -/)\n  (proof := /-- Compute $a_{m+1} - a_m = r a_m^2 - a_m + 1 - \\varepsilon = r(a_m - 1/(2r))^2 + \\varepsilon \\ge \\varepsilon$, using `eps_identity`. -/)]\nlemma a_seq_diff_ge_eps (r : \u211d) (hr : r > 1/4) (m : \u2115) : a_seq r hr (m+1) - a_seq r hr m \u2265 eps r hr := by\n  have ha : a_seq r hr (m+1) = r * (a_seq r hr m)^2 + 1 - eps r hr := by\n    simp [a_seq]\n  have hpos : r > 0 := by linarith\n  have h2eps : 1 - 2*eps r hr = 1/(4*r) := by\n    have h := eps_identity r hr\n    linarith\n  have hcalc1 : r * (a_seq r hr m)^2 - a_seq r hr m + 1/(4*r) = ((2*r*a_seq r hr m - 1)^2)/(4*r) := by\n    field_simp [hpos.ne']\n    ring\n  calc\n    a_seq r hr (m+1) - a_seq r hr m = (r * (a_seq r hr m)^2 + 1 - eps r hr) - a_seq r hr m := by\n      simp [ha]\n    _ = r * (a_seq r hr m)^2 - a_seq r hr m + 1 - eps r hr := by ring\n    _ = r * (a_seq r hr m)^2 - a_seq r hr m + (1 - 2*eps r hr) + eps r hr := by ring\n    _ = r * (a_seq r hr m)^2 - a_seq r hr m + (1/(4*r)) + eps r hr := by rw [h2eps]\n    _ = (r * (a_seq r hr m)^2 - a_seq r hr m + 1/(4*r)) + eps r hr := by ring\n    _ = ((2*r*a_seq r hr m - 1)^2)/(4*r) + eps r hr := by rw [hcalc1]\n    _ \u2265 eps r hr := by\n      have : ((2*r*a_seq r hr m - 1)^2)/(4*r) \u2265 0 := by\n        have hnum : (2*r*a_seq r hr m - 1)^2 \u2265 0 := pow_two_nonneg _\n        have hden : 4*r > 0 := by nlinarith\n        positivity\n      nlinarith"
+    },
+    {
+      "id": "a_seq_unbounded",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.57,
+      "proof_length": 30,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The sequence a_m is unbounded above.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- The sequence $a_m$ is unbounded above. -/)\n  (proof := /-- Since $a_{m+1} - a_m \\ge \\varepsilon > 0$, the sequence grows at least linearly, hence tends to infinity. For any $B$, choose $m$ large enough so that $1 + m\\varepsilon > B$. -/)]\nlemma a_seq_unbounded (r : \u211d) (hr : r > 1/4) (B : \u211d) : \u2203 M : \u2115, a_seq r hr M \u2265 B := by\n  have heps_pos : eps r hr > 0 := eps_pos r hr\n  have h_lower_bound : \u2200 (m : \u2115), a_seq r hr m \u2265 1 + (m : \u211d) * eps r hr := by\n    intro m\n    induction' m with k ih\n    \u00b7 simp [a_seq]\n    \u00b7 have hdiff : a_seq r hr (k+1) - a_seq r hr k \u2265 eps r hr := a_seq_diff_ge_eps r hr k\n      have hineq : a_seq r hr (k+1) \u2265 a_seq r hr k + eps r hr := by linarith\n      have h_rhs : a_seq r hr k + eps r hr \u2265 1 + ((k+1 : \u2115) : \u211d) * eps r hr := by\n        have h_ih : a_seq r hr k \u2265 1 + (k : \u211d) * eps r hr := ih\n        calc\n          a_seq r hr k + eps r hr \u2265 (1 + (k : \u211d) * eps r hr) + eps r hr := by nlinarith\n          _ = 1 + ((k : \u211d) * eps r hr + eps r hr) := by ring\n          _ = 1 + ((k : \u211d) + 1) * eps r hr := by ring\n          _ = 1 + ((k+1 : \u2115) : \u211d) * eps r hr := by simp\n      exact le_trans h_rhs hineq\n  -- Choose N\n  have h_arch : \u2203 N : \u2115, (B - 1) / eps r hr < (N : \u211d) := by\n    have h := exists_nat_gt ((B - 1) / eps r hr)\n    exact h\n  rcases h_arch with \u27e8N, hN\u27e9\n  use N\n  have h_Npos : (N : \u211d) * eps r hr > B - 1 := by\n    have hpos' : eps r hr \u2260 0 := by linarith\n    have h_mul_eq : ((B - 1) / eps r hr) * eps r hr = B - 1 := by field_simp [hpos']\n    have h_mul_lt : ((B - 1) / eps r hr) * eps r hr < (N : \u211d) * eps r hr :=\n      mul_lt_mul_of_pos_right hN heps_pos\n    linarith\n  have h_bound : a_seq r hr N \u2265 1 + (N : \u211d) * eps r hr := h_lower_bound N\n  have h_goal : 1 + (N : \u211d) * eps r hr \u2265 B := by nlinarith\n  exact le_trans h_goal h_bound"
+    },
+    {
+      "id": "contradiction_from_A_NA",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 17.9,
+      "proof_length": 68,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Assuming r > 1/4 and the existence of A (an integer > C) and N_A such that g(n) \u2265 n^A for all n \u2265 N_A, we derive a contradiction.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Assuming $r > 1/4$ and the existence of $A$ (an integer $> C$) and $N_A$ such that $g(n) \\ge n^A$ for all $n \\ge N_A$, we derive a contradiction. -/)\n  (proof := /-- Define $n_0 = \\max(N_A, 4)$ and $n_{m+1} = n_m^A - 1$. Set $u_m = n_m+1$. Using the inequality $h(n^A) \\le C h(n+1)$ repeatedly, we get $h(u_m) \\le C^m h(u_0)$. On the other hand, using $g(u_m) \\ge u_m$ and the growth of $u_m$, we obtain $h(u_m) \\ge \\ln(u_m) \\ge A^m v_0$ where $v_0 = \\ln(u_0) - (A\\ln 2)/(A-1) > 0$. Since $A > C$, the ratio $(A/C)^m$ grows without bound, contradicting $h(u_m) \\le C^m h(u_0)$. -/)]\nlemma contradiction_from_A_NA (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4) (A : \u2115) (NA : \u2115) (hA_gt_C : (A : \u211d) > C r) (hApos : (A : \u211d) > 0) (hg_ge_pow_A : \u2200 n : \u2115, NA \u2264 n \u2192 (g n : \u211d) \u2265 (n : \u211d) ^ (A : \u211d)) : False := by\n  sorry_using [C, h]"
+    },
+    {
+      "id": "eps",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "varepsilon = (1 - 1/(4r))/2, where r > 1/4.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $\\varepsilon = (1 - 1/(4r))/2$, where $r > 1/4$. -/)]\nnoncomputable def eps (r : \u211d) (hr : r > 1/4) : \u211d := (1 - 1/(4*r))/2"
+    },
+    {
+      "id": "eps_identity",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Identity 1 - 1/(4r) - varepsilon = varepsilon for r > 1/4.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- Identity $1 - 1/(4r) - \\varepsilon = \\varepsilon$ for $r > 1/4$. -/)\n  (proof := /-- Compute $1 - 1/(4r) - ((1 - 1/(4r))/2) = (1 - 1/(4r))/2 = \\varepsilon$. -/)]\nlemma eps_identity (r : \u211d) (hr : r > 1/4) : 1 - 1/(4*r) - eps r hr = eps r hr := by\n  unfold eps\n  ring"
+    },
+    {
+      "id": "eps_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.24,
+      "proof_length": 27,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "varepsilon > 0 when r > 1/4.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- $\\varepsilon > 0$ when $r > 1/4$. -/)\n  (proof := /-- Since $r > 1/4$, we have $4r > 1$, so $1/(4r) < 1$, thus $1 - 1/(4r) > 0$ and dividing by 2 yields $\\varepsilon > 0$. -/)]\nlemma eps_pos (r : \u211d) (hr : r > 1/4) : eps r hr > 0 := by\n  unfold eps\n  have hnum : 1 - 1/(4*r) > 0 := by\n    have h4r_pos : 4*r > 0 := by nlinarith\n    have h4r_gt_one : 4*r > 1 := by nlinarith\n    have : 1 - 1/(4*r) = (4*r - 1)/(4*r) := by\n      field_simp [h4r_pos.ne']\n    rw [this]\n    refine div_pos ?_ h4r_pos\n    nlinarith\n  have hden : (0:\u211d) < 2 := by norm_num\n  exact div_pos hnum hden"
+    },
+    {
+      "id": "g_g_ge_g",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.65,
+      "proof_length": 15,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If g satisfies the hypotheses for r > 1/4, then g(g(n)) \u2265 g(n) for all n \u2265 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- If $g$ satisfies the hypotheses for $r > 1/4$, then $g(g(n)) \\ge g(n)$ for all $n \\ge 1$. -/)\n  (proof := /-- From $g(n) \\ge n$ and `strict_mono_g` applied to $g(n)$ (which is positive), we get $g(g(n)) \\ge g(n)$. -/)]\nlemma g_g_ge_g (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4) (n : \u2115) (hn : 0 < n) : g (g n) \u2265 g n := by\n  have hpos_g_n : 0 < g n := hgpos n hn\n  have h := g_ge_n r g hgpos hgineq hr (g n) hpos_g_n\n  exact h"
+    },
+    {
+      "id": "g_ge_n",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.16,
+      "proof_length": 12,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If g satisfies the hypotheses for r > 1/4, then g(n) \u2265 n for all n \u2265 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint\n  (statement := /-- If $g$ satisfies the hypotheses for $r > 1/4$, then $g(n) \\ge n$ for all $n \\ge 1$. -/)\n  (proof := /-- By induction on $n$ using `strict_mono_g` and the difference bound $g(k+1)-g(k) \\ge 1$. -/)]\nlemma g_ge_n (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4) (n : \u2115) (hn : 0 < n) : (g n : \u2115) \u2265 n := by\n  induction' n with k ih\n  \u00b7 exact Nat.zero_le (g 0)\n  \u00b7 have hpos_k : 0 < k \u2228 k = 0 := by omega\n    rcases hpos_k with (hkpos | hkzero)\n    \u00b7 have hlt : g k < g (k+1) := strict_mono_g r g hgpos hgineq hr k hkpos\n      have hgek : (g k : \u2115) \u2265 k := ih hkpos\n      have : k + 1 \u2264 g (k+1) := by\n        calc\n          k + 1 \u2264 g k + 1 := by omega\n          _ \u2264 g (k+1) := Nat.succ_le_of_lt hlt\n      exact this\n    \u00b7 subst hkzero\n      have hpos1 : 0 < g 1 := hgpos 1 (by norm_num)\n      exact Nat.succ_le_of_lt hpos1"
+    },
+    {
+      "id": "g_ge_n_R",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Real version of g_ge_n: (g(n) : \u211d) \u2265 (n : \u211d).",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- Real version of `g_ge_n`: $(g(n) : \\mathbb{R}) \\ge (n : \\mathbb{R})$. -/)\n  (proof := /-- Apply `g_ge_n` and cast to \u211d. -/)]\nlemma g_ge_n_R (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4) (n : \u2115) (hn : 0 < n) : (g n : \u211d) \u2265 (n : \u211d) := by\n  have h := g_ge_n r g hgpos hgineq hr n hn\n  exact_mod_cast h"
+    },
+    {
+      "id": "g_ge_pow",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.78,
+      "proof_length": 42,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all m and all n \u2265 N_m, we have g(n) \u2265 n^{a_m}.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For all $m$ and all $n \\ge N_m$, we have $g(n) \\ge n^{a_m}$. -/)\n  (proof := /-- By induction on $m$. Base $m=0$: $a_0=1$, $N_0=1$, need $g(n) \\ge n$, which is `g_ge_n_R`. Inductive step: assume true for $m$, then for $n \\ge N_{m+1}$ we have $n \\ge 2 N_m$ and $n$ large enough to apply `telescoping_bound` and `large_n_bound` to obtain $g(n) \\ge n^{a_{m+1}}$. -/)]\nlemma g_ge_pow (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4) (hm : \u2115) (n : \u2115) (hn_ge_N : N_seq g r hr (a_seq r hr) hm \u2264 n) : (g n : \u211d) \u2265 (n : \u211d) ^ (a_seq r hr hm) := by\n  induction' hm with m ih generalizing n\n  \u00b7 -- base case hm = 0\n    have hpos : 0 < n := by\n      have hN0 : N_seq g r hr (a_seq r hr) 0 = 1 := rfl\n      have h1n : 1 \u2264 n := by simpa [hN0] using hn_ge_N\n      omega\n    have hbase : (g n : \u211d) \u2265 (n : \u211d) := g_ge_n_R r g hgpos hgineq hr n hpos\n    have ha0 : a_seq r hr 0 = (1 : \u211d) := rfl\n    simpa [ha0, Real.rpow_one] using hbase\n  \u00b7 -- inductive step: hm = m, we have ih: \u2200 n, N_seq ... m \u2264 n \u2192 (g n : \u211d) \u2265 (n : \u211d) ^ (a_seq r hr m)\n    -- need to show for hm.succ, i.e. m+1.\n    -- given hn_ge_N: N_seq ... (m+1) \u2264 n\n    -- we need (g n : \u211d) \u2265 (n : \u211d) ^ (a_seq r hr (m+1))\n    have hN_succ_eq : N_seq g r hr (a_seq r hr) (m+1) = max (2 * N_seq g r hr (a_seq r hr) m) (Nat.ceil ((4 * ((2 : \u211d) ^ (r * ((a_seq r hr m)^2)))) ^ ((1 : \u211d) / eps r hr))) := rfl\n    have hmax_le_n : max (2 * N_seq g r hr (a_seq r hr) m) (Nat.ceil ((4 * ((2 : \u211d) ^ (r * ((a_seq r hr m)^2)))) ^ ((1 : \u211d) / eps r hr))) \u2264 n := by\n      simpa [N_seq] using hn_ge_N\n    have h_left : 2 * N_seq g r hr (a_seq r hr) m \u2264 n :=\n      Nat.le_trans (Nat.le_max_left _ _) hmax_le_n\n    have h_right : Nat.ceil ((4 * ((2 : \u211d) ^ (r * ((a_seq r hr m)^2)))) ^ ((1 : \u211d) / eps r hr)) \u2264 n :=\n      Nat.le_trans (Nat.le_max_right _ _) hmax_le_n\n    have h_telescope : (g n : \u211d) \u2265 ((n : \u211d)/4) * (((n : \u211d)/2) ^ (r * ((a_seq r hr m)^2))) :=\n      telescoping_bound r g hgpos hgineq hr m ih n h_left\n    have h_large_n : ((n : \u211d)/4) * (((n : \u211d)/2) ^ (r * ((a_seq r hr m)^2))) \u2265 (n : \u211d) ^ (r * ((a_seq r hr m)^2) + 1 - eps r hr) :=\n      large_n_bound r hr m n h_right\n    have ha_succ : a_seq r hr (m+1) = r * ((a_seq r hr m)^2) + 1 - eps r hr := rfl\n    -- Now combine\n    have h_goal : (g n : \u211d) \u2265 (n : \u211d) ^ (a_seq r hr (m+1)) := by\n      calc\n        (g n : \u211d) \u2265 ((n : \u211d)/4) * (((n : \u211d)/2) ^ (r * ((a_seq r hr m)^2))) := h_telescope\n        _ \u2265 (n : \u211d) ^ (r * ((a_seq r hr m)^2) + 1 - eps r hr) := h_large_n\n        _ = (n : \u211d) ^ (a_seq r hr (m+1)) := by simp [ha_succ]\n    exact h_goal"
+    },
+    {
+      "id": "g_sq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "g_{text{sq}}(n) = n^2 for n \u2208 \u2115.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- $g_{\\text{sq}}(n) = n^2$ for $n \\in \\mathbb{N}$. -/)]\ndef g_sq (n : \u2115) : \u2115 := n ^ 2"
+    },
+    {
+      "id": "g_sq_ineq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For n \u2208 \u2115, if 0 < n then (g_{text{sq}}(g_{text{sq}}(n)))^{1/4} \u2264 g_{text{sq}}(n+1) - g_{text{sq}}(n).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $n \\in \\mathbb{N}$, if $0 < n$ then $(g_{\\text{sq}}(g_{\\text{sq}}(n)))^{1/4} \\le g_{\\text{sq}}(n+1) - g_{\\text{sq}}(n)$. -/)\n  (proof := /-- Compute both sides: $(g_{\\text{sq}}(g_{\\text{sq}}(n)))^{1/4} = n$ and $g_{\\text{sq}}(n+1)-g_{\\text{sq}}(n) = 2n+1$, and note $n \\le 2n+1$. -/)]\nlemma g_sq_ineq (n : \u2115) (hn : 0 < n) : ((g_sq (g_sq n) : \u211d) ^ ((1/4 : \u211d))) \u2264 (g_sq (n+1) : \u211d) - (g_sq n : \u211d) := by\n  have hn_nonneg : 0 \u2264 (n : \u211d) := by exact_mod_cast hn.le\n  have hLHS : ((g_sq (g_sq n) : \u211d) ^ ((1/4 : \u211d))) = (n : \u211d) := by\n    calc\n      ((g_sq (g_sq n) : \u211d) ^ ((1/4 : \u211d))) = (((n : \u211d)^2)^2) ^ ((1/4 : \u211d)) := by simp [g_sq]\n      _ = ((n : \u211d)^4) ^ ((1/4 : \u211d)) := by ring\n      _ = ((n : \u211d) ^ (4 : \u211d)) ^ ((1/4 : \u211d)) := by simp [Real.rpow_natCast]\n      _ = (n : \u211d) ^ ((4 : \u211d) * ((1/4 : \u211d))) := by rw [\u2190 Real.rpow_mul hn_nonneg (4 : \u211d) (1/4 : \u211d)]\n      _ = (n : \u211d) ^ (1 : \u211d) := by norm_num\n      _ = (n : \u211d) := by simp\n  have hRHS : (g_sq (n+1) : \u211d) - (g_sq n : \u211d) = (2*(n : \u211d) + 1) := by\n    simp [g_sq]\n    ring\n  rw [hLHS, hRHS]\n  nlinarith"
+    },
+    {
+      "id": "g_sq_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For n \u2208 \u2115, if 0 < n then 0 < g_{text{sq}}(n).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For $n \\in \\mathbb{N}$, if $0 < n$ then $0 < g_{\\text{sq}}(n)$. -/)\n  (proof := /-- Since $n \\ge 1$, $n^2 \\ge 1$, so $g_{\\text{sq}}(n) = n^2 > 0$. -/)]\nlemma g_sq_pos (n : \u2115) (hn : 0 < n) : 0 < g_sq n := by\n  -- attempt\n  unfold g_sq\n  have h : 0 < n ^ 2 := by\n    apply pow_pos hn 2\n  exact h"
+    },
+    {
+      "id": "growth_sequence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.68,
+      "proof_length": 31,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Using the sequences a_m and N_m, we can find A (as an integer) and N_A such that A > C and g(n) \u2265 n^A for all n \u2265 N_A.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Using the sequences $a_m$ and $N_m$, we can find $A$ (as an integer) and $N_A$ such that $A > C$ and $g(n) \\ge n^A$ for all $n \\ge N_A$. -/)\n  (proof := /-- Since $a_m$ is unbounded, pick $M$ such that $a_M \\ge (A : \\mathbb{R})$. Let $A = A\\_val\\, r\\, hr$ and $N_A = N\\_M$. Then `g_ge_pow` gives $g(n) \\ge n^{a_M} \\ge n^A$ for $n \\ge N_A$. -/)]\nlemma growth_sequence (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4) :\n  \u2203 (A : \u2115) (NA : \u2115), ((A : \u211d) > C r) \u2227 (\u2200 n : \u2115, NA \u2264 n \u2192 (g n : \u211d) \u2265 (n : \u211d) ^ (A : \u211d)) := by\n  have N_seq_pos (g : \u2115 \u2192 \u2115) (r : \u211d) (hr : r > 1/4) (a_seq' : \u2115 \u2192 \u211d) (m : \u2115) : 1 \u2264 N_seq g r hr a_seq' m := by\n    induction' m with k ih\n    \u00b7 unfold N_seq; simp\n    \u00b7 unfold N_seq\n      have hpos : 1 \u2264 N_seq g r hr a_seq' k := ih\n      have h1 : 1 \u2264 2 * N_seq g r hr a_seq' k := by\n        have : 1 \u2264 2 * 1 := by norm_num\n        have h_mul : 2 * 1 \u2264 2 * N_seq g r hr a_seq' k := Nat.mul_le_mul_left 2 hpos\n        exact Nat.le_trans this h_mul\n      exact le_trans h1 (le_max_left _ _)\n  set A := A_val r hr\n  have hA_gt_C : (A : \u211d) > C r := A_gt_C r hr\n  have hA_unbounded : \u2203 M : \u2115, a_seq r hr M \u2265 (A : \u211d) :=\n    a_seq_unbounded r hr (A : \u211d)\n  rcases hA_unbounded with \u27e8M, hM\u27e9\n  set NA := N_seq g r hr (a_seq r hr) M\n  have hNA_pos : 1 \u2264 NA := N_seq_pos g r hr (a_seq r hr) M\n  refine \u27e8A, NA, hA_gt_C, ?_\u27e9\n  intro n hn\n  have hn_pos_nat : 1 \u2264 n := Nat.le_trans hNA_pos hn\n  have h_n_pos : 1 \u2264 (n : \u211d) := by exact_mod_cast hn_pos_nat\n  have hg_ge_pow : (g n : \u211d) \u2265 (n : \u211d) ^ (a_seq r hr M) := g_ge_pow r g hgpos hgineq hr M n hn\n  have h_exponent : (A : \u211d) \u2264 a_seq r hr M := hM\n  have h_pow_ineq : (n : \u211d) ^ (A : \u211d) \u2264 (n : \u211d) ^ (a_seq r hr M) :=\n    Real.rpow_le_rpow_of_exponent_le h_n_pos h_exponent\n  linarith"
+    },
+    {
+      "id": "h",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "h(n) = ln(g(n)).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- $h(n) = \\ln(g(n))$. -/)]\nnoncomputable def h (g : \u2115 \u2192 \u2115) (n : \u2115) : \u211d := Real.log (g n : \u211d)"
+    },
+    {
+      "id": "large_n_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.0,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For n large enough (specifically n \u2265 \u2308 (4\u00b7 2^{r a_m^2})^{1/varepsilon}\u2309), we have (n/4)(n/2)^{r a_m^2} \u2265 n^{r a_m^2 + 1 - varepsilon}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For $n$ large enough (specifically $n \\ge \\lceil (4\\cdot 2^{r a_m^2})^{1/\\varepsilon}\\rceil$), we have $(n/4)(n/2)^{r a_m^2} \\ge n^{r a_m^2 + 1 - \\varepsilon}$. -/)\n  (proof := /-- Using $n^\\varepsilon \\ge 4\\cdot 2^{r a_m^2}$, which holds for $n \\ge \\lceil (4\\cdot 2^{r a_m^2})^{1/\\varepsilon}\\rceil$, we multiply both sides by $n^{r a_m^2 + 1 - \\varepsilon}$ and simplify. -/)]\nlemma large_n_bound (r : \u211d) (hr : r > 1/4) (hm : \u2115) (n : \u2115) (hn : (Nat.ceil ((4 * ((2 : \u211d) ^ (r * (a_seq r hr hm)^2))) ^ ((1 : \u211d) / eps r hr))) \u2264 n) :\n  ((n : \u211d) / 4) * (((n : \u211d) / 2) ^ (r * (a_seq r hr hm)^2)) \u2265 (n : \u211d) ^ (r * (a_seq r hr hm)^2 + 1 - eps r hr) := by\n  set a := r * (a_seq r hr hm)^2 with ha\n  set \u03b5 := eps r hr with h\u03b5\n  have h\u03b5pos : \u03b5 > 0 := eps_pos r hr\n  have hXpos : 0 < (4 * ((2 : \u211d) ^ a)) ^ ((1 : \u211d) / \u03b5) := by positivity\n  have hceilpos : 0 < Nat.ceil ((4 * ((2 : \u211d) ^ a)) ^ ((1 : \u211d) / \u03b5)) :=\n    Nat.ceil_pos.mpr hXpos\n  have hnpos_nat : 0 < n := lt_of_lt_of_le hceilpos hn\n  have hn_pos : (0 : \u211d) < (n : \u211d) := Nat.cast_pos.mpr hnpos_nat\n  have hX_le_n : (4 * ((2 : \u211d) ^ a)) ^ ((1 : \u211d) / \u03b5) \u2264 (n : \u211d) := by\n    exact (Nat.ceil_le.mp hn)\n  have h_n_eps_ge_4_2a : (n : \u211d) ^ \u03b5 \u2265 (4 : \u211d) * ((2 : \u211d) ^ a) := by\n    calc\n      (n : \u211d) ^ \u03b5 \u2265 ((4 * ((2 : \u211d) ^ a)) ^ ((1 : \u211d) / \u03b5)) ^ \u03b5 := by\n        have h_nonneg_X : 0 \u2264 (4 * ((2 : \u211d) ^ a)) ^ ((1 : \u211d) / \u03b5) := by positivity\n        have h_nonneg_n : 0 \u2264 (n : \u211d) := Nat.cast_nonneg _\n        have h_exponent_nonneg : 0 \u2264 \u03b5 := by linarith\n        exact Real.rpow_le_rpow h_nonneg_X hX_le_n h_exponent_nonneg\n      _ = (4 : \u211d) * ((2 : \u211d) ^ a) := by\n        calc\n          ((4 * ((2 : \u211d) ^ a)) ^ ((1 : \u211d) / \u03b5)) ^ \u03b5 = (4 * ((2 : \u211d) ^ a)) ^ (((1 : \u211d) / \u03b5) * \u03b5) := by\n            rw [Real.rpow_mul (by positivity : 0 \u2264 (4 : \u211d) * ((2 : \u211d) ^ a))]\n          _ = (4 * ((2 : \u211d) ^ a)) ^ (1 : \u211d) := by\n            field_simp [h\u03b5pos.ne.symm]\n          _ = (4 : \u211d) * ((2 : \u211d) ^ a) := by simp\n  have hApos : 0 < (n : \u211d)^(a+1) := Real.rpow_pos_of_pos hn_pos (a+1)\n  have hBpos : 0 < (4 : \u211d) * ((2 : \u211d) ^ a) := by positivity\n  have hCpos : 0 < (n : \u211d)^\u03b5 := Real.rpow_pos_of_pos hn_pos \u03b5\n  have h_one_div : 1 / ((n : \u211d)^\u03b5) \u2264 1 / ((4 : \u211d) * ((2 : \u211d) ^ a)) := by\n    exact (one_div_le_one_div hCpos hBpos).mpr h_n_eps_ge_4_2a\n  have h_left_eq : ((n : \u211d)/4) * (((n : \u211d)/2) ^ a) = ((n : \u211d)^(a+1)) / ((4 : \u211d) * ((2 : \u211d) ^ a)) := by\n    calc\n      ((n : \u211d)/4) * (((n : \u211d)/2) ^ a) = ((n : \u211d)/4) * (((n : \u211d)^a) / ((2 : \u211d)^a)) := by\n        rw [Real.div_rpow (by positivity : 0 \u2264 (n : \u211d)) (by positivity : 0 \u2264 (2 : \u211d))]\n      _ = ((n : \u211d)^(a+1)) / ((4 : \u211d) * ((2 : \u211d)^a)) := by\n        calc\n          ((n : \u211d)/4) * (((n : \u211d)^a) / ((2 : \u211d)^a)) = ((n : \u211d) * ((n : \u211d)^a)) / ((4 : \u211d) * ((2 : \u211d)^a)) := by ring\n          _ = ((n : \u211d)^(a+1)) / ((4 : \u211d) * ((2 : \u211d)^a)) := by\n            rw [Real.rpow_add hn_pos a 1, Real.rpow_one, mul_comm]\n  have h_right_eq : (n : \u211d) ^ (a + 1 - \u03b5) = ((n : \u211d)^(a+1)) / ((n : \u211d)^\u03b5) := by\n    calc\n      (n : \u211d) ^ (a + 1 - \u03b5) = (n : \u211d) ^ ((a+1) - \u03b5) := by ring\n      _ = ((n : \u211d)^(a+1)) / ((n : \u211d)^\u03b5) := by\n        rw [Real.rpow_sub hn_pos (a+1) \u03b5]\n  have h_main : ((n : \u211d)^(a+1)) / ((4 : \u211d) * ((2 : \u211d) ^ a)) \u2265 ((n : \u211d)^(a+1)) / ((n : \u211d)^\u03b5) := by\n    calc\n      ((n : \u211d)^(a+1)) / ((4 : \u211d) * ((2 : \u211d) ^ a)) = (n : \u211d)^(a+1) * (1 / ((4 : \u211d) * ((2 : \u211d) ^ a))) := by ring\n      _ \u2265 (n : \u211d)^(a+1) * (1 / ((n : \u211d)^\u03b5)) := mul_le_mul_of_nonneg_left h_one_div (by positivity)\n      _ = ((n : \u211d)^(a+1)) / ((n : \u211d)^\u03b5) := by ring\n  calc\n    ((n : \u211d)/4) * (((n : \u211d)/2) ^ a) = ((n : \u211d)^(a+1)) / ((4 : \u211d) * ((2 : \u211d) ^ a)) := h_left_eq\n    _ \u2265 ((n : \u211d)^(a+1)) / ((n : \u211d)^\u03b5) := h_main\n    _ = (n : \u211d) ^ (a + 1 - \u03b5) := h_right_eq.symm"
+    },
+    {
+      "id": "mem_S_quarter",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "1/4 belongs to the set S defined in the problem.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- $1/4$ belongs to the set $S$ defined in the problem. -/)\n  (proof := /-- Use $g(n) = n^2$. By `g_sq_pos` and `g_sq_ineq`, the conditions hold. -/)]\nlemma mem_S_quarter : ((1/4 : \u211d) \u2208 {r : \u211d | \u2203 g : \u2115 \u2192 \u2115, (\u2200 n : \u2115, 0 < n \u2192 0 < g n) \u2227 \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)}) := by\n  refine Set.mem_setOf.mpr ?_\n  use g_sq\n  constructor\n  \u00b7 intro n hn\n    exact g_sq_pos n hn\n  \u00b7 intro n hn\n    simpa using g_sq_ineq n hn\n\nsection Step2"
+    },
+    {
+      "id": "putnam_2025_b6",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The main theorem: 1/4 is the greatest element of the set S.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The main theorem: $1/4$ is the greatest element of the set $S$. -/)\n  (proof := /-- By `mem_S_quarter`, $1/4 \\in S$. By `upper_bound`, every $r \\in S$ satisfies $r \\le 1/4$. Therefore $1/4$ is the greatest element. -/)]\ntheorem putnam_2025_b6 :\n    IsGreatest\n      {r : \u211d | \u2203 g : \u2115 \u2192 \u2115, (\u2200 n : \u2115, 0 < n \u2192 0 < g n) \u2227\n        \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)}\n      ((1 / 4) : \u211d ) := by\n  refine And.intro ?_ ?_\n  \u00b7 exact mem_S_quarter\n  \u00b7 intro r hr\n    exact upper_bound r hr"
+    },
+    {
+      "id": "strict_mono_g",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.65,
+      "proof_length": 15,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If g satisfies the hypotheses for r > 1/4, then g is strictly increasing on positive integers.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint\n  (statement := /-- If $g$ satisfies the hypotheses for $r > 1/4$, then $g$ is strictly increasing on positive integers. -/)\n  (proof := /-- From $0 < g(n)$ and $(g(g(n)))^r \\le g(n+1)-g(n)$, we deduce $g(n+1)-g(n) \\ge 1$, so $g(n+1) > g(n)$. -/)]\nlemma strict_mono_g (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4) (n : \u2115) (hn : 0 < n) : g n < g (n+1) := by\n  have hgnpos : 0 < g n := hgpos n hn\n  have hggnpos : 0 < g (g n) := hgpos (g n) hgnpos\n  have hggn_ge_one : (1 : \u2115) \u2264 g (g n) := Nat.succ_le_of_lt hggnpos\n  have h_pow_ge_one : (1 : \u211d) \u2264 ((g (g n) : \u211d) ^ r) := by\n    have h_base : (1 : \u211d) \u2264 (g (g n) : \u211d) := by exact_mod_cast hggn_ge_one\n    have hx0 : 0 \u2264 (1 : \u211d) := by norm_num\n    have hy0 : 0 \u2264 (g (g n) : \u211d) := by exact_mod_cast Nat.zero_le _\n    have hz0 : 0 \u2264 r := by\n      linarith\n    have h := Real.rpow_le_rpow hx0 h_base hz0\n    calc\n      (1 : \u211d) = (1 : \u211d) ^ r := by\n        rw [Real.one_rpow]\n      _ \u2264 ((g (g n) : \u211d) ^ r) := h\n  have hdiff_ge_one : (1 : \u211d) \u2264 (g (n+1) : \u211d) - (g n : \u211d) := by\n    have htemp := hgineq n hn\n    linarith\n  by_contra! hle\n  have hle' : (g (n+1) : \u211d) \u2264 (g n : \u211d) := by exact_mod_cast hle\n  have hnonpos : (g (n+1) : \u211d) - (g n : \u211d) \u2264 0 := by linarith\n  linarith"
+    },
+    {
+      "id": "telescoping_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.65,
+      "proof_length": 52,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Telescoping bound: if g(n) \u2265 n^{a_m} for all n \u2265 N_m, then for n \u2265 2 N_m we have g(n) \u2265 (n/4) (n/2)^{r a_m^2}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- Telescoping bound: if $g(n) \\ge n^{a_m}$ for all $n \\ge N_m$, then for $n \\ge 2 N_m$ we have $g(n) \\ge (n/4) (n/2)^{r a_m^2}$. -/)\n  (proof := /-- For each $k$ with $\\lceil n/2\\rceil \\le k \\le n-1$, we have $g(k+1)-g(k) \\ge (g(g(k)))^r \\ge (k^{a_m^2})^r = k^{r a_m^2}$. Summing from $k=\\lceil n/2\\rceil$ to $n-1$ telescopes the left side to $g(n)-g(\\lceil n/2\\rceil) \\le g(n)$. There are $\\lfloor n/2\\rfloor$ terms, each at least $(\\lceil n/2\\rceil)^{r a_m^2} \\ge (n/2)^{r a_m^2}$, and $\\lfloor n/2\\rfloor \\ge n/4$ for $n\\ge2$. The claim follows. -/)]\nlemma telescoping_bound (r : \u211d) (g : \u2115 \u2192 \u2115) (hgpos : \u2200 n : \u2115, 0 < n \u2192 0 < g n) (hgineq : \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)) (hr : r > 1/4)\n  (hm : \u2115) (h_induction : \u2200 n : \u2115, N_seq g r hr (a_seq r hr) hm \u2264 n \u2192 (g n : \u211d) \u2265 (n : \u211d) ^ (a_seq r hr hm)) (n : \u2115) (hn : 2 * N_seq g r hr (a_seq r hr) hm \u2264 n) :\n  (g n : \u211d) \u2265 ((n : \u211d) / 4) * (((n : \u211d) / 2) ^ (r * (a_seq r hr hm)^2)) := by\n  let N := N_seq g r hr (a_seq r hr) hm\n  let a := a_seq r hr hm\n  have hN_pos' : \u2200 (hm : \u2115), 0 < N_seq g r hr (a_seq r hr) hm := by\n    intro hm\n    induction hm with\n    | zero => simp [N_seq]\n    | succ m ih =>\n      rw [N_seq]\n      have hpos : 0 < 2 * N_seq g r hr (a_seq r hr) m := by omega\n      exact lt_of_lt_of_le hpos (le_max_left _ _)\n  have hN_pos : 0 < N := hN_pos' hm\n  have hnpos : 0 < n := by omega\n  have h2n : 2 \u2264 n := by\n    have hN_pos' : 0 < N := hN_pos\n    omega\n  have h2n' : (2 : \u211d) \u2264 (n : \u211d) := by exact_mod_cast h2n\n  have hN_div : N \u2264 n / 2 := by omega\n  have hm_n_div : n / 2 \u2264 n := Nat.div_le_self _ _\n  have hN_le_n_div2 : N \u2264 n / 2 := hN_div\n  have hN_le_n : N \u2264 n := Nat.le_trans hN_div hm_n_div\n  have ha_nonneg' : \u2200 (hm : \u2115), 0 \u2264 a_seq r hr hm := by\n    intro hm\n    induction hm with\n    | zero => simp [a_seq]\n    | succ m ih =>\n      rw [a_seq]\n      have h_eps_nonneg : 0 \u2264 eps r hr := by\n        dsimp [eps]\n        have h4r_pos : 0 < 4*r := by nlinarith\n        have htemp : 1/(4*r) < 1 := by\n          refine (div_lt_one ?_).mpr ?_\n          \u00b7 exact h4r_pos\n          \u00b7 nlinarith\n        nlinarith\n      have h_sq_nonneg : 0 \u2264 (a_seq r hr m)^2 := pow_two_nonneg _\n      have h_nonneg_sum : 0 \u2264 r * (a_seq r hr m)^2 := mul_nonneg (by nlinarith) h_sq_nonneg\n      have h_nonneg_rest : 0 \u2264 1 - eps r hr := by\n        dsimp [eps]\n        have h4r_pos : 0 < 4*r := by nlinarith\n        have h4r_ne_zero : 4*r \u2260 0 := by nlinarith\n        field_simp [h4r_ne_zero]\n        nlinarith\n      nlinarith\n  have ha_nonneg : 0 \u2264 a := ha_nonneg' hm\n  have h_r_a_sq_nonneg : 0 \u2264 r * a ^ 2 := by\n    have ha_sq_nonneg : 0 \u2264 a ^ 2 := pow_two_nonneg a\n    nlinarith\n  have h_diff_k (k : \u2115) (hk_m : n / 2 \u2264 k) (hk_n : k < n) : (g (k+1) : \u211d) - (g k : \u211d) \u2265 (k : \u211d) ^ (r * a ^ 2) := by\n    have hk_pos : 0 < k := by\n      have : 0 < n / 2 := by\n        have : 2 \u2264 n := h2n\n        omega\n      omega\n    have hgineq_k := hgineq k hk_pos\n    have hN_le_k : N \u2264 k := by\n      omega\n    have h_ind_k : (g k : \u211d) \u2265 (k : \u211d) ^ a := h_induction k hN_le_k\n    have h_gk_ge_k : (g k : \u211d) \u2265 (k : \u211d) := by\n      have := g_ge_n_R r g hgpos hgineq hr k hk_pos\n      exact this\n    have hN_le_gk : N \u2264 g k := by\n      have h_gk_ge_k_nat : (g k : \u2115) \u2265 k := by exact_mod_cast h_gk_ge_k\n      exact Nat.le_trans hN_le_k h_gk_ge_k_nat\n    have h_ind_gk : (g (g k) : \u211d) \u2265 (g k : \u211d) ^ a := h_induction (g k) hN_le_gk\n    have h_g_gk_ge_gk : (g (g k) : \u211d) \u2265 (g k : \u211d) := by\n      have h := g_g_ge_g r g hgpos hgineq hr k hk_pos\n      exact_mod_cast h\n    have h_rpow_base : ((g (g k) : \u211d) ^ r) \u2265 ((g k : \u211d) ^ r) := by\n      refine Real.rpow_le_rpow (by positivity) h_g_gk_ge_gk (by positivity : 0 \u2264 r)\n    have h_rpow_gk' : ((g (g k) : \u211d) ^ r) \u2265 (((g k : \u211d) ^ a) ^ r) := by\n      refine Real.rpow_le_rpow (by positivity) h_ind_gk (by positivity : 0 \u2264 r)\n    have h_rpow_gk_eq : ((g (g k) : \u211d) ^ r) \u2265 (g k : \u211d) ^ (a * r) := by\n      calc\n        ((g (g k) : \u211d) ^ r) \u2265 (((g k : \u211d) ^ a) ^ r) := h_rpow_gk'\n        _ = ((g k : \u211d) ^ (a * r)) := by\n          rw [Real.rpow_mul (show 0 \u2264 (g k : \u211d) from by positivity) a r]\n    have h_rpow_gk_ge : ((g (g k) : \u211d) ^ r) \u2265 (k : \u211d) ^ (r * a ^ 2) := by\n      calc\n        ((g (g k) : \u211d) ^ r) \u2265 (g k : \u211d) ^ (a * r) := h_rpow_gk_eq\n        _ \u2265 ((k : \u211d) ^ a) ^ (a * r) := by\n          refine Real.rpow_le_rpow (by positivity) h_ind_k (mul_nonneg ha_nonneg (by positivity : 0 \u2264 r))\n        _ = (k : \u211d) ^ (a * (a * r)) := by\n          rw [Real.rpow_mul (show 0 \u2264 (k : \u211d) from by positivity) a (a * r)]\n        _ = (k : \u211d) ^ (a ^ 2 * r) := by ring\n        _ = (k : \u211d) ^ (r * a ^ 2) := by ring\n    have h_diff : (g (k+1) : \u211d) - (g k : \u211d) \u2265 ((g (g k) : \u211d) ^ r) := by\n      linarith\n    linarith\n  -- telescoping Ico helper\n  have telescoping_Ico (f : \u2115 \u2192 \u211d) (m n : \u2115) (hmn : m \u2264 n) : (\u2211 k \u2208 Finset.Ico m n, (f (k+1) - f k)) = f n - f m := by\n    induction' n with n ih generalizing m\n    \u00b7 have hm0 : m = 0 := by omega\n      subst hm0; simp\n    \u00b7 have hm_succ : m \u2264 n.succ := hmn\n      rcases lt_or_eq_of_le hm_succ with (hm_lt | hm_eq)\n      \u00b7 have hm_n : m \u2264 n := Nat.le_of_lt_succ hm_lt\n        have h_union : Finset.Ico m (n+1) = (Finset.Ico m n) \u222a (Finset.Ico n (n+1)) := by\n          have hnn : n \u2264 n+1 := by omega\n          rw [Finset.Ico_union_Ico_eq_Ico hm_n hnn]\n        have h_singleton : Finset.Ico n (n+1) = {n} := by\n          simp\n        have h_disjoint : Disjoint (Finset.Ico m n) (Finset.Ico n (n+1)) := by\n          apply Finset.disjoint_iff_inter_eq_empty.mpr\n          ext x; simp\n        calc\n          (\u2211 k \u2208 Finset.Ico m (n+1), (f (k+1) - f k)) = (\u2211 k \u2208 Finset.Ico m n, (f (k+1) - f k)) + (\u2211 k \u2208 Finset.Ico n (n+1), (f (k+1) - f k)) := by\n            rw [h_union, Finset.sum_union h_disjoint]\n          _ = (\u2211 k \u2208 Finset.Ico m n, (f (k+1) - f k)) + ((f (n+1) : \u211d) - f n) := by\n            simp [h_singleton]\n          _ = (f n - f m) + ((f (n+1) : \u211d) - f n) := by rw [ih m hm_n]\n          _ = (f (n+1) : \u211d) - f m := by ring\n      \u00b7 subst hm_eq\n        simp\n  have h_telescope : (g n : \u211d) - (g (n/2) : \u211d) = (\u2211 k \u2208 Finset.Ico (n/2) n, ((g (k+1) : \u211d) - (g k : \u211d))) := by\n    symm\n    apply telescoping_Ico (\u03bb k => (g k : \u211d)) (n/2) n\n    omega\n  have h_sum_ge : (\u2211 k \u2208 Finset.Ico (n/2) n, ((g (k+1) : \u211d) - (g k : \u211d))) \u2265 (\u2211 k \u2208 Finset.Ico (n/2) n, ((k : \u211d) ^ (r * a ^ 2))) := by\n    refine Finset.sum_le_sum (fun k hk => ?_)\n    rw [Finset.mem_Ico] at hk\n    rcases hk with \u27e8hk_low, hk_high\u27e9\n    exact h_diff_k k hk_low hk_high\n  have h_sum_lower : (\u2211 k \u2208 Finset.Ico (n/2) n, ((k : \u211d) ^ (r * a ^ 2))) \u2265 ((n : \u211d)/4) * (((n : \u211d)/2) ^ (r * a ^ 2)) := by\n    let c := (n+1)/2\n    have h2c_ge_n : 2 * c \u2265 n := by\n      omega\n    have h_c_ge_half' : (c : \u211d) \u2265 (n : \u211d)/2 := by\n      have h2c_ge_n' : (2 : \u211d) * (c : \u211d) \u2265 (n : \u211d) := by exact_mod_cast h2c_ge_n\n      linarith\n    have h_n_div2_le_c : n/2 \u2264 c := by omega\n    have h_c_le_n : c \u2264 n := by omega\n    have hc_le : (c : \u211d) \u2264 ((n : \u211d) + 1)/2 := by\n      have hc_le_nat : c \u2264 (n+1)/2 := by omega\n      have hc_le' : (c : \u211d) \u2264 ((n+1 : \u2115) : \u211d) / (2 : \u211d) := by\n        calc\n          (c : \u211d) \u2264 (((n+1)/2 : \u2115) : \u211d) := by exact_mod_cast hc_le_nat\n          _ \u2264 ((n+1 : \u2115) : \u211d) / (2 : \u211d) := Nat.cast_div_le\n      calc\n        (c : \u211d) \u2264 ((n+1 : \u2115) : \u211d) / (2 : \u211d) := hc_le'\n        _ = ((n : \u211d) + 1)/2 := by simp\n    have h_n_minus_c_ge : (n : \u211d) - (c : \u211d) \u2265 ((n : \u211d) - 1)/2 := by linarith\n    have h_half_ge : ((n : \u211d) - 1)/2 \u2265 (n : \u211d)/4 := by\n      nlinarith\n    have h_card_ge' : (n : \u211d) - (c : \u211d) \u2265 (n : \u211d)/4 := by linarith\n    have h_card_ge'' : ((n - c : \u2115) : \u211d) \u2265 (n : \u211d)/4 := by\n      rw [Nat.cast_sub h_c_le_n]\n      exact h_card_ge'\n    have h_nonneg_c_pow : 0 \u2264 ((c : \u211d) ^ (r * a ^ 2)) := by positivity\n    have h_pow_ge : ((c : \u211d) ^ (r * a ^ 2)) \u2265 ((n : \u211d)/2) ^ (r * a ^ 2) := by\n      refine Real.rpow_le_rpow (by positivity) h_c_ge_half' h_r_a_sq_nonneg\n    have h_union : Finset.Ico (n/2) n = (Finset.Ico (n/2) c) \u222a (Finset.Ico c n) := by\n      symm; apply Finset.Ico_union_Ico_eq_Ico h_n_div2_le_c h_c_le_n\n    have h_disjoint : Disjoint (Finset.Ico (n/2) c) (Finset.Ico c n) := by\n      apply Finset.disjoint_iff_inter_eq_empty.mpr\n      ext x; simp\n    have h_nonneg_extra : 0 \u2264 \u2211 k \u2208 Finset.Ico (n/2) c, ((k : \u211d) ^ (r * a ^ 2)) :=\n      Finset.sum_nonneg (fun k hk => Real.rpow_nonneg (by positivity) _)\n    have h_sum_subset : (\u2211 k \u2208 Finset.Ico (n/2) n, ((k : \u211d) ^ (r * a ^ 2))) \u2265 (\u2211 k \u2208 Finset.Ico c n, ((k : \u211d) ^ (r * a ^ 2))) := by\n      rw [h_union, Finset.sum_union h_disjoint]\n      nlinarith\n    have h_k_ge_c (k : \u2115) (hk : k \u2208 Finset.Ico c n) : (c : \u211d) \u2264 (k : \u211d) := by\n      have hk' := Finset.mem_Ico.1 hk\n      exact mod_cast hk'.1\n    have h_term_ge (k : \u2115) (hk : k \u2208 Finset.Ico c n) : ((c : \u211d) ^ (r * a ^ 2)) \u2264 ((k : \u211d) ^ (r * a ^ 2)) := by\n      refine Real.rpow_le_rpow (by positivity) (h_k_ge_c k hk) h_r_a_sq_nonneg\n    have h_sum_lower' : (\u2211 k \u2208 Finset.Ico c n, ((k : \u211d) ^ (r * a ^ 2))) \u2265 ((n - c : \u2115) : \u211d) * ((c : \u211d) ^ (r * a ^ 2)) := by\n      calc\n        (\u2211 k \u2208 Finset.Ico c n, ((k : \u211d) ^ (r * a ^ 2))) \u2265 (\u2211 k \u2208 Finset.Ico c n, ((c : \u211d) ^ (r * a ^ 2))) :=\n          Finset.sum_le_sum (fun k hk => h_term_ge k hk)\n        _ = ((Finset.Ico c n).card : \u211d) * ((c : \u211d) ^ (r * a ^ 2)) := by simp\n        _ = ((n - c : \u2115) : \u211d) * ((c : \u211d) ^ (r * a ^ 2)) := by simp\n    calc\n      (\u2211 k \u2208 Finset.Ico (n/2) n, ((k : \u211d) ^ (r * a ^ 2))) \u2265 (\u2211 k \u2208 Finset.Ico c n, ((k : \u211d) ^ (r * a ^ 2))) := h_sum_subset\n      _ \u2265 ((n - c : \u2115) : \u211d) * ((c : \u211d) ^ (r * a ^ 2)) := h_sum_lower'\n      _ \u2265 ((n : \u211d)/4) * ((c : \u211d) ^ (r * a ^ 2)) := by\n        exact mul_le_mul_of_nonneg_right h_card_ge'' h_nonneg_c_pow\n      _ \u2265 ((n : \u211d)/4) * (((n : \u211d)/2) ^ (r * a ^ 2)) := by nlinarith\n  -- combine everything\n  have h_goal : (g n : \u211d) - (g (n/2) : \u211d) \u2265 ((n : \u211d)/4) * (((n : \u211d)/2) ^ (r * a ^ 2)) := by\n    linarith\n  have h_nonneg_g_half : 0 \u2264 (g (n/2) : \u211d) := by positivity\n  linarith"
+    },
+    {
+      "id": "upper_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.4,
+      "proof_length": 38,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Every r in S satisfies r \u2264 1/4.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Every $r$ in $S$ satisfies $r \\le 1/4$. -/)\n  (proof := /-- Suppose $r \\in S$ and $r > 1/4$. Then there exists $g$ satisfying the conditions. From `growth_sequence` we obtain $A$, $N_A$ with $A > C$ and $g(n) \\ge n^A$ for $n \\ge N_A$. Then `contradiction_from_A_NA` yields a contradiction. Hence $r \\le 1/4$. -/)]\nlemma upper_bound (r : \u211d) (hrS : r \u2208 {r : \u211d | \u2203 g : \u2115 \u2192 \u2115, (\u2200 n : \u2115, 0 < n \u2192 0 < g n) \u2227 \u2200 n : \u2115, 0 < n \u2192 ((g (g n) : \u211d) ^ r) \u2264 (g (n + 1) : \u211d) - (g n : \u211d)}) : r \u2264 1/4 := by\n  by_contra! h\n  -- h : r > 1/4\n  rcases hrS with \u27e8g, hgpos, hgineq\u27e9\n  have h_contra := growth_sequence r g hgpos hgineq h\n  rcases h_contra with \u27e8A, NA, hA_gt_C, hg_ge_pow_A\u27e9\n  have hApos : (A : \u211d) > 0 := by\n    have hrpos : r > 0 := by linarith\n    have hCpos : C r > 0 := by\n      rw [C]\n      positivity\n    linarith\n  exact contradiction_from_A_NA r g hgpos hgineq h A NA hA_gt_C hApos hg_ge_pow_A\n\nend Step2"
+    }
+  ],
+  "edges": [
+    {
+      "source": "eps_identity",
+      "target": "a_seq_diff_ge_eps",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "eps",
+      "target": "a_seq_unbounded",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "eps_pos",
+      "target": "a_seq_unbounded",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_seq_diff_ge_eps",
+      "target": "a_seq_unbounded",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "h",
+      "target": "contradiction_from_A_NA",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_ge_n",
+      "target": "g_g_ge_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "strict_mono_g",
+      "target": "g_ge_n",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_ge_n",
+      "target": "g_ge_n_R",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_ge_n_R",
+      "target": "g_ge_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "eps",
+      "target": "g_ge_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "telescoping_bound",
+      "target": "g_ge_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "large_n_bound",
+      "target": "g_ge_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "N_seq",
+      "target": "growth_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "eps",
+      "target": "growth_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A_gt_C",
+      "target": "growth_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_ge_pow",
+      "target": "growth_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_seq_unbounded",
+      "target": "growth_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_seq",
+      "target": "growth_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A_val",
+      "target": "growth_sequence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "eps_pos",
+      "target": "large_n_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_sq_pos",
+      "target": "mem_S_quarter",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_sq",
+      "target": "mem_S_quarter",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_sq_ineq",
+      "target": "mem_S_quarter",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_S_quarter",
+      "target": "putnam_2025_b6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "upper_bound",
+      "target": "putnam_2025_b6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_g_ge_g",
+      "target": "telescoping_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_ge_n_R",
+      "target": "telescoping_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "eps",
+      "target": "telescoping_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "contradiction_from_A_NA",
+      "target": "upper_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "upper_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "growth_sequence",
+      "target": "upper_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

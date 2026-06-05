@@ -1,0 +1,2698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">PutnamBench 1996-B5. 1,670 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item current">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item current">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+<a href="../iter7/" class="nav-item">8</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "A",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A n is the number of balanced strings of length n with nonnegative prefix sums.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- A n is the number of balanced strings of length n with nonnegative prefix sums. -/)]\nnoncomputable def A (n : \u2115) : \u2115 := by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S)).card"
+    },
+    {
+      "id": "A_recurrence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Recurrence A (n+2) = 2*A n.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- Recurrence A (n+2) = 2*A n. -/)\n  (proof := /-- By the bijection established by truncate, ext\u2081, ext\u2082. -/)]\nlemma A_recurrence (n : \u2115) : A (n+2) = 2 * A n := by\n  classical\n  -- helper lemma: ext\u2081 T \u2260 ext\u2082 T\n  have h_ext\u2081_ne_ext\u2082 {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) : ext\u2081 T \u2260 ext\u2082 T := by\n    intro h\n    have hlast2 : (ext\u2081 T) (last2 (n := n)) = (ext\u2082 T) (last2 (n := n)) := by simpa [h]\n    unfold ext\u2081 ext\u2082 at hlast2\n    simp [last2] at hlast2\n    have h_suffix_neq : \u2200 (s : \u2124), (suffix_pair\u2081 s).2 \u2260 (suffix_pair\u2082 s).2 := by\n      intro s\n      unfold suffix_pair\u2081 suffix_pair\u2082\n      by_cases hs : s = 0\n      \u00b7 subst s; simp\n      \u00b7 by_cases hs' : s = 1\n        \u00b7 subst s; simp\n        \u00b7 simp [hs, hs']\n    apply h_suffix_neq (total_sum T)\n    exact hlast2\n  let X : Finset (Fin (n+2) \u2192 \u2124\u02e3) :=\n    (Finset.univ : Finset (Fin (n+2) \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S)\n  let Y : Finset (Fin n \u2192 \u2124\u02e3) :=\n    (Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb T => balanced_cond T \u2227 prefixes_nonneg T)\n  have hA : A (n+2) = X.card := by\n    unfold A\n    simp [X]\n  have hAn : A n = Y.card := by\n    unfold A\n    simp [Y]\n  -- define images\n  let img1 : Finset (Fin (n+2) \u2192 \u2124\u02e3) := Finset.image (\u03bb T : Fin n \u2192 \u2124\u02e3 => ext\u2081 T) Y\n  let img2 : Finset (Fin (n+2) \u2192 \u2124\u02e3) := Finset.image (\u03bb T : Fin n \u2192 \u2124\u02e3 => ext\u2082 T) Y\n  have hX_eq : X = img1 \u222a img2 := by\n    apply (Finset.Subset.antisymm_iff).mpr\n    constructor\n    \u00b7 intro S hS\n      rcases Finset.mem_filter.mp hS with \u27e8hS_univ, \u27e8hbal, hnonneg\u27e9\u27e9\n      have h_extend := extend_truncate S hbal hnonneg\n      rcases h_extend with (hS_eq | hS_eq)\n      \u00b7 -- S = ext\u2081 (truncate S)\n        have hT : truncate S \u2208 Y := by\n          apply Finset.mem_filter.mpr\n          constructor\n          \u00b7 apply Finset.mem_univ\n          \u00b7 exact \u27e8truncate_balanced S hbal, truncate_prefixes_nonneg S hnonneg\u27e9\n        apply Finset.mem_union_left\n        apply Finset.mem_image.mpr\n        refine \u27e8truncate S, hT, ?_\u27e9\n        symm; exact hS_eq\n      \u00b7 -- S = ext\u2082 (truncate S)\n        have hT : truncate S \u2208 Y := by\n          apply Finset.mem_filter.mpr\n          constructor\n          \u00b7 apply Finset.mem_univ\n          \u00b7 exact \u27e8truncate_balanced S hbal, truncate_prefixes_nonneg S hnonneg\u27e9\n        apply Finset.mem_union_right\n        apply Finset.mem_image.mpr\n        refine \u27e8truncate S, hT, ?_\u27e9\n        symm; exact hS_eq\n    \u00b7 intro S hS\n      rcases Finset.mem_union.mp hS with (hS_img1 | hS_img2)\n      \u00b7 rcases Finset.mem_image.mp hS_img1 with \u27e8T, hT, hS_eq\u27e9\n        have hT_Y : balanced_cond T \u2227 prefixes_nonneg T := (Finset.mem_filter.mp hT).2\n        rcases hT_Y with \u27e8hbal_T, hnonneg_T\u27e9\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 apply Finset.mem_univ\n        \u00b7 rw [\u2190 hS_eq]\n          exact \u27e8ext\u2081_balanced T hbal_T hnonneg_T, ext\u2081_prefixes_nonneg T hbal_T hnonneg_T\u27e9\n      \u00b7 rcases Finset.mem_image.mp hS_img2 with \u27e8T, hT, hS_eq\u27e9\n        have hT_Y : balanced_cond T \u2227 prefixes_nonneg T := (Finset.mem_filter.mp hT).2\n        rcases hT_Y with \u27e8hbal_T, hnonneg_T\u27e9\n        apply Finset.mem_filter.mpr\n        constructor\n        \u00b7 apply Finset.mem_univ\n        \u00b7 rw [\u2190 hS_eq]\n          exact \u27e8ext\u2082_balanced T hbal_T hnonneg_T, ext\u2082_prefixes_nonneg T hbal_T hnonneg_T\u27e9\n  have h_inter_empty : img1 \u2229 img2 = \u2205 := by\n    have h_not_nonempty : \u00ac (img1 \u2229 img2).Nonempty := by\n      intro hne\n      rcases hne with \u27e8S, hS\u27e9\n      rcases Finset.mem_inter.mp hS with \u27e8hS1, hS2\u27e9\n      rcases Finset.mem_image.mp hS1 with \u27e8T1, hT1, hS_eq1\u27e9\n      rcases Finset.mem_image.mp hS2 with \u27e8T2, hT2, hS_eq2\u27e9\n      have h_eq : ext\u2081 T1 = ext\u2082 T2 := by\n        calc\n          ext\u2081 T1 = S := hS_eq1\n          _ = ext\u2082 T2 := hS_eq2.symm\n      -- from h_eq, we get T1 = T2\n      have hT_eq : T1 = T2 := by\n        calc\n          T1 = truncate (ext\u2081 T1) := (truncate_ext\u2081 T1).symm\n          _ = truncate (ext\u2082 T2) := by rw [h_eq]\n          _ = T2 := truncate_ext\u2082 T2\n      -- use hT_eq to derive a contradiction\n      apply h_ext\u2081_ne_ext\u2082 T2\n      calc\n        ext\u2081 T2 = ext\u2081 T1 := by rw [hT_eq]\n        _ = ext\u2082 T2 := h_eq\n    exact Finset.not_nonempty_iff_eq_empty.mp h_not_nonempty\n  have h_disjoint : Disjoint img1 img2 :=\n    Finset.disjoint_iff_inter_eq_empty.mpr h_inter_empty\n  have h_card_img1 : img1.card = Y.card := by\n    apply Finset.card_image_of_injective Y\n    intro x y h\n    have h' : ext\u2081 x = ext\u2081 y := h\n    calc\n      x = truncate (ext\u2081 x) := (truncate_ext\u2081 x).symm\n      _ = truncate (ext\u2081 y) := by rw [h']\n      _ = y := truncate_ext\u2081 y\n  have h_card_img2 : img2.card = Y.card := by\n    apply Finset.card_image_of_injective Y\n    intro x y h\n    have h' : ext\u2082 x = ext\u2082 y := h\n    calc\n      x = truncate (ext\u2082 x) := (truncate_ext\u2082 x).symm\n      _ = truncate (ext\u2082 y) := by rw [h']\n      _ = y := truncate_ext\u2082 y\n  -- now compute\n  calc\n    A (n+2) = X.card := hA\n    _ = (img1 \u222a img2).card := by rw [hX_eq]\n    _ = img1.card + img2.card := by\n      rw [Finset.card_union_eq_card_add_card.mpr h_disjoint]\n    _ = Y.card + Y.card := by rw [h_card_img1, h_card_img2]\n    _ = 2 * Y.card := by ring\n    _ = 2 * A n := by rw [hAn]"
+    },
+    {
+      "id": "C",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "C n is the number of balanced strings of length n with prefix sums bounded by 1 in absolute value.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- C n is the number of balanced strings of length n with prefix sums bounded by 1 in absolute value. -/)]\nnoncomputable def C (n : \u2115) : \u2115 := by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_abs_le_one S)).card"
+    },
+    {
+      "id": "C_recurrence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Recurrence C (n+2) = 2*C n.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- Recurrence C (n+2) = 2*C n. -/)\n  (proof := /-- By the bijection established by drop2 and prepend. -/)]\nlemma C_recurrence (n : \u2115) : C (n+2) = 2 * C n := by\n  sorry_using [C, balanced_cond_of_prefixes_abs_le_one]"
+    },
+    {
+      "id": "Z_card_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The set Z (balanced, nonnegative, bounded) has cardinal 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- The set Z (balanced, nonnegative, bounded) has cardinal 1. -/)\n  (proof := /-- Z contains exactly the alternating string. -/)]\nlemma Z_card_one (n : \u2115) : by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 prefixes_abs_le_one S)).card = 1 := by\n  classical\n  have h : (Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 prefixes_abs_le_one S) = {alt_string n} := by\n    ext S\n    constructor\n    \u00b7 intro hS\n      have hS_mem_cond := (Finset.mem_filter.mp hS)\n      rcases hS_mem_cond with \u27e8hS_mem, hS_cond\u27e9\n      rcases hS_cond with \u27e8hS_bal, hS_nonneg, hS_bound\u27e9\n      have : S = alt_string n := alt_string_unique n S hS_nonneg hS_bound\n      simp [this]\n    \u00b7 intro hS\n      have : S = alt_string n := by simpa using hS\n      subst this\n      refine Finset.mem_filter.mpr ?_\n      constructor\n      \u00b7 exact Finset.mem_univ _\n      \u00b7 refine \u27e8balanced_alt_string n, alt_string_prefixes_nonneg n, alt_string_prefixes_abs_le_one n\u27e9\n  rw [h, Finset.card_singleton]"
+    },
+    {
+      "id": "a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "a n is the number of balanced strings of length n.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- a n is the number of balanced strings of length n. -/)]\nnoncomputable def a (n : \u2115) : \u2115 := by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (balanced_cond (n := n))).card"
+    },
+    {
+      "id": "a_closed_form",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For all n, a n equals the closed form 2^{\u230a(n+2)/2\u230b} + 2^{\u230a(n+1)/2\u230b} - 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all n, a n equals the closed form 2^{\u230a(n+2)/2\u230b} + 2^{\u230a(n+1)/2\u230b} - 2. -/)\n  (proof := /-- By induction on n using the recurrence a_{n+2}=2*a_n+2 and the base cases a_0=1, a_1=2. -/)]\nlemma a_closed_form (n : \u2115) : a n = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115) n := by\n  have helper_even (k : \u2115) : 2 ^ ((2*k+2+2)/2) + 2 ^ ((2*k+2+1)/2) = 2*(2 ^ ((2*k+2)/2) + 2 ^ ((2*k+1)/2)) := by\n    have h1 : (2*k+2+2)/2 = k+2 := by omega\n    have h2 : (2*k+2+1)/2 = k+1 := by omega\n    have h3 : (2*k+2)/2 = k+1 := by omega\n    have h4 : (2*k+1)/2 = k := by omega\n    simp [h1, h2, h3, h4]\n    ring\n  have helper_odd (k : \u2115) : 2 ^ ((2*k+1+2+2)/2) + 2 ^ ((2*k+1+2+1)/2) = 2*(2 ^ ((2*k+1+2)/2) + 2 ^ ((2*k+1+1)/2)) := by\n    have h1 : (2*k+1+2+2)/2 = k+2 := by omega\n    have h2 : (2*k+1+2+1)/2 = k+2 := by omega\n    have h3 : (2*k+1+2)/2 = k+1 := by omega\n    have h4 : (2*k+1+1)/2 = k+1 := by omega\n    simp [h1, h2, h3, h4]\n    ring\n  have g_recurrence (n : \u2115) : 2 ^ ((n+2+2)/2) + 2 ^ ((n+2+1)/2) = 2*(2 ^ ((n+2)/2) + 2 ^ ((n+1)/2)) := by\n    rcases Nat.even_or_odd n with (\u27e8k, h\u27e9 | \u27e8k, h\u27e9)\n    \u00b7 have hn2k : n = 2*k := by omega\n      rw [hn2k]\n      exact helper_even k\n    \u00b7 have hn2k1 : n = 2*k+1 := by omega\n      rw [hn2k1]\n      exact helper_odd k\n  have sum_ge_two (n : \u2115) : 2 \u2264 2 ^ ((n+2)/2) + 2 ^ ((n+1)/2) := by\n    have h1 : 1 \u2264 2 ^ ((n+2)/2) := Nat.one_le_two_pow (n := ((n+2)/2))\n    have h2 : 1 \u2264 2 ^ ((n+1)/2) := Nat.one_le_two_pow (n := ((n+1)/2))\n    omega\n  have hf_recurrence (n : \u2115) : (2 ^ ((n+2+2)/2) + 2 ^ ((n+2+1)/2) - 2) = 2*(2 ^ ((n+2)/2) + 2 ^ ((n+1)/2) - 2) + 2 := by\n    have hg := g_recurrence n\n    have hsum1 : 2 \u2264 2 ^ ((n+2+2)/2) + 2 ^ ((n+2+1)/2) := sum_ge_two (n+2)\n    have hsum2 : 2 \u2264 2 ^ ((n+2)/2) + 2 ^ ((n+1)/2) := sum_ge_two n\n    omega\n  induction n using Nat.strong_induction_on with\n  | h n ih =>\n    match n with\n    | 0 => \n      simp [a_zero]\n    | 1 => \n      simp [a_one]\n    | n+2 =>\n      have hrec : a (n+2) = 2*a n + 2 := a_recurrence n\n      rw [hrec]\n      have h_ih_n : a n = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115) n := ih n (by omega)\n      rw [h_ih_n]\n      dsimp\n      apply Eq.symm (hf_recurrence n)"
+    },
+    {
+      "id": "a_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a 1 = 2 (both X and O are balanced).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- a 1 = 2 (both X and O are balanced). -/)\n  (proof := /-- For strings of length 1, each substring is either the whole string or a single symbol. The absolute value of \u0394 is 1, so both are balanced. There are 2 strings. -/)]\nlemma a_one : a 1 = 2 := by\n  have balanced_cond_all (f : Fin 1 \u2192 \u2124\u02e3) : balanced_cond f := by\n    intro a b hle\n    have hsub : Subsingleton (Fin 1) := subsingleton_fin_one\n    have ha0 : a = (0 : Fin 1) := hsub.elim a (0 : Fin 1)\n    have hb0 : b = (0 : Fin 1) := hsub.elim b (0 : Fin 1)\n    subst ha0; subst hb0\n    have hval : (f 0 : \u2124\u02e3) = 1 \u2228 (f 0 : \u2124\u02e3) = -1 := Int.units_eq_one_or (f 0)\n    rcases hval with (h | h)\n    \u00b7 have hval' : (f 0 : \u2124) = 1 := by simpa [h]\n      simp [hval']\n    \u00b7 have hval' : (f 0 : \u2124) = -1 := by simpa [h]\n      simp [hval']\n  unfold a\n  classical\n    have hfilter : (Finset.univ : Finset (Fin 1 \u2192 \u2124\u02e3)).filter (balanced_cond (n := 1)) = (Finset.univ : Finset (Fin 1 \u2192 \u2124\u02e3)) := by\n      ext f; constructor\n      \u00b7 intro h; exact Finset.mem_univ _\n      \u00b7 intro h; apply Finset.mem_filter.mpr; exact \u27e8Finset.mem_univ _, balanced_cond_all f\u27e9\n    rw [hfilter]\n    simp [Fintype.card_fun, Fintype.card_fin, Fintype.card_units_int]"
+    },
+    {
+      "id": "a_recurrence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any n, a_{n+2} = 2*a_n + 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any n, a_{n+2} = 2*a_n + 2. -/)\n  (proof := /-- From partition_formula and a_step_two: a (n+2) + 2 = 2*(a n + 2). -/)]\nlemma a_recurrence (n : \u2115) : a (n+2) = 2 * a n + 2 := by\n  have h1 := partition_formula n\n  have h2 := a_step_two n\n  linarith"
+    },
+    {
+      "id": "a_step_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a (n+2) + 2 = 4*A n + 2*C n.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- a (n+2) + 2 = 4*A n + 2*C n. -/)\n  (proof := /-- By partition_formula and recurrences for A and C. -/)]\nlemma a_step_two (n : \u2115) : a (n+2) + 2 = 4 * A n + 2 * C n := by\n  calc\n    a (n+2) + 2 = 2 * A (n+2) + C (n+2) := by simpa using partition_formula (n+2)\n    _ = 2 * (2 * A n) + (2 * C n) := by\n      simp [A_recurrence n, C_recurrence n]\n    _ = 4 * A n + 2 * C n := by ring"
+    },
+    {
+      "id": "a_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a 0 = 1 (the empty string is balanced).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- a 0 = 1 (the empty string is balanced). -/)\n  (proof := /-- By definition, the only string of length 0 is the empty function, which trivially satisfies balanced_cond. -/)]\nlemma a_zero : a 0 = 1 := by\n  unfold a\n  classical\n  have h : (Finset.univ.filter (balanced_cond (n := 0))) = Finset.univ := by\n    ext S; simp [balanced_cond]\n  rw [h]\n  simp"
+    },
+    {
+      "id": "alt_string",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The alternating string: X, O, X, O, ...",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- The alternating string: X, O, X, O, ... -/)]\ndef alt_string (n : \u2115) (i : Fin n) : \u2124\u02e3 := if i.val % 2 = 0 then 1 else -1"
+    },
+    {
+      "id": "alt_string_prefixes_abs_le_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The alternating string has prefixes bounded by 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- The alternating string has prefixes bounded by 1. -/)\n  (proof := /-- By direct computation of prefix sums. -/)]\nlemma alt_string_prefixes_abs_le_one (n : \u2115) : prefixes_abs_le_one (alt_string n) := by\n  intro b\n  have alt_string_eq_neg_one_pow (i : Fin n) : (alt_string n i : \u2124) = (-1 : \u2124) ^ (i.val : \u2115) := by\n    dsimp [alt_string]\n    split_ifs with h\n    \u00b7 -- h: i.val % 2 = 0\n      have h_even : Even i.val := by\n        rw [Nat.even_iff]\n        exact h\n      rw [h_even.neg_one_pow]\n      simp\n    \u00b7 -- h: \u00ac i.val % 2 = 0\n      have h_odd : Odd i.val := by\n        rw [Nat.odd_iff]\n        exact (Nat.mod_two_eq_zero_or_one i.val).resolve_left h\n      rw [h_odd.neg_one_pow]\n      simp\n  let g : Fin (b.val+1) \u2192 Fin n := \u03bb i => \u27e8i.val, by\n    have hi : i.val < b.val+1 := i.is_lt\n    have hb : b.val < n := b.is_lt\n    have : i.val < n := lt_of_lt_of_le hi (by omega)\n    exact this\u27e9\n  have hg_inj : Function.Injective g := by\n    intro x y h\n    apply Fin.ext\n    have hval : (g x).val = (g y).val := congr_arg Fin.val h\n    simp [g] at hval\n    exact hval\n  have hg_image : Finset.image g (Finset.univ : Finset (Fin (b.val+1))) = (Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b) := by\n    ext x\n    constructor\n    \u00b7 intro hx\n      rcases Finset.mem_image.1 hx with \u27e8i, hi, rfl\u27e9\n      have hi' : i.val < b.val+1 := i.is_lt\n      have hxval : (g i).val = i.val := rfl\n      have hxle : (g i) \u2264 b :=\n        (Fin.le_def (a := g i) (b := b)).mpr (by\n          rw [hxval]\n          omega)\n      refine Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hxle\u27e9\n    \u00b7 intro hx\n      rcases Finset.mem_filter.1 hx with \u27e8hx_univ, hxle\u27e9\n      have hx_val_le : x.val \u2264 b.val := hxle\n      have hx_val_lt_succ : x.val < b.val+1 := Nat.lt_succ_of_le hx_val_le\n      let i : Fin (b.val+1) := \u27e8x.val, hx_val_lt_succ\u27e9\n      have hi_mem : i \u2208 (Finset.univ : Finset (Fin (b.val+1))) := Finset.mem_univ _\n      have hx_eq_g_i : x = g i := by\n        ext; simp [g, i]\n      rw [hx_eq_g_i]\n      exact Finset.mem_image.mpr \u27e8i, hi_mem, rfl\u27e9\n  have hsum_alt : (\u2211 i \u2208 (Finset.univ : Finset (Fin (b.val+1))), (alt_string n (g i) : \u2124)) =\n    (\u2211 i : Fin (b.val+1), ((-1 : \u2124) ^ (i.val : \u2115))) := by\n    refine Finset.sum_congr rfl (\u03bb i hi => ?_)\n    calc\n      (alt_string n (g i) : \u2124) = ((-1 : \u2124) ^ ((g i).val : \u2115)) := alt_string_eq_neg_one_pow (g i)\n      _ = ((-1 : \u2124) ^ (i.val : \u2115)) := by simp [g]\n  have hsum_neg_one_pow : (\u2211 i : Fin (b.val+1), ((-1 : \u2124) ^ (i.val : \u2115))) = if (Even (b.val+1)) then 0 else 1 :=\n    Fin.sum_neg_one_pow \u2124 (b.val+1)\n  have hsum : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (alt_string n i : \u2124)) = if (Even (b.val+1)) then 0 else 1 := by\n    calc\n      (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (alt_string n i : \u2124)) = \n        (\u2211 i \u2208 Finset.image g (Finset.univ : Finset (Fin (b.val+1))), (alt_string n i : \u2124)) := by\n        rw [hg_image]\n      _ = (\u2211 i \u2208 (Finset.univ : Finset (Fin (b.val+1))), (alt_string n (g i) : \u2124)) :=\n        Finset.sum_image (\u03bb x hx y hy h => hg_inj h)\n      _ = (\u2211 i : Fin (b.val+1), ((-1 : \u2124) ^ (i.val : \u2115))) := hsum_alt\n      _ = if (Even (b.val+1)) then 0 else 1 := hsum_neg_one_pow\n  rw [hsum]\n  by_cases h : Even (b.val+1)\n  \u00b7 simp [h]\n  \u00b7 simp [h]"
+    },
+    {
+      "id": "alt_string_prefixes_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The alternating string has nonnegative prefixes.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- The alternating string has nonnegative prefixes. -/)\n  (proof := /-- By direct computation of prefix sums. -/)]\nlemma alt_string_prefixes_nonneg (n : \u2115) : prefixes_nonneg (alt_string n) := by\n  let alt_seq (k : \u2115) : \u2124\u02e3 := if k % 2 = 0 then 1 else -1\n  have alt_seq_partial_sum (k : \u2115) : Finset.sum (Finset.range (k+1)) (\u03bb j => (alt_seq j : \u2124)) = if k % 2 = 0 then (1 : \u2124) else (0 : \u2124) := by\n    induction' k with m IH\n    \u00b7 simp [alt_seq]\n    \u00b7 rw [Finset.sum_range_succ, IH]\n      have hpar : (m+1) % 2 = (if m % 2 = 0 then 1 else 0) := by\n        by_cases hm : m % 2 = 0\n        \u00b7 rw [if_pos hm]\n          exact (Nat.succ_mod_two_eq_one_iff.mpr hm)\n        \u00b7 have hm1 : m % 2 = 1 := by\n            have hmod := Nat.mod_two_eq_zero_or_one m\n            rcases hmod with h0 | h1\n            \u00b7 exact (hm h0).elim\n            \u00b7 exact h1\n          rw [if_neg hm]\n          exact (Nat.succ_mod_two_eq_zero_iff.mpr hm1)\n      have alt_val : (alt_seq (m+1) : \u2124) = (if (m+1) % 2 = 0 then (1 : \u2124) else (-1 : \u2124)) := by\n        simp [alt_seq]\n        split <;> simp\n      rw [alt_val]\n      rw [hpar]\n      by_cases hm : m % 2 = 0\n      \u00b7 rw [if_pos hm]\n        have hm1 : (m+1) % 2 = 1 := by\n          simpa [hpar, hm] using rfl\n        simp [hm, hpar]\n      \u00b7 rw [if_neg hm]\n        have hm1 : m % 2 = 1 := by\n          have hmod := Nat.mod_two_eq_zero_or_one m\n          rcases hmod with h0 | h1\n          \u00b7 exact (hm h0).elim\n          \u00b7 exact h1\n        have hm1' : (m+1) % 2 = 0 := by\n          simpa [hpar, hm1] using rfl\n        simp [hm, hm1, hm1']\n  have sum_filter_Icc_eq_range_sum (b : Fin n) : Finset.sum (((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b))) (\u03bb i => (alt_string n i : \u2124)) = Finset.sum (Finset.range (b.val+1)) (\u03bb j => (alt_seq j : \u2124)) := by\n    let s := ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b))\n    let t := Finset.range (b.val+1)\n    have hi : \u2200 (i : Fin n) (hi : i \u2208 s), i.val \u2208 t := by\n      intro i hi\n      rcases Finset.mem_filter.mp hi with \u27e8hi_univ, hle\u27e9\n      rw [Finset.mem_range]\n      have hle' : i.val \u2264 b.val := Fin.le_iff_val_le_val.mp hle\n      omega\n    have i_inj : \u2200 (i1 : Fin n) (h1 : i1 \u2208 s) (i2 : Fin n) (h2 : i2 \u2208 s), i1.val = i2.val \u2192 i1 = i2 := by\n      intro i1 h1 i2 h2 h\n      apply Fin.ext\n      exact h\n    have i_surj : \u2200 (j : \u2115) (hj : j \u2208 t), \u2203 (i : Fin n) (hi : i \u2208 s), i.val = j := by\n      intro j hj\n      rw [Finset.mem_range] at hj\n      have hle' : j \u2264 b.val := Nat.lt_succ_iff.mp hj\n      have hj_val : j < n := by\n        have hb_val : b.val < n := b.is_lt\n        omega\n      refine \u27e8\u27e8j, hj_val\u27e9, ?_, rfl\u27e9\n      refine Finset.mem_filter.mpr \u27e8Finset.mem_univ _, ?_\u27e9\n      exact Fin.le_iff_val_le_val.mpr hle'\n    have h : \u2200 (i : Fin n) (hi : i \u2208 s), (alt_string n i : \u2124) = (alt_seq i.val : \u2124) := by\n      intro i hi\n      simp [alt_string, alt_seq]\n    apply Finset.sum_bij (\u03bb i hi => i.val) hi i_inj i_surj h\n  intro b\n  simp [prefixes_nonneg, sum_filter_Icc_eq_range_sum b, alt_seq_partial_sum (b.val)]\n  by_cases h : b.val % 2 = 0\n  \u00b7 simp [h]\n  \u00b7 simp [h]"
+    },
+    {
+      "id": "alt_string_unique",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If a string is nonnegative and bounded, it must be the alternating string.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- If a string is nonnegative and bounded, it must be the alternating string. -/)\n  (proof := /-- By induction on the length, using the walk interpretation. -/)]\nlemma alt_string_unique (n : \u2115) (S : Fin n \u2192 \u2124\u02e3) (hnonneg : prefixes_nonneg S) (hbound : prefixes_abs_le_one S) : S = alt_string n := by\n  ext i\n  by_cases hn0 : n = 0\n  \u00b7 subst hn0; exact Fin.elim0 i\n  \u00b7 have hnpos : 0 < n := Nat.pos_of_ne_zero hn0\n    -- define f as \u2115 \u2192 \u2124\n    let f : \u2115 \u2192 \u2124 := \u03bb k => if h : k < n then (S (\u27e8k, h\u27e9 : Fin n) : \u2124) else 0\n    have hf_val (i : Fin n) : f i.val = (S i : \u2124) := by\n      simp [f, i.is_lt]\n    have hf_nonneg (k : \u2115) (hk : k < n) : f k = 1 \u2228 f k = -1 := by\n      have huniv : (Finset.univ : Finset \u2124\u02e3) = {1, -1} := by decide\n      have hm : S (\u27e8k, hk\u27e9 : Fin n) \u2208 (Finset.univ : Finset \u2124\u02e3) := Finset.mem_univ _\n      rw [huniv] at hm\n      simp at hm\n      rcases hm with (h | h)\n      \u00b7 left; simp [f, hk, h]\n      \u00b7 right; simp [f, hk, h]\n    -- lemma sum_alt_range\n    have sum_alt_range (k : \u2115) : Finset.sum (Finset.range k) (\u03bb j => (if j % 2 = 0 then (1 : \u2124) else (-1 : \u2124))) = (if k % 2 = 0 then (0 : \u2124) else 1) := by\n      induction' k with k ih\n      \u00b7 simp\n      \u00b7 rw [Finset.sum_range_succ, ih]\n        by_cases hk : k % 2 = 0\n        \u00b7 -- k even\n          have hk' : (k+1) % 2 = 1 := by\n            omega\n          simp [hk, hk']\n        \u00b7 -- k odd\n          have hk' : (k+1) % 2 = 0 := by\n            omega\n          simp [hk, hk']\n    -- We'll need to use `hf_nonneg` and `sum_alt_range` later.\n    -- Now we need to relate `prefix_sum` to `Finset.range` sum.\n    -- Let's define a lemma `prefix_sum_eq_range` using `Finset.image`.\n    have prefix_sum_eq_range (k : \u2115) (hk : k < n) : (\u2211 x \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb x => x \u2264 (\u27e8k, hk\u27e9 : Fin n))), (S x : \u2124)) = Finset.sum (Finset.range (k+1)) f := by\n      -- prove via Finset.image\n      have h_image : Finset.image (\u03bb (x : Fin n) => x.val) ((Finset.univ : Finset (Fin n)).filter (\u03bb x => x \u2264 (\u27e8k, hk\u27e9 : Fin n))) = Finset.range (k+1) := by\n        ext j\n        constructor\n        \u00b7 intro hj\n          rcases Finset.mem_image.mp hj with \u27e8x, hx, rfl\u27e9\n          have hxle : x \u2264 (\u27e8k, hk\u27e9 : Fin n) := (Finset.mem_filter.mp hx).2\n          have hxval : x.val \u2264 k := hxle\n          apply Finset.mem_range.mpr\n          omega\n        \u00b7 intro hj\n          have hj_range : j < k+1 := Finset.mem_range.mp hj\n          have hj_lt_n : j < n := by omega\n          let x : Fin n := \u27e8j, hj_lt_n\u27e9\n          have hxle : x \u2264 (\u27e8k, hk\u27e9 : Fin n) := by\n            -- x.val = j \u2264 k\n            exact (Fin.mk_le_mk.mpr (show j \u2264 k from by omega))\n          have hmem : x \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb x => x \u2264 (\u27e8k, hk\u27e9 : Fin n))) := by\n            apply Finset.mem_filter.mpr; exact \u27e8Finset.mem_univ _, hxle\u27e9\n          apply Finset.mem_image.mpr\n          exact \u27e8x, hmem, rfl\u27e9\n      calc\n        (\u2211 x \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb x => x \u2264 (\u27e8k, hk\u27e9 : Fin n))), (S x : \u2124)) = \n          (\u2211 x \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb x => x \u2264 (\u27e8k, hk\u27e9 : Fin n))), f (x.val)) := by\n          refine Finset.sum_congr rfl (\u03bb x hx => ?_)\n          simp [f, x.is_lt]\n        _ = Finset.sum (Finset.image (\u03bb (x : Fin n) => x.val) ((Finset.univ : Finset (Fin n)).filter (\u03bb x => x \u2264 (\u27e8k, hk\u27e9 : Fin n)))) f := by\n          rw [Finset.sum_image]\n          intro x hx y hy h\n          exact Fin.val_inj.mp h\n        _ = Finset.sum (Finset.range (k+1)) f := by rw [h_image]\n    -- Now we can get `hnonneg` and `hbound` translated.\n    have hP_nonneg (k : \u2115) (hk : k < n) : Finset.sum (Finset.range (k+1)) f \u2265 0 := by\n      have h := hnonneg (\u27e8k, hk\u27e9 : Fin n)\n      have h_eq := prefix_sum_eq_range k hk\n      linarith\n    have hP_bound (k : \u2115) (hk : k < n) : |Finset.sum (Finset.range (k+1)) f| \u2264 1 := by\n      have h := hbound (\u27e8k, hk\u27e9 : Fin n)\n      have h_eq := prefix_sum_eq_range k hk\n      -- h: |...| \u2264 1, h_eq gives equality of sums\n      -- need to rewrite\n      -- `h` is `|...| \u2264 1` where ... is the original sum. `h_eq` says original sum = range sum.\n      -- So we can `simpa [h_eq]` using h\n      simpa [h_eq] using h\n    -- Now the main induction on k.\n    have h_main (k : \u2115) (hk : k < n) : f k = (if k % 2 = 0 then (1 : \u2124) else (-1 : \u2124)) := by\n      revert hk\n      refine Nat.strong_induction_on k ?_\n      intro m ih hk\n      by_cases hm0 : m = 0\n      \u00b7 subst hm0\n        -- m=0 case\n        have h0_nonneg := hP_nonneg 0 (by omega)\n        have h0_bound := hP_bound 0 (by omega)\n        -- compute sum for range 1 (0+1)\n        have hsum0 : Finset.sum (Finset.range 1) f = f 0 := by simp\n        -- So we have f 0 \u2265 0 and |f 0| \u2264 1.\n        rw [hsum0] at h0_nonneg h0_bound\n        have hval : f 0 = 1 \u2228 f 0 = -1 := hf_nonneg 0 (by omega)\n        rcases hval with (h1 | hneg1)\n        \u00b7 exact h1\n        \u00b7 -- f 0 = -1, but we have f 0 \u2265 0, contradiction\n          linarith\n      \u00b7 -- m > 0\n        have hm_pos : 0 < m := Nat.pos_of_ne_zero hm0\n        let m' := m-1\n        have hm'_lt_m : m' < m := by omega\n        have hm'_lt_n : m' < n := by omega\n        -- induction hypothesis for m'\n        have h_ih_m' : f m' = (if m' % 2 = 0 then (1 : \u2124) else (-1 : \u2124)) := ih m' hm'_lt_m (by omega)\n        -- compute prefix sum up to m-1\n        have hP_prev : Finset.sum (Finset.range m) f = (if m % 2 = 0 then (0 : \u2124) else 1) := by\n          -- using sum_alt_range and induction hypothesis for all j < m\n          have h_all_lt : \u2200 (j : \u2115), j < m \u2192 f j = (if j % 2 = 0 then (1 : \u2124) else (-1 : \u2124)) := by\n            intro j hj\n            exact ih j hj (by omega)\n          calc\n            Finset.sum (Finset.range m) f = Finset.sum (Finset.range m) (\u03bb j => (if j % 2 = 0 then (1 : \u2124) else (-1 : \u2124))) := by\n              refine Finset.sum_congr rfl (\u03bb j hj => ?_)\n              rw [h_all_lt j (Finset.mem_range.mp hj)]\n            _ = (if m % 2 = 0 then (0 : \u2124) else 1) := sum_alt_range m\n        -- compute prefix sum up to m\n        have hP_curr : Finset.sum (Finset.range (m+1)) f = (Finset.sum (Finset.range m) f) + f m := by\n          simp [Finset.sum_range_succ]\n        have hP_curr_nonneg : Finset.sum (Finset.range (m+1)) f \u2265 0 := hP_nonneg m hk\n        have hP_curr_bound : |Finset.sum (Finset.range (m+1)) f| \u2264 1 := hP_bound m hk\n        -- Now analyze parity\n        by_cases hm_even : m % 2 = 0\n        \u00b7 -- m even\n          have h_prev_val : Finset.sum (Finset.range m) f = 0 := by\n            rw [hP_prev, hm_even]; rfl\n          rw [h_prev_val] at hP_curr\n          -- hP_curr: sum ... = f m\n          have hsum_eq : Finset.sum (Finset.range (m+1)) f = f m := by\n            -- from hP_curr rewrite\n            simp [hP_curr, h_prev_val]\n          -- So f m = that sum.\n          have hsum_nonneg : f m \u2265 0 := by\n            -- from hP_curr_nonneg and hsum_eq\n            rw [hsum_eq] at hP_curr_nonneg; exact hP_curr_nonneg\n          have hsum_bound : |f m| \u2264 1 := by\n            rw [hsum_eq] at hP_curr_bound; exact hP_curr_bound\n          have hval : f m = 1 \u2228 f m = -1 := hf_nonneg m hk\n          rcases hval with (h1 | hneg1)\n          \u00b7 -- f m = 1, which matches (if m%2=0 then 1 else -1) = 1\n            simp [hm_even, h1]\n          \u00b7 -- f m = -1, but we have f m \u2265 0, contradiction\n            linarith\n        \u00b7 -- m odd\n          have hm_odd : m % 2 = 1 := by\n            have := Nat.mod_two_eq_zero_or_one m\n            rcases this with (h | h)\n            \u00b7 exact absurd h hm_even\n            \u00b7 exact h\n          have h_prev_val : Finset.sum (Finset.range m) f = 1 := by\n            rw [hP_prev, hm_odd]\n            rfl\n          rw [h_prev_val] at hP_curr\n          -- hP_curr: sum ... = 1 + f m\n          have hsum_eq : Finset.sum (Finset.range (m+1)) f = 1 + f m := by\n            -- from hP_curr\n            -- hP_curr is an equation: sum ... = (sum range m) + f m = 1 + f m\n            linarith\n          have hsum_nonneg : 1 + f m \u2265 0 := by\n            rw [\u2190 hsum_eq]; exact hP_curr_nonneg\n          have hsum_bound : |1 + f m| \u2264 1 := by\n            rw [\u2190 hsum_eq]; exact hP_curr_bound\n          have hval : f m = 1 \u2228 f m = -1 := hf_nonneg m hk\n          rcases hval with (h1 | hneg1)\n          \u00b7 -- f m = 1, then 1+1=2, which violates |2|\u22641\n            rw [h1] at hsum_bound\n            -- |2| \u2264 1 is false\n            have : |(2 : \u2124)| = 2 := by norm_num\n            -- Actually compute\n            norm_num at hsum_bound\n          \u00b7 -- f m = -1, then 1+(-1)=0, which is okay.\n            rw [hneg1] at *\n            -- we need to show f m = -1 = (if m%2=0 then 1 else -1) = -1\n            simp [hm_odd]\n    -- Finally, we need to show `S i = alt_string n i`.\n    -- Using `h_main` for `k = i.val`.\n    have h_i_val_lt_n : i.val < n := i.is_lt\n    have h_f_i : f i.val = (if i.val % 2 = 0 then (1 : \u2124) else (-1 : \u2124)) := h_main i.val h_i_val_lt_n\n    -- Also, `f i.val = (S i : \u2124)` by `hf_val`.\n    have h_f_i' : f i.val = (S i : \u2124) := hf_val i\n    have h_alt_i : (alt_string n i : \u2124) = (if i.val % 2 = 0 then (1 : \u2124) else (-1 : \u2124)) := by\n      simp [alt_string]\n      split_ifs with h\n      \u00b7 simp\n      \u00b7 simp\n    -- Then from h_f_i, h_f_i', h_alt_i, we have equality in \u2124.\n    -- But we need equality in \u2124\u02e3.\n    -- We have `S i` and `alt_string n i` as elements of \u2124\u02e3, and we have equality of their images in \u2124.\n    -- Since \u2124\u02e3 \u2192 \u2124 is injective (Units.ext), we can deduce equality.\n    calc\n      (S i : \u2124) = f i.val := by symm; exact h_f_i'\n      _ = (if i.val % 2 = 0 then (1 : \u2124) else (-1 : \u2124)) := h_f_i\n      _ = (alt_string n i : \u2124) := by symm; exact h_alt_i"
+    },
+    {
+      "id": "balanced_alt_string",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The alternating string is balanced.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- The alternating string is balanced. -/)\n  (proof := /-- By balanced_cond_of_prefixes_abs_le_one. -/)]\nlemma balanced_alt_string (n : \u2115) : balanced_cond (alt_string n) := by\n  exact balanced_cond_of_prefixes_abs_le_one (alt_string n) (alt_string_prefixes_abs_le_one n)"
+    },
+    {
+      "id": "balanced_cond",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A string S of length n (represented as Fin n \u2192 \u2124\u02e3, where X \u21a6 1, O \u21a6 -1) is balanced if every substring T has |\u0394(T)| \u2264 2, i.e., for all a \u2264 b, |\u2211 i \u2208 Finset.Icc a b, (S i : \u2124)| \u2264 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- A string S of length n (represented as Fin n \u2192 \u2124\u02e3, where X \u21a6 1, O \u21a6 -1) is balanced if every substring T has |\u0394(T)| \u2264 2, i.e., for all a \u2264 b, |\u2211 i \u2208 Finset.Icc a b, (S i : \u2124)| \u2264 2. -/)]\ndef balanced_cond {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Prop :=\n  \u2200 a b : Fin n, a \u2264 b \u2192 |(\u2211 i \u2208 Finset.Icc a b, (S i : \u2124))| \u2264 2"
+    },
+    {
+      "id": "balanced_cond_negate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Negation preserves balancedness.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- Negation preserves balancedness. -/)\n  (proof := /-- Because |\u2211 -S i| = |\u2211 S i|. -/)]\nlemma balanced_cond_negate {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : balanced_cond (negate S) \u2194 balanced_cond S := by\n  constructor\n  \u00b7 intro h a b hle\n    have h' := h a b hle\n    simpa [negate, Finset.sum_neg_distrib, abs_neg] using h'\n  \u00b7 intro h a b hle\n    have h' := h a b hle\n    simpa [negate, Finset.sum_neg_distrib, abs_neg] using h'"
+    },
+    {
+      "id": "balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If a balanced string is not bounded, it must be nonnegative or nonpositive.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- If a balanced string is not bounded, it must be nonnegative or nonpositive. -/)\n  (proof := /-- Walk argument: the prefix sum of a balanced string stays within [-2,2]; if it ever goes outside [-1,1], the string must be either always \u22650 or always \u22640. -/)]\nlemma balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) (hbal : balanced_cond S) (hnotbound : \u00ac prefixes_abs_le_one S) :\n    prefixes_nonneg S \u2228 prefixes_nonpos S := by\n  by_cases hn : n = 0\n  \u00b7 subst hn\n    left\n    intro b\n    exfalso\n    exact Fin.elim0 b\n  -- now n > 0, so (0 : Fin n) is defined\n  have hzero_lt_n : 0 < n := by omega\n  haveI : NeZero n := NeZero.of_pos hzero_lt_n\n  -- define P\n  let P (b : Fin n) : \u2124 := \u2211 i \u2208 Finset.Icc (0 : Fin n) b, (S i : \u2124)\n  have hPbal : \u2200 b, |P b| \u2264 2 := by\n    intro b\n    have h := hbal (0 : Fin n) b (Fin.zero_le b)\n    simpa [P] using h\n  have h_exists : \u2203 b : Fin n, |P b| > 1 := by\n    unfold prefixes_abs_le_one at hnotbound\n    push_neg at hnotbound\n    rcases hnotbound with \u27e8b, h\u27e9\n    refine \u27e8b, ?_\u27e9\n    -- h : 1 < |...|\n    -- we need to rewrite to |P b| > 1\n    have h_eq : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) = P b := by\n      have h_eq_set : ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)) = Finset.Icc (0 : Fin n) b := by\n        ext i\n        constructor\n        \u00b7 intro hi\n          rcases Finset.mem_filter.mp hi with \u27e8hi_univ, hi_le\u27e9\n          exact Finset.mem_Icc.mpr \u27e8Fin.zero_le i, hi_le\u27e9\n        \u00b7 intro hi\n          rcases Finset.mem_Icc.mp hi with \u27e8h0i, hi_b\u27e9\n          apply Finset.mem_filter.mpr\n          exact \u27e8Finset.mem_univ _, hi_b\u27e9\n      simp [h_eq_set, P]\n    simpa [h_eq] using h\n  rcases h_exists with \u27e8b0, hb0\u27e9\n  have hb0_bound : |P b0| \u2264 2 := hPbal b0\n  have hb0_eq_two : P b0 = 2 \u2228 P b0 = -2 := by\n    have h_abs_eq_two : |P b0| = 2 := by\n      have hgt1 : 1 < |P b0| := hb0\n      have hle2 : |P b0| \u2264 2 := hb0_bound\n      omega\n    have hpos2 : (0 : \u2124) \u2264 2 := by norm_num\n    rcases (abs_eq hpos2).mp h_abs_eq_two with (h | h)\n    \u00b7 left; exact h\n    \u00b7 right; exact h\n  rcases hb0_eq_two with (hpos | hneg)\n  \u00b7 -- case P b0 = 2, show prefixes_nonneg S\n    have hP_nonneg_all : \u2200 b : Fin n, P b \u2265 0 := by\n      intro b\n      by_contra! hlt\n      -- hlt : P b < 0\n      have horder := Fin.le_total b b0\n      rcases horder with (hle | hle)\n      \u00b7 -- b \u2264 b0\n        have hb_ne_b0 : b \u2260 b0 := by\n          intro heq\n          have h_eq_P : P b = P b0 := by rw [heq]\n          linarith\n        have hb_lt_b0 : b < b0 := lt_of_le_of_ne hle hb_ne_b0\n        -- define b_succ\n        have h_succ_lt_n : b.val + 1 < n := by\n          have hval_lt : b.val < b0.val := (Fin.lt_iff_val_lt_val.mp hb_lt_b0)\n          omega\n        let b_succ : Fin n := \u27e8b.val + 1, h_succ_lt_n\u27e9\n        have hb_succ_le_b0 : b_succ \u2264 b0 := by\n          apply Fin.le_iff_val_le_val.mpr\n          simp [b_succ]\n          have hval_lt : b.val < b0.val := (Fin.lt_iff_val_lt_val.mp hb_lt_b0)\n          omega\n        have h_bal_succ : |(\u2211 i \u2208 Finset.Icc b_succ b0, (S i : \u2124))| \u2264 2 :=\n          hbal b_succ b0 hb_succ_le_b0\n        have h_disjoint : Disjoint (Finset.Icc (0 : Fin n) b) (Finset.Icc b_succ b0) := by\n          apply Finset.disjoint_left.mpr\n          intro i hi1 hi2\n          rcases Finset.mem_Icc.mp hi1 with \u27e8h0i, hi_b\u27e9\n          rcases Finset.mem_Icc.mp hi2 with \u27e8h_succ_i, hi_b0\u27e9\n          have hi_val_le_b : i.val \u2264 b.val := (Fin.le_iff_val_le_val.mp hi_b)\n          have h_succ_val_le_i : b_succ.val \u2264 i.val := (Fin.le_iff_val_le_val.mp h_succ_i)\n          have h_succ_val_eq : b_succ.val = b.val + 1 := by\n            simp [b_succ]\n          omega\n        have h_union : Finset.Icc (0 : Fin n) b0 = (Finset.Icc (0 : Fin n) b) \u222a (Finset.Icc b_succ b0) := by\n          ext i\n          constructor\n          \u00b7 intro hi\n            rcases Finset.mem_Icc.mp hi with \u27e8h0i, hi_b0\u27e9\n            by_cases hi_b : i \u2264 b\n            \u00b7 apply Finset.mem_union_left\n              exact Finset.mem_Icc.mpr \u27e8h0i, hi_b\u27e9\n            \u00b7 apply Finset.mem_union_right\n              have : b < i := lt_of_not_ge hi_b\n              have h_succ_i : b_succ \u2264 i := by\n                apply Fin.le_iff_val_le_val.mpr\n                have hval_lt : b.val < i.val := (Fin.lt_iff_val_lt_val.mp this)\n                simp [b_succ]\n                omega\n              exact Finset.mem_Icc.mpr \u27e8h_succ_i, hi_b0\u27e9\n          \u00b7 intro hi\n            rcases Finset.mem_union.mp hi with (h | h)\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h0i, hi_b\u27e9\n              have : i \u2264 b0 := le_trans hi_b hle\n              exact Finset.mem_Icc.mpr \u27e8h0i, this\u27e9\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h_succ_i, hi_b0\u27e9\n              exact Finset.mem_Icc.mpr \u27e8Fin.zero_le i, hi_b0\u27e9\n        have h_sum_union : (\u2211 i \u2208 Finset.Icc (0 : Fin n) b0, (S i : \u2124)) =\n          (\u2211 i \u2208 Finset.Icc (0 : Fin n) b, (S i : \u2124)) + (\u2211 i \u2208 Finset.Icc b_succ b0, (S i : \u2124)) := by\n          calc\n            (\u2211 i \u2208 Finset.Icc (0 : Fin n) b0, (S i : \u2124)) = (\u2211 i \u2208 ((Finset.Icc (0 : Fin n) b) \u222a (Finset.Icc b_succ b0)), (S i : \u2124)) := by rw [h_union]\n            _ = (\u2211 i \u2208 (Finset.Icc (0 : Fin n) b), (S i : \u2124)) + (\u2211 i \u2208 (Finset.Icc b_succ b0), (S i : \u2124)) := by\n              apply Finset.sum_union h_disjoint\n        have h_sum_diff : (\u2211 i \u2208 Finset.Icc b_succ b0, (S i : \u2124)) = P b0 - P b := by\n          unfold P\n          linarith\n        have h_diff_gt_two : P b0 - P b > 2 := by\n          have : P b < 0 := hlt\n          linarith\n        have h_abs_diff_gt_two : |P b0 - P b| > 2 := by\n          have hpos_diff : 0 < P b0 - P b := by linarith\n          rw [abs_of_pos hpos_diff]\n          exact h_diff_gt_two\n        have h_abs_diff_le_two : |P b0 - P b| \u2264 2 := by\n          simpa [h_sum_diff] using h_bal_succ\n        linarith\n      \u00b7 -- b0 \u2264 b\n        have hb0_ne_b : b0 \u2260 b := by\n          intro heq\n          have h_eq_P : P b0 = P b := by rw [heq]\n          linarith\n        have hb0_lt_b : b0 < b := lt_of_le_of_ne hle hb0_ne_b\n        -- define b0_succ\n        have h_succ_lt_n : b0.val + 1 < n := by\n          have hval_lt : b0.val < b.val := (Fin.lt_iff_val_lt_val.mp hb0_lt_b)\n          omega\n        let b0_succ : Fin n := \u27e8b0.val + 1, h_succ_lt_n\u27e9\n        have hb0_succ_le_b : b0_succ \u2264 b := by\n          apply Fin.le_iff_val_le_val.mpr\n          simp [b0_succ]\n          have hval_lt : b0.val < b.val := (Fin.lt_iff_val_lt_val.mp hb0_lt_b)\n          omega\n        have h_bal_succ : |(\u2211 i \u2208 Finset.Icc b0_succ b, (S i : \u2124))| \u2264 2 :=\n          hbal b0_succ b hb0_succ_le_b\n        have h_disjoint : Disjoint (Finset.Icc (0 : Fin n) b0) (Finset.Icc b0_succ b) := by\n          apply Finset.disjoint_left.mpr\n          intro i hi1 hi2\n          rcases Finset.mem_Icc.mp hi1 with \u27e8h0i, hi_b0\u27e9\n          rcases Finset.mem_Icc.mp hi2 with \u27e8h_succ_i, hi_b\u27e9\n          have hi_val_le_b0 : i.val \u2264 b0.val := (Fin.le_iff_val_le_val.mp hi_b0)\n          have h_succ_val_le_i : b0_succ.val \u2264 i.val := (Fin.le_iff_val_le_val.mp h_succ_i)\n          have h_succ_val_eq : b0_succ.val = b0.val + 1 := by\n            simp [b0_succ]\n          omega\n        have h_union : Finset.Icc (0 : Fin n) b = (Finset.Icc (0 : Fin n) b0) \u222a (Finset.Icc b0_succ b) := by\n          ext i\n          constructor\n          \u00b7 intro hi\n            rcases Finset.mem_Icc.mp hi with \u27e8h0i, hi_b\u27e9\n            by_cases hi_b0 : i \u2264 b0\n            \u00b7 apply Finset.mem_union_left\n              exact Finset.mem_Icc.mpr \u27e8h0i, hi_b0\u27e9\n            \u00b7 apply Finset.mem_union_right\n              have : b0 < i := lt_of_not_ge hi_b0\n              have h_succ_i : b0_succ \u2264 i := by\n                apply Fin.le_iff_val_le_val.mpr\n                have hval_lt : b0.val < i.val := (Fin.lt_iff_val_lt_val.mp this)\n                simp [b0_succ]\n                omega\n              exact Finset.mem_Icc.mpr \u27e8h_succ_i, hi_b\u27e9\n          \u00b7 intro hi\n            rcases Finset.mem_union.mp hi with (h | h)\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h0i, hi_b0\u27e9\n              have : i \u2264 b := le_trans hi_b0 hle\n              exact Finset.mem_Icc.mpr \u27e8h0i, this\u27e9\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h_succ_i, hi_b\u27e9\n              exact Finset.mem_Icc.mpr \u27e8Fin.zero_le i, hi_b\u27e9\n        have h_sum_union : (\u2211 i \u2208 Finset.Icc (0 : Fin n) b, (S i : \u2124)) =\n          (\u2211 i \u2208 Finset.Icc (0 : Fin n) b0, (S i : \u2124)) + (\u2211 i \u2208 Finset.Icc b0_succ b, (S i : \u2124)) := by\n          calc\n            (\u2211 i \u2208 Finset.Icc (0 : Fin n) b, (S i : \u2124)) = (\u2211 i \u2208 ((Finset.Icc (0 : Fin n) b0) \u222a (Finset.Icc b0_succ b)), (S i : \u2124)) := by rw [h_union]\n            _ = (\u2211 i \u2208 (Finset.Icc (0 : Fin n) b0), (S i : \u2124)) + (\u2211 i \u2208 (Finset.Icc b0_succ b), (S i : \u2124)) := by\n              apply Finset.sum_union h_disjoint\n        have h_sum_diff : (\u2211 i \u2208 Finset.Icc b0_succ b, (S i : \u2124)) = P b - P b0 := by\n          unfold P\n          linarith\n        have h_diff_lt_neg_two : P b - P b0 < -2 := by\n          have : P b < 0 := hlt\n          linarith\n        have h_abs_diff_gt_two : |P b - P b0| > 2 := by\n          have hneg_diff : P b - P b0 < 0 := by linarith\n          rw [abs_of_neg hneg_diff]\n          -- we need to show -(P b - P b0) > 2, i.e., P b0 - P b > 2\n          -- but P b0 = 2, P b < 0, so 2 - P b > 2, indeed.\n          linarith\n        have h_abs_diff_le_two : |P b - P b0| \u2264 2 := by\n          simpa [h_sum_diff] using h_bal_succ\n        linarith\n    -- then return prefixes_nonneg\n    left\n    unfold prefixes_nonneg\n    intro b\n    have hP_val : P b \u2265 0 := hP_nonneg_all b\n    have h_eq : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) = P b := by\n      have h_eq_set : ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)) = Finset.Icc (0 : Fin n) b := by\n        ext i\n        constructor\n        \u00b7 intro hi\n          rcases Finset.mem_filter.mp hi with \u27e8hi_univ, hi_le\u27e9\n          exact Finset.mem_Icc.mpr \u27e8Fin.zero_le i, hi_le\u27e9\n        \u00b7 intro hi\n          rcases Finset.mem_Icc.mp hi with \u27e8h0i, hi_b\u27e9\n          apply Finset.mem_filter.mpr\n          exact \u27e8Finset.mem_univ _, hi_b\u27e9\n      simp [h_eq_set, P]\n    simpa [h_eq] using hP_val\n  \u00b7 -- case P b0 = -2, show prefixes_nonpos S\n    have hP_nonpos_all : \u2200 b : Fin n, P b \u2264 0 := by\n      intro b\n      by_contra! hgt\n      -- hgt : P b > 0\n      have horder := Fin.le_total b b0\n      rcases horder with (hle | hle)\n      \u00b7 -- b \u2264 b0\n        have hb_ne_b0 : b \u2260 b0 := by\n          intro heq\n          have h_eq_P : P b = P b0 := by rw [heq]\n          linarith\n        have hb_lt_b0 : b < b0 := lt_of_le_of_ne hle hb_ne_b0\n        -- define b_succ\n        have h_succ_lt_n : b.val + 1 < n := by\n          have hval_lt : b.val < b0.val := (Fin.lt_iff_val_lt_val.mp hb_lt_b0)\n          omega\n        let b_succ : Fin n := \u27e8b.val + 1, h_succ_lt_n\u27e9\n        have hb_succ_le_b0 : b_succ \u2264 b0 := by\n          apply Fin.le_iff_val_le_val.mpr\n          simp [b_succ]\n          have hval_lt : b.val < b0.val := (Fin.lt_iff_val_lt_val.mp hb_lt_b0)\n          omega\n        have h_bal_succ : |(\u2211 i \u2208 Finset.Icc b_succ b0, (S i : \u2124))| \u2264 2 :=\n          hbal b_succ b0 hb_succ_le_b0\n        have h_disjoint : Disjoint (Finset.Icc (0 : Fin n) b) (Finset.Icc b_succ b0) := by\n          apply Finset.disjoint_left.mpr\n          intro i hi1 hi2\n          rcases Finset.mem_Icc.mp hi1 with \u27e8h0i, hi_b\u27e9\n          rcases Finset.mem_Icc.mp hi2 with \u27e8h_succ_i, hi_b0\u27e9\n          have hi_val_le_b : i.val \u2264 b.val := (Fin.le_iff_val_le_val.mp hi_b)\n          have h_succ_val_le_i : b_succ.val \u2264 i.val := (Fin.le_iff_val_le_val.mp h_succ_i)\n          have h_succ_val_eq : b_succ.val = b.val + 1 := by\n            simp [b_succ]\n          omega\n        have h_union : Finset.Icc (0 : Fin n) b0 = (Finset.Icc (0 : Fin n) b) \u222a (Finset.Icc b_succ b0) := by\n          ext i\n          constructor\n          \u00b7 intro hi\n            rcases Finset.mem_Icc.mp hi with \u27e8h0i, hi_b0\u27e9\n            by_cases hi_b : i \u2264 b\n            \u00b7 apply Finset.mem_union_left\n              exact Finset.mem_Icc.mpr \u27e8h0i, hi_b\u27e9\n            \u00b7 apply Finset.mem_union_right\n              have : b < i := lt_of_not_ge hi_b\n              have h_succ_i : b_succ \u2264 i := by\n                apply Fin.le_iff_val_le_val.mpr\n                have hval_lt : b.val < i.val := (Fin.lt_iff_val_lt_val.mp this)\n                simp [b_succ]\n                omega\n              exact Finset.mem_Icc.mpr \u27e8h_succ_i, hi_b0\u27e9\n          \u00b7 intro hi\n            rcases Finset.mem_union.mp hi with (h | h)\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h0i, hi_b\u27e9\n              have : i \u2264 b0 := le_trans hi_b hle\n              exact Finset.mem_Icc.mpr \u27e8h0i, this\u27e9\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h_succ_i, hi_b0\u27e9\n              exact Finset.mem_Icc.mpr \u27e8Fin.zero_le i, hi_b0\u27e9\n        have h_sum_union : (\u2211 i \u2208 Finset.Icc (0 : Fin n) b0, (S i : \u2124)) =\n          (\u2211 i \u2208 Finset.Icc (0 : Fin n) b, (S i : \u2124)) + (\u2211 i \u2208 Finset.Icc b_succ b0, (S i : \u2124)) := by\n          calc\n            (\u2211 i \u2208 Finset.Icc (0 : Fin n) b0, (S i : \u2124)) = (\u2211 i \u2208 ((Finset.Icc (0 : Fin n) b) \u222a (Finset.Icc b_succ b0)), (S i : \u2124)) := by rw [h_union]\n            _ = (\u2211 i \u2208 (Finset.Icc (0 : Fin n) b), (S i : \u2124)) + (\u2211 i \u2208 (Finset.Icc b_succ b0), (S i : \u2124)) := by\n              apply Finset.sum_union h_disjoint\n        have h_sum_diff : (\u2211 i \u2208 Finset.Icc b_succ b0, (S i : \u2124)) = P b0 - P b := by\n          unfold P\n          linarith\n        have h_diff_lt_neg_two : P b0 - P b < -2 := by\n          -- P b0 = -2, P b > 0, so -2 - P b < -2\n          linarith\n        have h_abs_diff_gt_two : |P b0 - P b| > 2 := by\n          have hneg_diff : P b0 - P b < 0 := by linarith\n          rw [abs_of_neg hneg_diff]\n          -- need to show -(P b0 - P b) > 2, i.e., P b - P b0 > 2\n          -- Since P b > 0, P b0 = -2, indeed P b - P b0 > 2\n          linarith\n        have h_abs_diff_le_two : |P b0 - P b| \u2264 2 := by\n          simpa [h_sum_diff] using h_bal_succ\n        linarith\n      \u00b7 -- b0 \u2264 b\n        have hb0_ne_b : b0 \u2260 b := by\n          intro heq\n          have h_eq_P : P b0 = P b := by rw [heq]\n          linarith\n        have hb0_lt_b : b0 < b := lt_of_le_of_ne hle hb0_ne_b\n        -- define b0_succ\n        have h_succ_lt_n : b0.val + 1 < n := by\n          have hval_lt : b0.val < b.val := (Fin.lt_iff_val_lt_val.mp hb0_lt_b)\n          omega\n        let b0_succ : Fin n := \u27e8b0.val + 1, h_succ_lt_n\u27e9\n        have hb0_succ_le_b : b0_succ \u2264 b := by\n          apply Fin.le_iff_val_le_val.mpr\n          simp [b0_succ]\n          have hval_lt : b0.val < b.val := (Fin.lt_iff_val_lt_val.mp hb0_lt_b)\n          omega\n        have h_bal_succ : |(\u2211 i \u2208 Finset.Icc b0_succ b, (S i : \u2124))| \u2264 2 :=\n          hbal b0_succ b hb0_succ_le_b\n        have h_disjoint : Disjoint (Finset.Icc (0 : Fin n) b0) (Finset.Icc b0_succ b) := by\n          apply Finset.disjoint_left.mpr\n          intro i hi1 hi2\n          rcases Finset.mem_Icc.mp hi1 with \u27e8h0i, hi_b0\u27e9\n          rcases Finset.mem_Icc.mp hi2 with \u27e8h_succ_i, hi_b\u27e9\n          have hi_val_le_b0 : i.val \u2264 b0.val := (Fin.le_iff_val_le_val.mp hi_b0)\n          have h_succ_val_le_i : b0_succ.val \u2264 i.val := (Fin.le_iff_val_le_val.mp h_succ_i)\n          have h_succ_val_eq : b0_succ.val = b0.val + 1 := by\n            simp [b0_succ]\n          omega\n        have h_union : Finset.Icc (0 : Fin n) b = (Finset.Icc (0 : Fin n) b0) \u222a (Finset.Icc b0_succ b) := by\n          ext i\n          constructor\n          \u00b7 intro hi\n            rcases Finset.mem_Icc.mp hi with \u27e8h0i, hi_b\u27e9\n            by_cases hi_b0 : i \u2264 b0\n            \u00b7 apply Finset.mem_union_left\n              exact Finset.mem_Icc.mpr \u27e8h0i, hi_b0\u27e9\n            \u00b7 apply Finset.mem_union_right\n              have : b0 < i := lt_of_not_ge hi_b0\n              have h_succ_i : b0_succ \u2264 i := by\n                apply Fin.le_iff_val_le_val.mpr\n                have hval_lt : b0.val < i.val := (Fin.lt_iff_val_lt_val.mp this)\n                simp [b0_succ]\n                omega\n              exact Finset.mem_Icc.mpr \u27e8h_succ_i, hi_b\u27e9\n          \u00b7 intro hi\n            rcases Finset.mem_union.mp hi with (h | h)\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h0i, hi_b0\u27e9\n              have : i \u2264 b := le_trans hi_b0 hle\n              exact Finset.mem_Icc.mpr \u27e8h0i, this\u27e9\n            \u00b7 rcases Finset.mem_Icc.mp h with \u27e8h_succ_i, hi_b\u27e9\n              exact Finset.mem_Icc.mpr \u27e8Fin.zero_le i, hi_b\u27e9\n        have h_sum_union : (\u2211 i \u2208 Finset.Icc (0 : Fin n) b, (S i : \u2124)) =\n          (\u2211 i \u2208 Finset.Icc (0 : Fin n) b0, (S i : \u2124)) + (\u2211 i \u2208 Finset.Icc b0_succ b, (S i : \u2124)) := by\n          calc\n            (\u2211 i \u2208 Finset.Icc (0 : Fin n) b, (S i : \u2124)) = (\u2211 i \u2208 ((Finset.Icc (0 : Fin n) b0) \u222a (Finset.Icc b0_succ b)), (S i : \u2124)) := by rw [h_union]\n            _ = (\u2211 i \u2208 (Finset.Icc (0 : Fin n) b0), (S i : \u2124)) + (\u2211 i \u2208 (Finset.Icc b0_succ b), (S i : \u2124)) := by\n              apply Finset.sum_union h_disjoint\n        have h_sum_diff : (\u2211 i \u2208 Finset.Icc b0_succ b, (S i : \u2124)) = P b - P b0 := by\n          unfold P\n          linarith\n        have h_diff_gt_two : P b - P b0 > 2 := by\n          -- P b > 0, P b0 = -2, so P b - P b0 > 2\n          linarith\n        have h_abs_diff_gt_two : |P b - P b0| > 2 := by\n          have hpos_diff : 0 < P b - P b0 := by linarith\n          rw [abs_of_pos hpos_diff]\n          exact h_diff_gt_two\n        have h_abs_diff_le_two : |P b - P b0| \u2264 2 := by\n          simpa [h_sum_diff] using h_bal_succ\n        linarith\n    -- then return prefixes_nonpos\n    right\n    unfold prefixes_nonpos\n    intro b\n    have hP_val : P b \u2264 0 := hP_nonpos_all b\n    have h_eq : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) = P b := by\n      have h_eq_set : ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)) = Finset.Icc (0 : Fin n) b := by\n        ext i\n        constructor\n        \u00b7 intro hi\n          rcases Finset.mem_filter.mp hi with \u27e8hi_univ, hi_le\u27e9\n          exact Finset.mem_Icc.mpr \u27e8Fin.zero_le i, hi_le\u27e9\n        \u00b7 intro hi\n          rcases Finset.mem_Icc.mp hi with \u27e8h0i, hi_b\u27e9\n          apply Finset.mem_filter.mpr\n          exact \u27e8Finset.mem_univ _, hi_b\u27e9\n      simp [h_eq_set, P]\n    simpa [h_eq] using hP_val"
+    },
+    {
+      "id": "balanced_cond_of_prefixes_abs_le_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If S has prefixes bounded by 1, then for any a \u2264 b, the sum over Icc a b has absolute value \u2264 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- If S has prefixes bounded by 1, then for any a \u2264 b, the sum over Icc a b has absolute value \u2264 2. -/)\n  (proof := /-- Use the relation between prefix sums and interval sums. -/)]\nlemma balanced_cond_of_prefixes_abs_le_one {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) (h : prefixes_abs_le_one S) : balanced_cond S := by\n  intro a b hle\n  let P (x : Fin n) : \u2124 := \u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 x)), (S i : \u2124)\n  have hP_bound : \u2200 x : Fin n, |P x| \u2264 1 := h\n  by_cases ha0 : a.val = 0\n  \u00b7 -- a is the minimum element\n    have ha_min : \u2200 x : Fin n, a \u2264 x := by\n      intro x\n      rw [Fin.le_iff_val_le_val]\n      have ha_val : (a : \u2115) = 0 := ha0\n      have hx_val : 0 \u2264 (x : \u2115) := Nat.zero_le _\n      omega\n    have hIcc_eq : Finset.Icc a b = ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)) := by\n      ext i\n      constructor\n      \u00b7 intro hi\n        rcases Finset.mem_Icc.1 hi with \u27e8h1, h2\u27e9\n        exact Finset.mem_filter.mpr \u27e8Finset.mem_univ _, h2\u27e9\n      \u00b7 intro hi\n        rcases Finset.mem_filter.1 hi with \u27e8hi_univ, hi_le\u27e9\n        exact Finset.mem_Icc.mpr \u27e8ha_min i, hi_le\u27e9\n    have hsum_eq : \u2211 i \u2208 Finset.Icc a b, (S i : \u2124) = P b := by\n      calc\n        \u2211 i \u2208 Finset.Icc a b, (S i : \u2124) = \u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124) := by\n          rw [hIcc_eq]\n        _ = P b := rfl\n    rw [hsum_eq]\n    have htemp : |P b| \u2264 2 := le_trans (hP_bound b) (by norm_num)\n    exact htemp\n  \u00b7 -- a.val > 0\n    have ha_val_pos : a.val > 0 := Nat.pos_of_ne_zero ha0\n    let a' : Fin n := \u27e8a.val - 1, by\n      have hlt : a.val < n := a.is_lt\n      omega\u27e9\n    have ha'_lt_a : a' < a := by\n      rw [Fin.lt_iff_val_lt_val]\n      have ha_val_ne_zero : a.val \u2260 0 := ha0\n      have h_pred_lt : (a.val).pred < a.val := Nat.pred_lt ha_val_ne_zero\n      have ha'_val_eq : (a' : \u2115) = (a.val).pred := by\n        calc\n          (a' : \u2115) = a.val - 1 := rfl\n          _ = (a.val).pred := by rw [\u2190 Nat.pred_eq_sub_one]\n      rw [ha'_val_eq]\n      simpa\n    have hIcc_eq_sdiff : Finset.Icc a b = ((Finset.univ.filter (\u03bb i => i \u2264 b)) \\ (Finset.univ.filter (\u03bb i => i \u2264 a'))) := by\n      ext i\n      constructor\n      \u00b7 intro hi\n        rcases Finset.mem_Icc.1 hi with \u27e8h_i_a, h_i_b\u27e9\n        apply Finset.mem_sdiff.mpr\n        constructor\n        \u00b7 exact Finset.mem_filter.mpr \u27e8Finset.mem_univ _, h_i_b\u27e9\n        \u00b7 intro hiR\n          rcases Finset.mem_filter.1 hiR with \u27e8_, hiR'\u27e9\n          -- hiR' : i \u2264 a'\n          have h_i_lt_a : i < a := lt_of_le_of_lt hiR' ha'_lt_a\n          -- h_i_a says a \u2264 i, contradiction\n          have : \u00ac a \u2264 i := not_le.mpr h_i_lt_a\n          exact this h_i_a\n      \u00b7 intro hi\n        rcases Finset.mem_sdiff.1 hi with \u27e8hiL, hiR\u27e9\n        rcases Finset.mem_filter.1 hiL with \u27e8_, hiL'\u27e9\n        -- hiL' : i \u2264 b\n        by_cases h_i_lt_a : i < a\n        \u00b7 -- then i \u2264 a', which contradicts hiR\n          have hi_le_a' : i \u2264 a' := by\n            rw [Fin.le_iff_val_le_val]\n            rw [Fin.lt_iff_val_lt_val] at h_i_lt_a\n            have ha'_val : (a' : \u2115) = a.val - 1 := rfl\n            omega\n          exfalso\n          apply hiR\n          exact Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hi_le_a'\u27e9\n        \u00b7 -- then a \u2264 i\n          have h_i_a : a \u2264 i := le_of_not_gt h_i_lt_a\n          exact Finset.mem_Icc.mpr \u27e8h_i_a, hiL'\u27e9\n    have hsub : ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 a')) \u2286 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)) := by\n      intro i hi\n      rcases Finset.mem_filter.1 hi with \u27e8hi_univ, hi_le_a'\u27e9\n      apply Finset.mem_filter.mpr\n      refine \u27e8Finset.mem_univ _, ?_\u27e9\n      have hi_le_a : i \u2264 a := le_trans hi_le_a' (le_of_lt ha'_lt_a)\n      have hi_le_b : i \u2264 b := le_trans hi_le_a hle\n      exact hi_le_b\n    have htemp_sum_sdiff := Finset.sum_sdiff (s\u2081 := (Finset.univ.filter (\u03bb i => i \u2264 a'))) (s\u2082 := (Finset.univ.filter (\u03bb i => i \u2264 b))) (f := \u03bb i => (S i : \u2124)) hsub\n    -- htemp_sum_sdiff: (\u2211 i \u2208 L \\ R, ...) + (\u2211 i \u2208 R, ...) = (\u2211 i \u2208 L, ...)\n    have hsum_sdiff_eq : \u2211 i \u2208 ((Finset.univ.filter (\u03bb i => i \u2264 b)) \\ (Finset.univ.filter (\u03bb i => i \u2264 a'))), (S i : \u2124) = P b - P a' := by\n      -- from htemp_sum_sdiff, we can solve for the left sum\n      linarith\n    have hsum_eq : \u2211 i \u2208 Finset.Icc a b, (S i : \u2124) = P b - P a' := by\n      rw [hIcc_eq_sdiff, hsum_sdiff_eq]\n    rw [hsum_eq]\n    have hPb := hP_bound b\n    have hPa' := hP_bound a'\n    have h_ineq : |P b - P a'| \u2264 |P b| + |P a'| := abs_sub (P b) (P a')\n    linarith"
+    },
+    {
+      "id": "card_V_eq_card_X",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Bijection between V and X via negation.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Bijection between V and X via negation. -/)\n  (proof := /-- Negating a string swaps V and X. -/)]\nlemma card_V_eq_card_X (n : \u2115) : by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonpos S \u2227 \u00ac prefixes_abs_le_one S)).card =\n    ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 \u00ac prefixes_abs_le_one S)).card := by\n  classical\n  let s : Finset (Fin n \u2192 \u2124\u02e3) := (Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonpos S \u2227 \u00ac prefixes_abs_le_one S)\n  let t : Finset (Fin n \u2192 \u2124\u02e3) := (Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 \u00ac prefixes_abs_le_one S)\n  have h_negate_negate (S : Fin n \u2192 \u2124\u02e3) : negate (negate S) = S := by\n    ext i; simp [negate]\n  have h_s_to_t (x : s) : (negate x.val) \u2208 t := by\n    rcases Finset.mem_filter.mp x.property with \u27e8hx_univ, \u27e8hx_bal, hx_npos, hx_notbdd\u27e9\u27e9\n    refine Finset.mem_filter.mpr \u27e8Finset.mem_univ _, ?_\u27e9\n    have h_bal : balanced_cond (negate x.val) := by\n      rw [balanced_cond_negate]\n      exact hx_bal\n    have h_nonneg : prefixes_nonneg (negate x.val) := by\n      rw [prefixes_nonneg_negate_iff_prefixes_nonpos]\n      exact hx_npos\n    have h_notbdd' : \u00ac prefixes_abs_le_one (negate x.val) := by\n      rw [prefixes_abs_le_one_negate]\n      exact hx_notbdd\n    exact And.intro h_bal (And.intro h_nonneg h_notbdd')\n  have h_t_to_s (y : t) : (negate y.val) \u2208 s := by\n    rcases Finset.mem_filter.mp y.property with \u27e8hy_univ, \u27e8hy_bal, hy_nonneg, hy_notbdd\u27e9\u27e9\n    refine Finset.mem_filter.mpr \u27e8Finset.mem_univ _, ?_\u27e9\n    have h_bal' : balanced_cond (negate y.val) := by\n      rw [balanced_cond_negate]\n      exact hy_bal\n    have h_npos' : prefixes_nonpos (negate y.val) := by\n      -- using lemma prefixes_nonneg_negate_iff_prefixes_nonpos with S := negate y.val\n      have htemp := (prefixes_nonneg_negate_iff_prefixes_nonpos (negate y.val)).mp ?_\n      \u00b7 exact htemp\n      \u00b7 -- need to show prefixes_nonneg (negate (negate y.val))\n        simpa [h_negate_negate] using hy_nonneg\n    have h_notbdd' : \u00ac prefixes_abs_le_one (negate y.val) := by\n      rw [prefixes_abs_le_one_negate]\n      exact hy_notbdd\n    exact And.intro h_bal' (And.intro h_npos' h_notbdd')\n  have h_equiv : s \u2243 t := by\n    refine {\n      toFun := \u03bb x => \u27e8negate x.val, h_s_to_t x\u27e9\n      invFun := \u03bb y => \u27e8negate y.val, h_t_to_s y\u27e9\n      left_inv := \u03bb x => by\n        ext; dsimp; simp [h_negate_negate x.val]\n      right_inv := \u03bb y => by\n        ext; dsimp; simp [h_negate_negate y.val]\n    }\n  exact Finset.card_eq_of_equiv h_equiv"
+    },
+    {
+      "id": "card_W_eq_card_Z",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Bijection between W and Z via negation.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Bijection between W and Z via negation. -/)\n  (proof := /-- Negating a string swaps W and Z. -/)]\nlemma card_W_eq_card_Z (n : \u2115) : by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonpos S \u2227 prefixes_abs_le_one S)).card =\n    ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 prefixes_abs_le_one S)).card := by\n  classical\n  let s := ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonpos S \u2227 prefixes_abs_le_one S))\n  let t := ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 prefixes_abs_le_one S))\n  let negate_equiv : (Fin n \u2192 \u2124\u02e3) \u2243 (Fin n \u2192 \u2124\u02e3) :=\n    { toFun := negate\n      invFun := negate\n      left_inv := by\n        intro S\n        ext i\n        simp [negate]\n      right_inv := by\n        intro S\n        ext i\n        simp [negate] }\n  have hst : \u2200 i : Fin n \u2192 \u2124\u02e3, i \u2208 s \u2194 (negate_equiv i) \u2208 t := by\n    intro S\n    dsimp [negate_equiv, s, t]\n    simp\n    constructor\n    \u00b7 rintro \u27e8hbal, hnonpos, habs\u27e9\n      refine \u27e8?_, ?_, ?_\u27e9\n      \u00b7 rw [balanced_cond_negate]; exact hbal\n      \u00b7 rw [prefixes_nonneg_negate_iff_prefixes_nonpos]; exact hnonpos\n      \u00b7 rw [prefixes_abs_le_one_negate]; exact habs\n    \u00b7 rintro \u27e8hbal, hnonneg, habs\u27e9\n      refine \u27e8?_, ?_, ?_\u27e9\n      \u00b7 rw [\u2190 balanced_cond_negate]; exact hbal\n      \u00b7 rw [\u2190 prefixes_nonneg_negate_iff_prefixes_nonpos]; exact hnonneg\n      \u00b7 rw [\u2190 prefixes_abs_le_one_negate]; exact habs\n  exact Finset.card_equiv negate_equiv hst"
+    },
+    {
+      "id": "card_main_eq_a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The cardinality of the set of balanced strings (using the given balanced predicate) equals a n.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- The cardinality of the set of balanced strings (using the given balanced predicate) equals a n. -/)\n  (proof := /-- By `hbalanced` and `h\u0394`, `balanced S` is equivalent to `balanced_cond S`. Therefore the set {S | balanced S} equals {S | balanced_cond S}. Hence their cardinalities are equal. -/)]\nlemma card_main_eq_a (n : \u2115) (\u0394 : (Fin n \u2192 \u2124\u02e3) \u2192 Fin n \u2192 Fin n \u2192 \u2124) (balanced : (Fin n \u2192 \u2124\u02e3) \u2192 Prop)\n  (h\u0394 : \u2200 S, \u2200 a b, a \u2264 b \u2192 \u0394 S a b = \u2211 i \u2208 Finset.Icc a b, (S i : \u2124))\n  (hbalanced : \u2200 S, balanced S \u2194 \u2200 a b, a \u2264 b \u2192 |\u0394 S a b| \u2264 2) :\n  {S : Fin n \u2192 \u2124\u02e3 | balanced S}.ncard = a n := by\n  have h_iff : \u2200 S, balanced S \u2194 balanced_cond S := by\n    intro S\n    constructor\n    \u00b7 intro h\n      intro a b hle\n      have h' := (hbalanced S).mp h a b hle\n      rw [h\u0394 S a b hle] at h'\n      exact h'\n    \u00b7 intro h\n      apply (hbalanced S).mpr\n      intro a b hle\n      rw [h\u0394 S a b hle]\n      exact h a b hle\n  have hset : {S | balanced S} = {S | balanced_cond S} := by\n    ext S\n    constructor\n    \u00b7 exact (h_iff S).mp\n    \u00b7 exact (h_iff S).mpr\n  rw [hset]\n  unfold a\n  have hfinite : ({S : Fin n \u2192 \u2124\u02e3 | balanced_cond S} : Set (Fin n \u2192 \u2124\u02e3)).Finite := Set.toFinite _\n  haveI : Fintype ({S : Fin n \u2192 \u2124\u02e3 | balanced_cond S} : Set (Fin n \u2192 \u2124\u02e3)) := hfinite.fintype\n  rw [Set.ncard_eq_toFinset_card (s := {S | balanced_cond S}) (hs := hfinite)]\n  rw [Set.Finite.toFinset_eq_toFinset hfinite]\n  classical\n    rw [Set.toFinset_setOf]"
+    },
+    {
+      "id": "emb",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Embedding of Fin n into Fin (n+2) by preserving the value.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- Embedding of Fin n into Fin (n+2) by preserving the value. -/)]\ndef emb {n : \u2115} (i : Fin n) : Fin (n+2) := \u27e8i.val, by\n  have hi := i.2\n  omega\u27e9"
+    },
+    {
+      "id": "emb_embedding",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The embedding as an Embedding type for use with Finset.map.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- The embedding as an Embedding type for use with Finset.map. -/)]\ndef emb_embedding {n : \u2115} : Fin n \u21aa Fin (n+2) :=\n  \u27e8emb, \u03bb x y h => by\n    apply Fin.ext\n    simpa [emb] using congr_arg Fin.val h\u27e9"
+    },
+    {
+      "id": "extend_truncate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Every balanced nonnegative string of length n+2 is either ext\u2081 or ext\u2082 of its truncation.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Every balanced nonnegative string of length n+2 is either ext\u2081 or ext\u2082 of its truncation. -/)\n  (proof := /-- By analyzing the last two characters using the walk argument. -/)]\nlemma extend_truncate {n : \u2115} (S : Fin (n+2) \u2192 \u2124\u02e3) (hbal : balanced_cond S) (hnonneg : prefixes_nonneg S) :\n    S = ext\u2081 (truncate S) \u2228 S = ext\u2082 (truncate S) := by\n  sorry_using [balanced_cond, prefixes_nonneg, truncate, ext\u2081, ext\u2082, suffix_pair\u2081, suffix_pair\u2082, last2]"
+    },
+    {
+      "id": "ext\u2081",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Extend a string of length n to a string of length n+2 by appending the suffix given by suffix_pair\u2081.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- Extend a string of length n to a string of length n+2 by appending the suffix given by suffix_pair\u2081. -/)]\ndef ext\u2081 {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) : Fin (n+2) \u2192 \u2124\u02e3 :=\n  \u03bb i =>\n    if hi : i.val < n then\n      T \u27e8i.val, hi\u27e9\n    else\n      let p := suffix_pair\u2081 (total_sum T)\n      if hi' : i.val = n then p.1 else p.2"
+    },
+    {
+      "id": "ext\u2081_balanced",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "ext\u2081 preserves balancedness.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- ext\u2081 preserves balancedness. -/)\n  (proof := /-- By case analysis on total_sum and the walk argument. -/)]\nlemma ext\u2081_balanced {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) (hbal : balanced_cond T) (hnonneg : prefixes_nonneg T) : balanced_cond (ext\u2081 T) := by\n  sorry_using [balanced_cond, suffix_pair\u2081, ext\u2081, last2]"
+    },
+    {
+      "id": "ext\u2081_prefixes_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "ext\u2081 preserves nonnegative prefixes.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- ext\u2081 preserves nonnegative prefixes. -/)\n  (proof := /-- By case analysis on total_sum and the walk argument. -/)]\nlemma ext\u2081_prefixes_nonneg {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) (hbal : balanced_cond T) (hnonneg : prefixes_nonneg T) : prefixes_nonneg (ext\u2081 T) := by\n  sorry_using [prefixes_nonneg, suffix_pair\u2081, ext\u2081, last2]"
+    },
+    {
+      "id": "ext\u2082",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Extend a string of length n to a string of length n+2 by appending the suffix given by suffix_pair\u2082.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- Extend a string of length n to a string of length n+2 by appending the suffix given by suffix_pair\u2082. -/)]\ndef ext\u2082 {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) : Fin (n+2) \u2192 \u2124\u02e3 :=\n  \u03bb i =>\n    if hi : i.val < n then\n      T \u27e8i.val, hi\u27e9\n    else\n      let p := suffix_pair\u2082 (total_sum T)\n      if hi' : i.val = n then p.1 else p.2"
+    },
+    {
+      "id": "ext\u2082_balanced",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "ext\u2082 preserves balancedness.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- ext\u2082 preserves balancedness. -/)\n  (proof := /-- By case analysis on total_sum and the walk argument. -/)]\nlemma ext\u2082_balanced {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) (hbal : balanced_cond T) (hnonneg : prefixes_nonneg T) : balanced_cond (ext\u2082 T) := by\n  sorry_using [balanced_cond, suffix_pair\u2082, ext\u2082, last2]"
+    },
+    {
+      "id": "ext\u2082_prefixes_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "ext\u2082 preserves nonnegative prefixes.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- ext\u2082 preserves nonnegative prefixes. -/)\n  (proof := /-- By case analysis on total_sum and the walk argument. -/)]\nlemma ext\u2082_prefixes_nonneg {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) (hbal : balanced_cond T) (hnonneg : prefixes_nonneg T) : prefixes_nonneg (ext\u2082 T) := by\n  sorry_using [prefixes_nonneg, suffix_pair\u2082, ext\u2082, last2]"
+    },
+    {
+      "id": "filter_emb_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The image of the filter set under emb equals the filter set in the larger type.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- The image of the filter set under emb equals the filter set in the larger type. -/)\n  (proof := /-- By comparing elements and using the definition of emb. -/)]\nlemma filter_emb_eq {n : \u2115} (b : Fin n) :\n    (Finset.map (emb_embedding : Fin n \u21aa Fin (n+2)) ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b))) =\n    ((Finset.univ : Finset (Fin (n+2))).filter (\u03bb i => i \u2264 emb b)) := by\n  ext x\n  constructor\n  \u00b7 intro h\n    rcases Finset.mem_map.mp h with \u27e8i, hi, rfl\u27e9\n    have hi' : i \u2208 (Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b) := hi\n    rcases Finset.mem_filter.mp hi' with \u27e8hi_univ, hi_le\u27e9\n    have : emb_embedding i \u2264 emb b := by\n      simp [emb_embedding, emb, Fin.le_def, hi_le]\n    simp [Finset.mem_filter, Finset.mem_univ, this]\n  \u00b7 intro h\n    rcases Finset.mem_filter.mp h with \u27e8h_univ, h_le\u27e9\n    have h_val : x.val \u2264 b.val := by\n      simpa [emb, Fin.le_def] using h_le\n    have h_lt_n : x.val < n := by\n      have : b.val < n := b.2\n      omega\n    let i : Fin n := \u27e8x.val, h_lt_n\u27e9\n    have hi_val : i.val = x.val := rfl\n    have h_emb_i_eq_x : emb i = x := by\n      apply Fin.ext\n      simp [emb, i]\n    have hi_le_b : i \u2264 b := by\n      simp [Fin.le_def, hi_val, h_val]\n    have hi_mem_filter : i \u2208 (Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b) := by\n      simp [Finset.mem_filter, Finset.mem_univ, hi_le_b]\n    apply Finset.mem_map.mpr\n    exact \u27e8i, hi_mem_filter, h_emb_i_eq_x\u27e9"
+    },
+    {
+      "id": "last2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The last two positions in Fin (n+2).",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- The last two positions in Fin (n+2). -/)]\ndef last2 {n : \u2115} : Fin (n+2) := \u27e8n+1, by omega\u27e9"
+    },
+    {
+      "id": "map_emb_Icc_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The image of Icc a b under emb is Icc (emb a) (emb b).",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- The image of Icc a b under emb is Icc (emb a) (emb b). -/)\n  (proof := /-- By using the order-preserving property of emb. -/)]\nlemma map_emb_Icc_eq {n : \u2115} (a b : Fin n) : Finset.map (emb_embedding : Fin n \u21aa Fin (n+2)) (Finset.Icc a b) = Finset.Icc (emb a) (emb b) := by\n  apply Finset.ext\n  intro x\n  constructor\n  \u00b7 intro hx\n    rcases Finset.mem_map.mp hx with \u27e8y, hy, rfl\u27e9\n    have h := Finset.mem_Icc.mp hy\n    rcases h with \u27e8ha, hb\u27e9\n    have hxa : emb a \u2264 emb y := by\n      simpa [emb] using ha\n    have hyb : emb y \u2264 emb b := by\n      simpa [emb] using hb\n    exact Finset.mem_Icc.mpr \u27e8hxa, hyb\u27e9\n  \u00b7 intro hx\n    rcases Finset.mem_Icc.mp hx with \u27e8hxa, hyb\u27e9\n    have hx_val_lt_n : x.val < n := by\n      have ha_val_lt_n : (emb a).val < n := by\n        have ha_val_lt_n' : a.val < n := a.2\n        simpa [emb] using ha_val_lt_n'\n      have hb_val_lt_n : (emb b).val < n := by\n        have hb_val_lt_n' : b.val < n := b.2\n        simpa [emb] using hb_val_lt_n'\n      have hxa_val : (emb a).val \u2264 x.val := Fin.le_def.mp hxa\n      have hyb_val : x.val \u2264 (emb b).val := Fin.le_def.mp hyb\n      omega\n    let y : Fin n := \u27e8x.val, hx_val_lt_n\u27e9\n    have hemb_y_eq_x : emb y = x := by\n      apply Fin.ext\n      simp [emb, y]\n    have ha_y : a \u2264 y := by\n      have hxa_val : (emb a).val \u2264 x.val := Fin.le_def.mp hxa\n      simpa [emb, y] using hxa_val\n    have hy_b : y \u2264 b := by\n      have hyb_val : x.val \u2264 (emb b).val := Fin.le_def.mp hyb\n      simpa [emb, y] using hyb_val\n    have hmem : y \u2208 Finset.Icc a b := Finset.mem_Icc.mpr \u27e8ha_y, hy_b\u27e9\n    apply Finset.mem_map.mpr\n    exact \u27e8y, hmem, hemb_y_eq_x\u27e9"
+    },
+    {
+      "id": "negate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Negate a string pointwise.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- Negate a string pointwise. -/)]\ndef negate {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Fin n \u2192 \u2124\u02e3 := \u03bb i => -S i"
+    },
+    {
+      "id": "partition_formula",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a n + 2 = 2*A n + C n.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- a n + 2 = 2*A n + C n. -/)\n  (proof := /-- By combinatorial decomposition using Z_card_one. -/)]\nlemma partition_formula (n : \u2115) : a n + 2 = 2 * A n + C n := by\n  classical\n  -- define sets\n  let U : Finset (Fin n \u2192 \u2124\u02e3) := Finset.univ\n  let B : Finset (Fin n \u2192 \u2124\u02e3) := U.filter (balanced_cond (n := n))\n  let A_set : Finset (Fin n \u2192 \u2124\u02e3) := U.filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S)\n  let C_set : Finset (Fin n \u2192 \u2124\u02e3) := U.filter (\u03bb S => balanced_cond S \u2227 prefixes_abs_le_one S)\n  let Z_set : Finset (Fin n \u2192 \u2124\u02e3) := U.filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 prefixes_abs_le_one S)\n  let X_set : Finset (Fin n \u2192 \u2124\u02e3) := U.filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S \u2227 \u00ac prefixes_abs_le_one S)\n  let V_set : Finset (Fin n \u2192 \u2124\u02e3) := U.filter (\u03bb S => balanced_cond S \u2227 prefixes_nonpos S \u2227 \u00ac prefixes_abs_le_one S)\n  let W_set : Finset (Fin n \u2192 \u2124\u02e3) := U.filter (\u03bb S => balanced_cond S \u2227 prefixes_nonpos S \u2227 prefixes_abs_le_one S)\n  -- cardinality equalities from lemmas\n  have hZ_card : Z_set.card = 1 := by\n    simpa [Z_set] using Z_card_one n\n  have hV_eq_X : V_set.card = X_set.card := by\n    simpa [V_set, X_set] using card_V_eq_card_X n\n  have hW_eq_Z : W_set.card = Z_set.card := by\n    simpa [W_set, Z_set] using card_W_eq_card_Z n\n  -- relation between a, A, C and these sets\n  have ha : a n = B.card := by\n    unfold a\n    simp [B, U]\n  have hA : A n = A_set.card := by\n    unfold A\n    simp [A_set, U]\n  have hC : C n = C_set.card := by\n    unfold C\n    simp [C_set, U]\n  -- A_set is the disjoint union of Z_set and X_set\n  have h_disjoint_ZX : Z_set \u2229 X_set = \u2205 := by\n    apply Finset.eq_empty_iff_forall_not_mem.mpr\n    intro S hS\n    rcases Finset.mem_inter.mp hS with \u27e8hZ, hX\u27e9\n    have hZ_mem := Finset.mem_filter.mp hZ\n    have hX_mem := Finset.mem_filter.mp hX\n    have hbound : prefixes_abs_le_one S := hZ_mem.2.2.2\n    have h_not_bound : \u00ac prefixes_abs_le_one S := hX_mem.2.2.2\n    exact h_not_bound hbound\n  have hA_partition : A_set.card = Z_set.card + X_set.card := by\n    have h_union : A_set = Z_set \u222a X_set := by\n      ext S; constructor\n      \u00b7 intro hS\n        have hS_mem := Finset.mem_filter.mp hS\n        have hbal : balanced_cond S := hS_mem.2.1\n        have hnonneg : prefixes_nonneg S := hS_mem.2.2\n        by_cases hbounded : prefixes_abs_le_one S\n        \u00b7 apply Finset.mem_union_left\n          simpa [Z_set, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal, hnonneg, hbounded\u27e9\n        \u00b7 apply Finset.mem_union_right\n          simpa [X_set, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal, hnonneg, hbounded\u27e9\n      \u00b7 intro hS\n        rcases Finset.mem_union.mp hS with (hZ | hX)\n        \u00b7 have hZ_mem := Finset.mem_filter.mp hZ\n          have hbal : balanced_cond S := hZ_mem.2.1\n          have hnonneg : prefixes_nonneg S := hZ_mem.2.2.1\n          simpa [A_set, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal, hnonneg\u27e9\n        \u00b7 have hX_mem := Finset.mem_filter.mp hX\n          have hbal : balanced_cond S := hX_mem.2.1\n          have hnonneg : prefixes_nonneg S := hX_mem.2.2.1\n          simpa [A_set, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal, hnonneg\u27e9\n    rw [h_union]\n    have h_disjoint : Disjoint Z_set X_set :=\n      Finset.disjoint_iff_inter_eq_empty.mpr h_disjoint_ZX\n    rw [Finset.card_union_eq_card_add_card.mpr h_disjoint]\n  -- C_set is subset of B\n  have hC_sub_B : C_set \u2286 B := by\n    intro S hS\n    have hS_mem := Finset.mem_filter.mp hS\n    have hbal : balanced_cond S := hS_mem.2.1\n    simpa [B, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal\u27e9\n  -- B \\ C_set = X_set \u222a V_set\n  have h_disjoint_XV : X_set \u2229 V_set = \u2205 := by\n    apply Finset.eq_empty_iff_forall_not_mem.mpr\n    intro S hS\n    rcases Finset.mem_inter.mp hS with \u27e8hX, hV\u27e9\n    have hX_mem := Finset.mem_filter.mp hX\n    have hV_mem := Finset.mem_filter.mp hV\n    have h_nonneg : prefixes_nonneg S := hX_mem.2.2.1\n    have h_nonpos : prefixes_nonpos S := hV_mem.2.2.1\n    have h_bounded : prefixes_abs_le_one S := by\n      intro b\n      have h_nonneg_b : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) \u2265 0 := h_nonneg b\n      have h_nonpos_b : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) \u2264 0 := h_nonpos b\n      have h_eq : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) = 0 := by\n        linarith\n      rw [h_eq]\n      simp\n    have h_not_bounded : \u00ac prefixes_abs_le_one S := hX_mem.2.2.2\n    exact h_not_bounded h_bounded\n  have h_sdiff_eq_union : B \\ C_set = X_set \u222a V_set := by\n    apply Finset.Subset.antisymm\n    \u00b7 intro S hS\n      rcases Finset.mem_sdiff.mp hS with \u27e8hSB, hSC\u27e9\n      have hSB_mem := Finset.mem_filter.mp hSB\n      have hbal : balanced_cond S := hSB_mem.2\n      have h_not_bound : \u00ac prefixes_abs_le_one S := by\n        intro hbound\n        apply hSC\n        simpa [C_set, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal, hbound\u27e9\n      rcases balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos S hbal h_not_bound with (hnonneg | hnonpos)\n      \u00b7 apply Finset.mem_union_left\n        simpa [X_set, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal, hnonneg, h_not_bound\u27e9\n      \u00b7 apply Finset.mem_union_right\n        simpa [V_set, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal, hnonpos, h_not_bound\u27e9\n    \u00b7 intro S hS\n      rcases Finset.mem_union.mp hS with (hX | hV)\n      \u00b7 have hX_mem := Finset.mem_filter.mp hX\n        have hbal : balanced_cond S := hX_mem.2.1\n        have hnonneg : prefixes_nonneg S := hX_mem.2.2.1\n        have h_not_bound : \u00ac prefixes_abs_le_one S := hX_mem.2.2.2\n        have hSB : S \u2208 B := by\n          simpa [B, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal\u27e9\n        have hSC : S \u2209 C_set := by\n          intro hC\n          apply h_not_bound\n          have hC_mem := Finset.mem_filter.mp hC\n          exact hC_mem.2.2\n        exact Finset.mem_sdiff.mpr \u27e8hSB, hSC\u27e9\n      \u00b7 have hV_mem := Finset.mem_filter.mp hV\n        have hbal : balanced_cond S := hV_mem.2.1\n        have hnonpos : prefixes_nonpos S := hV_mem.2.2.1\n        have h_not_bound : \u00ac prefixes_abs_le_one S := hV_mem.2.2.2\n        have hSB : S \u2208 B := by\n          simpa [B, U] using Finset.mem_filter.mpr \u27e8Finset.mem_univ _, hbal\u27e9\n        have hSC : S \u2209 C_set := by\n          intro hC\n          apply h_not_bound\n          have hC_mem := Finset.mem_filter.mp hC\n          exact hC_mem.2.2\n        exact Finset.mem_sdiff.mpr \u27e8hSB, hSC\u27e9\n  have h_card_sdiff : (B \\ C_set).card = X_set.card + V_set.card := by\n    rw [h_sdiff_eq_union]\n    have h_disjoint : Disjoint X_set V_set :=\n      Finset.disjoint_iff_inter_eq_empty.mpr h_disjoint_XV\n    rw [Finset.card_union_eq_card_add_card.mpr h_disjoint]\n  have h_card_B : B.card = C_set.card + (X_set.card + V_set.card) := by\n    have h_temp := (Finset.card_sdiff_add_card_eq_card hC_sub_B).symm\n    rw [h_temp, h_card_sdiff]\n    ring\n  have h_card_B_simp : B.card = C_set.card + 2 * X_set.card := by\n    rw [h_card_B, hV_eq_X]\n    ring\n  calc\n    a n + 2 = B.card + 2 := by rw [ha]\n    _ = (C_set.card + 2 * X_set.card) + 2 := by rw [h_card_B_simp]\n    _ = C_set.card + 2 * X_set.card + 2 := by ring\n    _ = C_set.card + 2 * (Z_set.card + X_set.card) := by\n      rw [hZ_card]\n      ring\n    _ = C_set.card + 2 * A_set.card := by rw [hA_partition]\n    _ = 2 * A_set.card + C_set.card := by ring\n    _ = 2 * A n + C n := by rw [hA, hC]\n\n-- New lemmas for A_recurrence"
+    },
+    {
+      "id": "prefixes_abs_le_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A string S has prefix sums bounded by 1 in absolute value.",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- A string S has prefix sums bounded by 1 in absolute value. -/)]\ndef prefixes_abs_le_one {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Prop :=\n  \u2200 b : Fin n, |\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)| \u2264 1"
+    },
+    {
+      "id": "prefixes_abs_le_one_negate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Negation preserves boundedness.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- Negation preserves boundedness. -/)\n  (proof := /-- Because |\u2211 -S i| = |\u2211 S i|. -/)]\nlemma prefixes_abs_le_one_negate {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : prefixes_abs_le_one (negate S) \u2194 prefixes_abs_le_one S := by\n  constructor\n  \u00b7 intro h b\n    have hb := h b\n    have hsum : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), ((negate S) i : \u2124)) = -(\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) := by\n      simp [negate]\n    rw [hsum] at hb\n    simpa [abs_neg] using hb\n  \u00b7 intro h b\n    have hb := h b\n    have hsum : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), ((negate S) i : \u2124)) = -(\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) := by\n      simp [negate]\n    rw [hsum]\n    simpa [abs_neg] using hb"
+    },
+    {
+      "id": "prefixes_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A string S has nonnegative prefix sums.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- A string S has nonnegative prefix sums. -/)]\ndef prefixes_nonneg {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Prop :=\n  \u2200 b : Fin n, (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) \u2265 0"
+    },
+    {
+      "id": "prefixes_nonneg_negate_iff_prefixes_nonpos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Negation swaps nonnegative and nonpositive.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- Negation swaps nonnegative and nonpositive. -/)\n  (proof := /-- Because summing -S i gives negative of sum of S i. -/)]\nlemma prefixes_nonneg_negate_iff_prefixes_nonpos {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : prefixes_nonneg (negate S) \u2194 prefixes_nonpos S := by\n  constructor\n  \u00b7 intro h b\n    have hb := h b\n    have : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), ((negate S) i : \u2124)) = -(\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) := by\n      simp [negate, Finset.sum_neg_distrib]\n    rw [this] at hb\n    omega\n  \u00b7 intro h b\n    have hb := h b\n    have : (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), ((negate S) i : \u2124)) = -(\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) := by\n      simp [negate, Finset.sum_neg_distrib]\n    rw [this]\n    omega"
+    },
+    {
+      "id": "prefixes_nonpos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A string S has nonpositive prefix sums.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- A string S has nonpositive prefix sums. -/)]\ndef prefixes_nonpos {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Prop :=\n  \u2200 b : Fin n, (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) \u2264 0"
+    },
+    {
+      "id": "putnam_1996_b5",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The original problem statement.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The original problem statement. -/)\n  (proof := /-- By `card_main_eq_a`, the left side equals `a n`. By `a_closed_form`, `a n` equals the closed form expression. -/)]\ntheorem putnam_1996_b5\n    (n : \u2115)\n    (\u0394 : (Fin n \u2192 \u2124\u02e3) \u2192 Fin n \u2192 Fin n \u2192 \u2124)\n    (balanced : (Fin n \u2192 \u2124\u02e3) \u2192 Prop)\n    (h\u0394 : \u2200 S, \u2200 a b, a \u2264 b \u2192 \u0394 S a b = \u2211 i \u2208 Finset.Icc a b, (S i : \u2124))\n    (hbalanced : \u2200 S, balanced S \u2194 \u2200 a b, a \u2264 b \u2192 |\u0394 S a b| \u2264 2) :\n    {S : Fin n \u2192 \u2124\u02e3 | balanced S}.ncard = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115 ) n := by\n  calc\n    {S : Fin n \u2192 \u2124\u02e3 | balanced S}.ncard = a n := by\n      exact card_main_eq_a n \u0394 balanced h\u0394 hbalanced\n    _ = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115) n := by\n      rw [a_closed_form n]"
+    },
+    {
+      "id": "suffix_pair\u2081",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The two possible suffix pairs for extension, depending on total sum.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- The two possible suffix pairs for extension, depending on total sum. -/)]\ndef suffix_pair\u2081 (s : \u2124) : \u2124\u02e3 \u00d7 \u2124\u02e3 :=\n  if s = 0 then (1, 1) else if s = 1 then (1, -1) else (-1, 1)"
+    },
+    {
+      "id": "suffix_pair\u2082",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The other two possible suffix pairs for extension, depending on total sum.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- The other two possible suffix pairs for extension, depending on total sum. -/)]\ndef suffix_pair\u2082 (s : \u2124) : \u2124\u02e3 \u00d7 \u2124\u02e3 :=\n  if s = 0 then (1, -1) else if s = 1 then (-1, 1) else (-1, -1)"
+    },
+    {
+      "id": "truncate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Truncate a string of length n+2 to length n by dropping the last two characters.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- Truncate a string of length n+2 to length n by dropping the last two characters. -/)]\ndef truncate {n : \u2115} (S : Fin (n+2) \u2192 \u2124\u02e3) : Fin n \u2192 \u2124\u02e3 := \u03bb i => S (emb i)"
+    },
+    {
+      "id": "truncate_balanced",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Truncating preserves balancedness.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Truncating preserves balancedness. -/)\n  (proof := /-- Using map_emb_Icc_eq to transfer interval sums. -/)]\nlemma truncate_balanced {n : \u2115} (S : Fin (n+2) \u2192 \u2124\u02e3) (hbal : balanced_cond S) : balanced_cond (truncate S) := by\n  intro a b hle\n  have hle_emb : emb a \u2264 emb b := by\n    rw [Fin.le_def]\n    have : a.val \u2264 b.val := hle\n    simpa [emb] using this\n  have hsum := hbal (emb a) (emb b) hle_emb\n  have hsum_eq : (\u2211 i \u2208 Finset.Icc a b, ((truncate S) i : \u2124)) = (\u2211 i \u2208 Finset.Icc (emb a) (emb b), (S i : \u2124)) := by\n    calc\n      (\u2211 i \u2208 Finset.Icc a b, ((truncate S) i : \u2124)) = (\u2211 i \u2208 Finset.Icc a b, (S (emb i) : \u2124)) := by\n        simp [truncate]\n      _ = (\u2211 i \u2208 Finset.Icc a b, (S (emb_embedding i) : \u2124)) := by simp [emb_embedding]\n      _ = (\u2211 i \u2208 Finset.map emb_embedding (Finset.Icc a b), (S i : \u2124)) := by\n        simpa [emb_embedding] using (Finset.sum_map (Finset.Icc a b) emb_embedding (\u03bb x : Fin (n+2) => (S x : \u2124))).symm\n      _ = (\u2211 i \u2208 Finset.Icc (emb a) (emb b), (S i : \u2124)) := by rw [map_emb_Icc_eq a b]\n  rw [hsum_eq]\n  exact hsum"
+    },
+    {
+      "id": "truncate_ext\u2081",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "truncate (ext\u2081 T) = T.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- truncate (ext\u2081 T) = T. -/)\n  (proof := /-- By definition of truncate and ext\u2081. -/)]\nlemma truncate_ext\u2081 {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) : truncate (ext\u2081 T) = T := by\n  ext i\n  simp [truncate, ext\u2081, emb]"
+    },
+    {
+      "id": "truncate_ext\u2082",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "truncate (ext\u2082 T) = T.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- truncate (ext\u2082 T) = T. -/)\n  (proof := /-- By definition of truncate and ext\u2082. -/)]\nlemma truncate_ext\u2082 {n : \u2115} (T : Fin n \u2192 \u2124\u02e3) : truncate (ext\u2082 T) = T := by\n  ext i\n  simp [truncate, ext\u2082, emb]"
+    },
+    {
+      "id": "truncate_prefixes_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Truncating preserves nonnegative prefixes.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Truncating preserves nonnegative prefixes. -/)\n  (proof := /-- Using filter_emb_eq to transfer sums. -/)]\nlemma truncate_prefixes_nonneg {n : \u2115} (S : Fin (n+2) \u2192 \u2124\u02e3) (hS : prefixes_nonneg S) : prefixes_nonneg (truncate S) := by\n  intro b\n  dsimp [prefixes_nonneg, truncate]\n  let s := ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b))\n  have hsum_eq : (\u2211 i \u2208 s, (S (emb i) : \u2124)) = (\u2211 j \u2208 s.map emb_embedding, (S j : \u2124)) := by\n    simpa [emb_embedding] using (Finset.sum_map (s := s) (e := emb_embedding) (f := \u03bb j : Fin (n+2) => (S j : \u2124))).symm\n  calc\n    (\u2211 i \u2208 s, (S (emb i) : \u2124)) = (\u2211 j \u2208 s.map emb_embedding, (S j : \u2124)) := hsum_eq\n    _ = (\u2211 j \u2208 ((Finset.univ : Finset (Fin (n+2))).filter (\u03bb i => i \u2264 emb b)), (S j : \u2124)) := by\n      rw [filter_emb_eq b]\n    _ \u2265 0 := hS (emb b)"
+    }
+  ],
+  "edges": [
+    {
+      "source": "A",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2081",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2082",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate_ext\u2081",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate_ext\u2082",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2081_balanced",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2081_prefixes_nonneg",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2082_balanced",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2082_prefixes_nonneg",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "extend_truncate",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate_balanced",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate_prefixes_nonneg",
+      "target": "A_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "C_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond_of_prefixes_abs_le_one",
+      "target": "C_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string_unique",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_alt_string",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string_prefixes_nonneg",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string_prefixes_abs_le_one",
+      "target": "Z_card_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_recurrence",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_zero",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_one",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "a_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "partition_formula",
+      "target": "a_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_step_two",
+      "target": "a_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "partition_formula",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A_recurrence",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C_recurrence",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "a_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "alt_string_prefixes_abs_le_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string",
+      "target": "alt_string_prefixes_abs_le_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "alt_string_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string",
+      "target": "alt_string_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string",
+      "target": "alt_string_unique",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "alt_string_unique",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "alt_string_unique",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond_of_prefixes_abs_le_one",
+      "target": "balanced_alt_string",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "alt_string_prefixes_abs_le_one",
+      "target": "balanced_alt_string",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "balanced_cond_negate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "negate",
+      "target": "balanced_cond_negate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonpos",
+      "target": "balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "balanced_cond_of_prefixes_abs_le_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "balanced_cond_of_prefixes_abs_le_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond_negate",
+      "target": "card_V_eq_card_X",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg_negate_iff_prefixes_nonpos",
+      "target": "card_V_eq_card_X",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one_negate",
+      "target": "card_V_eq_card_X",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "negate",
+      "target": "card_V_eq_card_X",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond_negate",
+      "target": "card_W_eq_card_Z",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg_negate_iff_prefixes_nonpos",
+      "target": "card_W_eq_card_Z",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one_negate",
+      "target": "card_W_eq_card_Z",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "negate",
+      "target": "card_W_eq_card_Z",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "card_main_eq_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "card_main_eq_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2081",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2082",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "suffix_pair\u2081",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "suffix_pair\u2082",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "last2",
+      "target": "extend_truncate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "ext\u2081_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "suffix_pair\u2081",
+      "target": "ext\u2081_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2081",
+      "target": "ext\u2081_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "last2",
+      "target": "ext\u2081_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "ext\u2081_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "suffix_pair\u2081",
+      "target": "ext\u2081_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2081",
+      "target": "ext\u2081_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "last2",
+      "target": "ext\u2081_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "ext\u2082_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "suffix_pair\u2082",
+      "target": "ext\u2082_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2082",
+      "target": "ext\u2082_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "last2",
+      "target": "ext\u2082_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "ext\u2082_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "suffix_pair\u2082",
+      "target": "ext\u2082_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2082",
+      "target": "ext\u2082_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "last2",
+      "target": "ext\u2082_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb",
+      "target": "filter_emb_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb_embedding",
+      "target": "filter_emb_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb",
+      "target": "map_emb_Icc_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb_embedding",
+      "target": "map_emb_Icc_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonpos",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "Z_card_one",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_V_eq_card_X",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_W_eq_card_Z",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond_of_not_prefixes_abs_le_one_implies_nonneg_or_nonpos",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "prefixes_abs_le_one_negate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "negate",
+      "target": "prefixes_abs_le_one_negate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "prefixes_nonneg_negate_iff_prefixes_nonpos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonpos",
+      "target": "prefixes_nonneg_negate_iff_prefixes_nonpos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "negate",
+      "target": "prefixes_nonneg_negate_iff_prefixes_nonpos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_main_eq_a",
+      "target": "putnam_1996_b5",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_closed_form",
+      "target": "putnam_1996_b5",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "truncate_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate",
+      "target": "truncate_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb",
+      "target": "truncate_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb_embedding",
+      "target": "truncate_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "map_emb_Icc_eq",
+      "target": "truncate_balanced",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate",
+      "target": "truncate_ext\u2081",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2081",
+      "target": "truncate_ext\u2081",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb",
+      "target": "truncate_ext\u2081",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate",
+      "target": "truncate_ext\u2082",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ext\u2082",
+      "target": "truncate_ext\u2082",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb",
+      "target": "truncate_ext\u2082",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "truncate_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "truncate",
+      "target": "truncate_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb",
+      "target": "truncate_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "emb_embedding",
+      "target": "truncate_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "filter_emb_eq",
+      "target": "truncate_prefixes_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

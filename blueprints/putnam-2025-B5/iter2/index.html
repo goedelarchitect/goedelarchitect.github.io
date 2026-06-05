@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 B5. 993 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item current">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item current">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "card_A_eq_card_B",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p>3, the number of s\u2208{1,\u2026,p-1} with s + operatorname{modInv}(p,s) > p+2 equals the number with s + operatorname{modInv}(p,s) < p-2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p>3$, the number of $s\\in\\{1,\\dots,p-1\\}$ with $s + \\operatorname{modInv}(p,s) > p+2$ equals the number with $s + \\operatorname{modInv}(p,s) < p-2$. -/)\n  (proof := /-- The map $s\\mapsto p-s$ gives a bijection between the two sets. -/)]\nlemma card_A_eq_card_B (p : \u2115) (hp : p.Prime) (hp_gt : 3 < p) :\n    (Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 1 (p-1))).card =\n    (Finset.filter (\u03bb s => s + modInv p s < p-2) (Finset.Icc 1 (p-1))).card := by\n  have hp_pos' : 0 < p := by omega\n  haveI : NeZero p := NeZero.of_pos hp_pos'\n  have hp_pos : 1 \u2264 p := by omega\n  let A := Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 1 (p-1))\n  let B := Finset.filter (\u03bb s => s + modInv p s < p-2) (Finset.Icc 1 (p-1))\n  have hmod_lt (s : \u2115) (hs : s \u2208 Finset.Icc 1 (p-1)) : modInv p s < p := by\n    have : 1 \u2264 s := (Finset.mem_Icc.mp hs).left\n    have := ZMod.val_lt ((s : ZMod p)\u207b\u00b9)\n    simpa [modInv] using this\n  have h_cond_swap (s : \u2115) (hs : s \u2208 Finset.Icc 1 (p-1)) : (s + modInv p s > p+2) \u2194 ((p - s) + modInv p (p - s) < p-2) := by\n    have hs1 : 1 \u2264 s := (Finset.mem_Icc.mp hs).left\n    have hs2 : s \u2264 p - 1 := (Finset.mem_Icc.mp hs).right\n    have hps1 : 1 \u2264 p - s := by\n      omega\n    have hps2 : p - s \u2264 p - 1 := by\n      omega\n    have hmod_lt_s : modInv p s < p := hmod_lt s hs\n    have hmodInv_ps : modInv p (p - s) = p - modInv p s := modInv_sub p hp s hs1 hs2\n    constructor\n    \u00b7 intro h\n      have hcalc : (p - s) + (p - modInv p s) < p - 2 := by\n        have hmod_le : modInv p s \u2264 p - 1 := by omega\n        zify at h\n        zify\n        omega\n      simpa [hmodInv_ps] using hcalc\n    \u00b7 intro h\n      have hcalc : s + modInv p s > p + 2 := by\n        have hmod_le : modInv p s \u2264 p - 1 := by omega\n        zify at h\n        zify\n        omega\n      simpa [hmodInv_ps] using hcalc\n  have h_image_eq : (A.image (\u03bb s => p - s)) = B := by\n    ext x\n    constructor\n    \u00b7 intro hx\n      rcases Finset.mem_image.mp hx with \u27e8s, hsA, rfl\u27e9\n      have hsIcc : s \u2208 Finset.Icc 1 (p-1) := Finset.mem_of_mem_filter s hsA\n      have hcond : s + modInv p s > p + 2 := by\n        simpa using (Finset.mem_filter.mp hsA).2\n      have h_cond_swap' := (h_cond_swap s hsIcc).mp hcond\n      have hxIcc : p - s \u2208 Finset.Icc 1 (p-1) := by\n        have hs1 : 1 \u2264 s := (Finset.mem_Icc.mp hsIcc).left\n        have hs2 : s \u2264 p - 1 := (Finset.mem_Icc.mp hsIcc).right\n        have h1 : 1 \u2264 p - s := by omega\n        have h2 : p - s \u2264 p - 1 := by omega\n        exact Finset.mem_Icc.mpr \u27e8h1, h2\u27e9\n      have hcond' : (p - s) + modInv p (p - s) < p - 2 := h_cond_swap'\n      exact Finset.mem_filter.mpr \u27e8hxIcc, hcond'\u27e9\n    \u00b7 intro hx\n      have hxIcc : x \u2208 Finset.Icc 1 (p-1) := by\n        simpa using (Finset.mem_filter.mp hx).1\n      have hcond : x + modInv p x < p - 2 := by\n        simpa using (Finset.mem_filter.mp hx).2\n      let s := p - x\n      have hsIcc : s \u2208 Finset.Icc 1 (p-1) := by\n        have hx1 : 1 \u2264 x := (Finset.mem_Icc.mp hxIcc).left\n        have hx2 : x \u2264 p - 1 := (Finset.mem_Icc.mp hxIcc).right\n        have h1 : 1 \u2264 p - x := by omega\n        have h2 : p - x \u2264 p - 1 := by omega\n        exact Finset.mem_Icc.mpr \u27e8h1, h2\u27e9\n      have hcond_swap' : s + modInv p s > p + 2 := by\n        have : p - s = x := by\n          dsimp [s]\n          omega\n        have htemp : (p - s) + modInv p (p - s) < p - 2 := by\n          simpa [this] using hcond\n        exact ((h_cond_swap s hsIcc).mpr htemp)\n      have hsA : s \u2208 A := Finset.mem_filter.mpr \u27e8hsIcc, hcond_swap'\u27e9\n      have h_eq : p - s = x := by\n        dsimp [s]\n        omega\n      apply Finset.mem_image.mpr\n      exact \u27e8s, hsA, h_eq\u27e9\n  have h_inj_on : Set.InjOn (\u03bb s : \u2115 => p - s) (A : Set \u2115) := by\n    intro x hxA y hyA h\n    dsimp at h\n    have hxIcc : x \u2208 Finset.Icc 1 (p-1) := Finset.mem_of_mem_filter x hxA\n    have hyIcc : y \u2208 Finset.Icc 1 (p-1) := Finset.mem_of_mem_filter y hyA\n    have hx1 : 1 \u2264 x := (Finset.mem_Icc.mp hxIcc).left\n    have hx2 : x \u2264 p - 1 := (Finset.mem_Icc.mp hxIcc).right\n    have hy1 : 1 \u2264 y := (Finset.mem_Icc.mp hyIcc).left\n    have hy2 : y \u2264 p - 1 := (Finset.mem_Icc.mp hyIcc).right\n    have hx2' : x \u2264 p := by omega\n    have hy2' : y \u2264 p := by omega\n    have h_eq_add' : (p - y) + x = (p - y) + y := by\n      calc\n        (p - y) + x = (p - x) + x := by rw [h]\n        _ = p := Nat.sub_add_cancel hx2'\n        _ = (p - y) + y := by symm; apply Nat.sub_add_cancel hy2'\n    exact Nat.add_left_cancel h_eq_add'\n  have hcard : A.card = B.card := by\n    calc\n      A.card = (A.image (\u03bb s => p - s)).card := by\n        symm; exact Finset.card_image_of_injOn h_inj_on\n      _ = B.card := by rw [h_image_eq]\n  exact hcard"
+    },
+    {
+      "id": "card_C_le_6",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p>3, at most six s\u2208{1,\u2026,p-1} satisfy p-2 \u2264 s + operatorname{modInv}(p,s) \u2264 p+2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p>3$, at most six $s\\in\\{1,\\dots,p-1\\}$ satisfy $p-2 \\le s + \\operatorname{modInv}(p,s) \\le p+2$. -/)\n  (proof := /-- The values $p-2$ and $p+2$ are impossible, and each of $p-1,p,p+1$ has at most two preimages. -/)]\nlemma card_C_le_6 (p : \u2115) (hp : p.Prime) (hp_gt : 3 < p) : (Finset.filter (\u03bb s => s + modInv p s \u2208 Finset.Icc (p-2) (p+2)) (Finset.Icc 1 (p-1))).card \u2264 6 := by\n  set S := Finset.filter (\u03bb s => s + modInv p s \u2208 Finset.Icc (p-2) (p+2)) (Finset.Icc 1 (p-1))\n  set A := Finset.filter (\u03bb s => s + modInv p s = p-1) (Finset.Icc 1 (p-1))\n  set B := Finset.filter (\u03bb s => s + modInv p s = p) (Finset.Icc 1 (p-1))\n  set C := Finset.filter (\u03bb s => s + modInv p s = p+1) (Finset.Icc 1 (p-1))\n  have hS_sub_union : S \u2286 A \u222a B \u222a C := by\n    intro s hs\n    rcases Finset.mem_filter.mp hs with \u27e8hs_mem, hval\u27e9\n    rcases Finset.mem_Icc.mp hval with \u27e8hlo, hhi\u27e9\n    have hs1 : 1 \u2264 s := (Finset.mem_Icc.mp hs_mem).1\n    have hs2 : s \u2264 p-1 := (Finset.mem_Icc.mp hs_mem).2\n    have h_not_p_sub_two : s + modInv p s \u2260 p - 2 :=\n      not_sum_eq_p_sub_two p hp s hs1 hs2\n    have h_not_p_add_two : s + modInv p s \u2260 p + 2 :=\n      not_sum_eq_p_add_two p hp s hs1 hs2\n    have h_val_range : s + modInv p s = p-1 \u2228 s + modInv p s = p \u2228 s + modInv p s = p+1 := by\n      omega\n    rcases h_val_range with (h | h | h)\n    \u00b7 apply Finset.mem_union_left (t := C)\n      apply Finset.mem_union_left (t := B)\n      apply Finset.mem_filter.mpr\n      exact \u27e8hs_mem, h\u27e9\n    \u00b7 apply Finset.mem_union_left (t := C)\n      apply Finset.mem_union_right (s := A)\n      apply Finset.mem_filter.mpr\n      exact \u27e8hs_mem, h\u27e9\n    \u00b7 apply Finset.mem_union_right (s := A \u222a B)\n      apply Finset.mem_filter.mpr\n      exact \u27e8hs_mem, h\u27e9\n  have h_card_A : A.card \u2264 2 := card_preimage_at_most_two p hp (p-1)\n  have h_card_B : B.card \u2264 2 := card_preimage_at_most_two p hp p\n  have h_card_C : C.card \u2264 2 := card_preimage_at_most_two p hp (p+1)\n  have h_card_union_AB : (A \u222a B).card \u2264 A.card + B.card := Finset.card_union_le A B\n  have h_card_union_ABC : (A \u222a B \u222a C).card \u2264 A.card + B.card + C.card := by\n    calc\n      (A \u222a B \u222a C).card \u2264 (A \u222a B).card + C.card := Finset.card_union_le (A \u222a B) C\n      _ \u2264 A.card + B.card + C.card := by\n        nlinarith\n  have h_total : A.card + B.card + C.card \u2264 6 := by\n    nlinarith\n  calc\n    S.card \u2264 (A \u222a B \u222a C).card := Finset.card_le_card hS_sub_union\n    _ \u2264 A.card + B.card + C.card := h_card_union_ABC\n    _ \u2264 6 := h_total"
+    },
+    {
+      "id": "card_Icc_one_to_p_sub_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The cardinal of {1,\u2026,p-1} is p-1.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- The cardinal of $\\{1,\\dots,p-1\\}$ is $p-1$. -/)\n  (proof := /-- By `Finset.card_Icc`. -/)]\nlemma card_Icc_one_to_p_sub_one (p : \u2115) (hp : 3 < p) : (Finset.Icc 1 (p-1)).card = p-1 := by\n  exact Nat.card_Icc 1 (p-1)"
+    },
+    {
+      "id": "card_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.24,
+      "proof_length": 27,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p>3, (p : \u211a)/4 - 1 < |{ s \u2208 {2,\u2026,p-1} | s + mathit{modInv} p s > p+2 }|.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p>3$, $(p : \\mathbb{Q})/4 - 1 < |\\{ s \\in \\{2,\\dots,p-1\\} \\mid s + \\mathit{modInv}\\,p\\,s > p+2 \\}|$. -/)\n  (proof := /-- Use $\\mathit{modInv\\_symm}$ and a counting argument: for each pair $\\{s, p-s\\}$ the sums $s+\\mathit{modInv}\\,p\\,s$ and $(p-s)+\\mathit{modInv}\\,p\\,(p-s)$ add to $2p$. This forces enough $s$ to have large sum. -/)]\nlemma card_bound (p : \u2115) (hp : p.Prime) (hp_gt : 3 < p) : (p : \u211a) / 4 - 1 < (Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 2 (p-1))).card := by\n  by_cases hsmall : p < 19\n  \u00b7 exact small_prime_card_bound p hp hp_gt hsmall\n  \u00b7 have hp_ge19 : 19 \u2264 p := Nat.le_of_not_lt hsmall\n    set S := Finset.Icc 1 (p-1) with hS\n    set A := Finset.filter (\u03bb s => s + modInv p s > p+2) S with hA\n    set B := Finset.filter (\u03bb s => s + modInv p s < p-2) S with hB\n    set C := Finset.filter (\u03bb s => s + modInv p s \u2208 Finset.Icc (p-2) (p+2)) S with hC\n    have h_total : S.card = p-1 := card_Icc_one_to_p_sub_one p hp_gt\n    have h_AB_eq : A.card = B.card := card_A_eq_card_B p hp hp_gt\n    have hC_le_6 : C.card \u2264 6 := card_C_le_6 p hp hp_gt\n    have h_subset : S \u2286 A \u222a B \u222a C := by\n      intro s hs\n      have hs_mem : s \u2208 S := hs\n      by_cases hgt : s + modInv p s > p+2\n      \u00b7 apply Finset.mem_union_left\n        apply Finset.mem_union_left\n        exact Finset.mem_filter.mpr \u27e8hs, hgt\u27e9\n      \u00b7 by_cases hlt : s + modInv p s < p-2\n        \u00b7 apply Finset.mem_union_left\n          apply Finset.mem_union_right\n          exact Finset.mem_filter.mpr \u27e8hs, hlt\u27e9\n        \u00b7 apply Finset.mem_union_right\n          have h_mid : s + modInv p s \u2208 Finset.Icc (p-2) (p+2) := by\n            apply Finset.mem_Icc.mpr\n            have hle : s + modInv p s \u2264 p+2 := by\n              omega\n            have hge : p-2 \u2264 s + modInv p s := by\n              omega\n            exact \u27e8hge, hle\u27e9\n          exact Finset.mem_filter.mpr \u27e8hs, h_mid\u27e9\n    have h_card_subset : S.card \u2264 (A \u222a B \u222a C).card :=\n      Finset.card_le_card h_subset\n    have h_union_BC : (B \u222a C).card \u2264 B.card + C.card :=\n      Finset.card_union_le _ _\n    have h_union_ABC : (A \u222a (B \u222a C)).card \u2264 A.card + (B \u222a C).card :=\n      Finset.card_union_le _ _\n    have h_total_ineq : S.card \u2264 A.card + B.card + C.card := by\n      calc\n        S.card \u2264 (A \u222a B \u222a C).card := h_card_subset\n        _ = (A \u222a (B \u222a C)).card := by simp [Finset.union_assoc]\n        _ \u2264 A.card + (B \u222a C).card := h_union_ABC\n        _ \u2264 A.card + (B.card + C.card) := by\n          nlinarith\n        _ = A.card + B.card + C.card := by ring\n    have h_AB_eq' : B.card = A.card := h_AB_eq.symm\n    have h_ineq2 : 2*A.card + C.card \u2265 p-1 := by\n      have : S.card = p-1 := h_total\n      have h_total_ineq' : p-1 \u2264 A.card + B.card + C.card := by\n        rw [\u2190 h_total]\n        exact h_total_ineq\n      rw [h_AB_eq'] at h_total_ineq'\n      omega\n    have h_ineq3 : 2*A.card \u2265 p-1 - C.card := by omega\n    have h_ineq4 : 2*A.card \u2265 p-7 := by\n      have : C.card \u2264 6 := hC_le_6\n      omega\n    have h_ineq5 : 4*A.card > p := by\n      omega\n    have h_A_gt : (A.card : \u211a) > (p : \u211a) / 4 := by\n      have : 4*(A.card : \u211a) > (p : \u211a) := by\n        push_cast\n        exact_mod_cast h_ineq5\n      linarith\n    set A2 := Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 2 (p-1)) with hA2\n    have h_card_A2_ge : A2.card \u2265 A.card - 1 := by\n      by_cases h1A : (1 : \u2115) \u2208 A\n      \u00b7 have h_erase : A.erase 1 = A2 := by\n          ext x; constructor\n          \u00b7 intro hx\n            rcases Finset.mem_erase.mp hx with \u27e8hx_ne, hx_mem\u27e9\n            apply Finset.mem_filter.mpr\n            constructor\n            \u00b7 rcases Finset.mem_filter.mp hx_mem with \u27e8hx_mem_S, hx_prop\u27e9\n              rcases Finset.mem_Icc.mp hx_mem_S with \u27e8hx_low, hx_high\u27e9\n              have hx_ge2 : 2 \u2264 x := by\n                by_contra! h; omega\n              exact Finset.mem_Icc.mpr \u27e8hx_ge2, hx_high\u27e9\n            \u00b7 rcases Finset.mem_filter.mp hx_mem with \u27e8_, hx_prop\u27e9\n              exact hx_prop\n          \u00b7 intro hx\n            rcases Finset.mem_filter.mp hx with \u27e8hx_mem_Icc, hx_prop\u27e9\n            apply Finset.mem_erase.mpr\n            constructor\n            \u00b7 intro hx_eq\n              have h1_notin : (1 : \u2115) \u2209 Finset.Icc 2 (p-1) := by\n                rw [Finset.mem_Icc]\n                omega\n              apply h1_notin\n              simpa [hx_eq] using hx_mem_Icc\n            \u00b7 apply Finset.mem_filter.mpr\n              refine \u27e8?_, hx_prop\u27e9\n              rcases Finset.mem_Icc.mp hx_mem_Icc with \u27e8hx_ge2, hx_le\u27e9\n              exact Finset.mem_Icc.mpr \u27e8by omega, hx_le\u27e9\n        have hcard_erase : (A.erase 1).card = A.card - 1 := Finset.card_erase_of_mem h1A\n        rw [h_erase] at hcard_erase\n        omega\n      \u00b7 have hA2_eq_A : A2 = A := by\n          ext x; constructor\n          \u00b7 intro hx\n            rcases Finset.mem_filter.mp hx with \u27e8hx_mem_Icc, hx_prop\u27e9\n            apply Finset.mem_filter.mpr\n            refine \u27e8?_, hx_prop\u27e9\n            rcases Finset.mem_Icc.mp hx_mem_Icc with \u27e8hx_ge2, hx_le\u27e9\n            exact Finset.mem_Icc.mpr \u27e8by omega, hx_le\u27e9\n          \u00b7 intro hx\n            rcases Finset.mem_filter.mp hx with \u27e8hx_mem_S, hx_prop\u27e9\n            apply Finset.mem_filter.mpr\n            constructor\n            \u00b7 rcases Finset.mem_Icc.mp hx_mem_S with \u27e8hx_low, hx_high\u27e9\n              have hx_ne_one : x \u2260 1 := by\n                intro h_eq; apply h1A; rw [\u2190 h_eq]; exact hx\n              have hx_ge2 : 2 \u2264 x := by\n                by_contra! h; omega\n              exact Finset.mem_Icc.mpr \u27e8hx_ge2, hx_high\u27e9\n            \u00b7 exact hx_prop\n        simp [hA2_eq_A]\n    have h_card_A2_ge' : A.card \u2264 A2.card + 1 := by\n      omega\n    have h_card_A2_ge_rat : (A2.card : \u211a) \u2265 (A.card : \u211a) - 1 := by\n      have h' : (A.card : \u211a) \u2264 (A2.card : \u211a) + 1 := by exact_mod_cast h_card_A2_ge'\n      linarith\n    have h_goal : (p : \u211a) / 4 - 1 < (A2.card : \u211a) := by\n      linarith\n    simpa [A2]"
+    },
+    {
+      "id": "card_preimage_at_most_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p and any t, the equation s + operatorname{modInv}(p,s) = t has at most two solutions s with 1 \u2264 s \u2264 p-1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$ and any $t$, the equation $s + \\operatorname{modInv}(p,s) = t$ has at most two solutions $s$ with $1 \\le s \\le p-1$. -/)\n  (proof := /-- If there were three distinct solutions, the quadratic $X^2 - tX + 1$ would have three roots in $\\mathbb{Z}/p\\mathbb{Z}$, impossible. -/)]\nlemma card_preimage_at_most_two (p : \u2115) (hp : p.Prime) (t : \u2115) : (Finset.filter (\u03bb s => s + modInv p s = t) (Finset.Icc 1 (p-1))).card \u2264 2 := by\n  sorry_using [modInv, ne_zero_of_lt_ZMod]"
+    },
+    {
+      "id": "descentCount_eq_card",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.79,
+      "proof_length": 32,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p>3, mathit{descentCount} p = |{ s \u2208 {2,\u2026,p-1} | s + mathit{modInv} p s > p+2 }|.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p>3$, $\\mathit{descentCount}\\,p = |\\{ s \\in \\{2,\\dots,p-1\\} \\mid s + \\mathit{modInv}\\,p\\,s > p+2 \\}|$. -/)\n  (proof := /-- By $\\mathit{descent\\_iff}$, the condition for $k$ is equivalent to a condition on $s = \\mathit{modInv}\\,p\\,k + 1$. The map $k \\mapsto \\mathit{modInv}\\,p\\,k + 1$ is a bijection onto $\\{2,\\dots,p-1\\}$, so the cardinalities coincide. -/)]\nlemma descentCount_eq_card (p : \u2115) (hp : p.Prime) (hp_gt : 3 < p) : descentCount p = (Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 2 (p-1))).card := by\n  have h_modInv_pm1 : modInv p (p-1) = p-1 := by\n    dsimp [modInv]\n    have h_val_cast : ZMod.val (((p-1 : \u2115) : ZMod p)) = p-1 :=\n      ZMod.val_natCast_of_lt (by omega : (p-1 : \u2115) < p)\n    have h_eq_cast : ((p-1 : \u2115) : ZMod p) = -1 := by\n      calc\n        ((p-1 : \u2115) : ZMod p) = ((p : \u2115) : ZMod p) - ((1 : \u2115) : ZMod p) := by\n          rw [Nat.cast_sub (by omega : 1 \u2264 p)]\n        _ = (p : ZMod p) - 1 := by simp\n        _ = (0 : ZMod p) - 1 := by simp\n        _ = -1 := by simp\n    have h_inv : (((p-1 : \u2115) : ZMod p)\u207b\u00b9 : ZMod p) = ((p-1 : \u2115) : ZMod p) := by\n      calc\n        (((p-1 : \u2115) : ZMod p)\u207b\u00b9 : ZMod p) = ((-1 : ZMod p)\u207b\u00b9 : ZMod p) := by rw [h_eq_cast]\n        _ = (-1 : ZMod p) := by simpa using ZMod.inv_neg_one p\n        _ = ((p-1 : \u2115) : ZMod p) := by rw [h_eq_cast]\n    calc\n      ZMod.val (((p-1 : \u2115) : ZMod p)\u207b\u00b9) = ZMod.val (((p-1 : \u2115) : ZMod p)\u207b\u00b9) := rfl\n      _ = ZMod.val (((p-1 : \u2115) : ZMod p)) := by rw [h_inv]\n      _ = p-1 := h_val_cast\n  let s_set := Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 2 (p-1))\n  let k_set := Finset.filter (\u03bb k => modInv p (k+1) < modInv p k) (Finset.Icc 1 (p-2))\n  have h_mem (k : \u2115) (hk : k \u2208 k_set) : modInv p k + 1 \u2208 s_set := by\n    rcases Finset.mem_filter.mp hk with \u27e8hk_mem, hk_cond\u27e9\n    have hk_range : 1 \u2264 k \u2227 k \u2264 p-2 := by\n      simpa [Finset.mem_Icc] using hk_mem\n    have hk1 : 1 \u2264 k := hk_range.1\n    have hk2 : k \u2264 p-2 := hk_range.2\n    have h_modInv_range : 1 \u2264 modInv p k \u2227 modInv p k \u2264 p-1 := modInv_range p hp hk1 (by omega)\n    rcases h_modInv_range with \u27e8hmod1, hmod2\u27e9\n    have h_modInv_not_pm1 : modInv p k \u2260 p-1 := by\n      intro h_eq\n      have hk_eq_pm1 : k = p-1 := by\n        calc\n          k = modInv p (modInv p k) := (modInv_involution p hp hk1 (by omega)).symm\n          _ = modInv p (p-1) := by rw [h_eq]\n          _ = p-1 := h_modInv_pm1\n      have : k \u2264 p-2 := hk2\n      omega\n    have h_modInv_le_pm2 : modInv p k \u2264 p-2 := by\n      have h_le_pm1 : modInv p k \u2264 p-1 := hmod2\n      have h_ne_pm1 : modInv p k \u2260 p-1 := h_modInv_not_pm1\n      omega\n    have h_s_range : 2 \u2264 modInv p k + 1 \u2227 modInv p k + 1 \u2264 p-1 := by\n      constructor <;> omega\n    have h_s_cond : (modInv p k + 1) + modInv p (modInv p k + 1) > p+2 :=\n      (descent_iff p hp hk1 hk2).mp hk_cond\n    have h_s_mem_Icc : modInv p k + 1 \u2208 Finset.Icc 2 (p-1) := by\n      rw [Finset.mem_Icc]\n      exact h_s_range\n    apply Finset.mem_filter.mpr\n    refine \u27e8h_s_mem_Icc, ?_\u27e9\n    simpa [add_comm, add_left_comm, add_assoc] using h_s_cond\n  have h_inj (a b : \u2115) (ha : a \u2208 k_set) (hb : b \u2208 k_set) (h_eq : modInv p a + 1 = modInv p b + 1) : a = b := by\n    rcases Finset.mem_filter.mp ha with \u27e8ha_mem, ha_cond\u27e9\n    rcases Finset.mem_filter.mp hb with \u27e8hb_mem, hb_cond\u27e9\n    have ha_range : 1 \u2264 a \u2227 a \u2264 p-2 := by simpa [Finset.mem_Icc] using ha_mem\n    have hb_range : 1 \u2264 b \u2227 b \u2264 p-2 := by simpa [Finset.mem_Icc] using hb_mem\n    have ha_range' : a \u2264 p-1 := by omega\n    have hb_range' : b \u2264 p-1 := by omega\n    have h_modInv_eq : modInv p a = modInv p b := by omega\n    calc\n      a = modInv p (modInv p a) := (modInv_involution p hp ha_range.1 ha_range').symm\n      _ = modInv p (modInv p b) := by rw [h_modInv_eq]\n      _ = b := modInv_involution p hp hb_range.1 hb_range'\n  have h_surj (s : \u2115) (hs : s \u2208 s_set) : \u2203 (k : \u2115), k \u2208 k_set \u2227 modInv p k + 1 = s := by\n    rcases Finset.mem_filter.mp hs with \u27e8hs_mem, hs_cond\u27e9\n    rcases Finset.mem_Icc.mp hs_mem with \u27e8hs_low, hs_high\u27e9\n    have hs_minus_one_range : 1 \u2264 s-1 \u2227 s-1 \u2264 p-2 := by\n      constructor <;> omega\n    set k := modInv p (s-1) with hk_def\n    have hk_range : 1 \u2264 k \u2227 k \u2264 p-2 := by\n      have hk1 : 1 \u2264 k := by\n        have hmod_range := modInv_range p hp hs_minus_one_range.1 (by omega : s-1 \u2264 p-1)\n        exact hmod_range.1\n      have hk2 : k \u2264 p-2 := by\n        have hmod_range := modInv_range p hp hs_minus_one_range.1 (by omega : s-1 \u2264 p-1)\n        have hmod_upper : k \u2264 p-1 := hmod_range.2\n        by_contra! hk_gt\n        have hk_eq_pm1 : k = p-1 := by omega\n        have h_s_minus_one_eq_pm1 : s-1 = p-1 := by\n          calc\n            s-1 = modInv p k := by\n              calc\n                s-1 = modInv p (modInv p (s-1)) := (modInv_involution p hp hs_minus_one_range.1 (by omega)).symm\n                _ = modInv p k := rfl\n            _ = modInv p (p-1) := by rw [hk_eq_pm1]\n            _ = p-1 := h_modInv_pm1\n        have : s = p := by omega\n        omega\n      exact \u27e8hk1, hk2\u27e9\n    have hk_mem_Icc : k \u2208 Finset.Icc 1 (p-2) := by\n      rw [Finset.mem_Icc]\n      exact hk_range\n    have h_modInv_k : modInv p k = s-1 := by\n      calc\n        modInv p k = modInv p (modInv p (s-1)) := rfl\n        _ = s-1 := modInv_involution p hp hs_minus_one_range.1 (by omega)\n    have h_modInv_k_plus_one : modInv p (k+1) < modInv p k := by\n      apply (descent_iff p hp hk_range.1 hk_range.2).mpr\n      calc\n        (modInv p k + 1) + modInv p (modInv p k + 1) =\n            (s-1 + 1) + modInv p ((s-1) + 1) := by rw [h_modInv_k]\n        _ = s + modInv p s := by\n          have h1 : s-1+1 = s := by omega\n          have h2 : (s-1)+1 = s := by omega\n          calc\n            (s-1+1) + modInv p ((s-1)+1) = s + modInv p ((s-1)+1) := by rw [h1]\n            _ = s + modInv p s := by rw [h2]\n        _ > p+2 := hs_cond\n    have hk_mem_filter : k \u2208 k_set := by\n      apply Finset.mem_filter.mpr\n      exact \u27e8hk_mem_Icc, h_modInv_k_plus_one\u27e9\n    have h_modInv_k_plus_one_eq_s : modInv p k + 1 = s := by\n      calc\n        modInv p k + 1 = (s-1) + 1 := by rw [h_modInv_k]\n        _ = s := by omega\n    exact \u27e8k, hk_mem_filter, h_modInv_k_plus_one_eq_s\u27e9\n  have h_card_eq : k_set.card = s_set.card := by\n    -- Use bijection\n    let f : k_set \u2192 s_set := \u03bb x =>\n      let k := x.1\n      have hk : k \u2208 k_set := x.2\n      have hmem : modInv p k + 1 \u2208 s_set := h_mem k hk\n      \u27e8modInv p k + 1, hmem\u27e9\n    have h_injective : Function.Injective f := by\n      intro x y h\n      apply Subtype.ext\n      have h_val : (f x).1 = (f y).1 := congr_arg Subtype.val h\n      dsimp [f] at h_val\n      -- h_val : modInv p x.1 + 1 = modInv p y.1 + 1\n      exact h_inj x.1 y.1 x.2 y.2 h_val\n    have h_surjective : Function.Surjective f := by\n      intro y\n      rcases y with \u27e8s, hs\u27e9\n      rcases h_surj s hs with \u27e8k, hk, h_eq\u27e9\n      refine \u27e8\u27e8k, hk\u27e9, ?_\u27e9\n      ext; exact h_eq\n    exact Finset.card_eq_of_equiv (Equiv.ofBijective f \u27e8h_injective, h_surjective\u27e9)\n  calc\n    descentCount p = k_set.card := rfl\n    _ = s_set.card := h_card_eq\n    _ = (Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 2 (p-1))).card := rfl"
+    },
+    {
+      "id": "descent_iff",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.33,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p, 1 \u2264 k \u2264 p-2, mathit{modInv} p (k+1) < mathit{modInv} p k iff (mathit{modInv} p k + 1) + mathit{modInv} p (mathit{modInv} p k + 1) > p+2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$, $1 \\leq k \\leq p-2$, $\\mathit{modInv}\\,p\\,(k+1) < \\mathit{modInv}\\,p\\,k$ iff $(\\mathit{modInv}\\,p\\,k + 1) + \\mathit{modInv}\\,p\\,(\\mathit{modInv}\\,p\\,k + 1) > p+2$. -/)\n  (proof := /-- By $\\mathit{modInv\\_recurrence}$, $\\mathit{modInv}\\,p\\,(k+1) = f\\,p\\,(\\mathit{modInv}\\,p\\,k)$. Then the inequality simplifies using $\\mathit{sum\\_val\\_eq\\_p\\_add\\_one}$ and $\\mathit{helper\\_ineq}$. -/)]\nlemma descent_iff (p : \u2115) (hp : p.Prime) (hk : 1 \u2264 k) (hk' : k \u2264 p-2) : (modInv p (k+1) < modInv p k) \u2194 (modInv p k + 1) + modInv p (modInv p k + 1) > p+2 := by\n  have ha_range : 1 \u2264 modInv p k \u2227 modInv p k \u2264 p-1 := modInv_range p hp hk (by omega)\n  have ha_ge_one : 1 \u2264 modInv p k := ha_range.1\n  have ha_le_pm1 : modInv p k \u2264 p-1 := ha_range.2\n  have hk_le_pm1 : k \u2264 p-1 := by omega\n  have ha_add_one_lt_p : modInv p k + 1 < p := by\n    by_contra! hge\n    have h_eq : modInv p k + 1 = p := by\n      have h_le : modInv p k + 1 \u2264 p := by\n        omega\n      omega\n    have ha_eq_pm1 : modInv p k = p-1 := by omega\n    have h_modInv_self : modInv p (p-1) = p-1 := by\n      dsimp [modInv]\n      have hp_one_lt : 1 < p := hp.one_lt\n      have h1 : 1 \u2264 p := by omega\n      have h_cast : ((p-1 : \u2115) : ZMod p) = (-1 : ZMod p) := by\n        calc\n          ((p-1 : \u2115) : ZMod p) = ((p : \u2115) : ZMod p) - (1 : \u2115) := by\n            rw [Nat.cast_sub h1, Nat.cast_one]\n          _ = (0 : ZMod p) - 1 := by simp\n          _ = -1 := by simp\n      calc\n        ZMod.val (((p-1 : \u2115) : ZMod p)\u207b\u00b9) = ZMod.val (((-1 : ZMod p))\u207b\u00b9) := by rw [h_cast]\n        _ = ZMod.val (-1 : ZMod p) := by rw [ZMod.inv_neg_one]\n        _ = ZMod.val ((p-1 : \u2115) : ZMod p) := by rw [h_cast]\n        _ = (p-1) % p := by rw [ZMod.val_natCast]\n        _ = p-1 := by\n          have hlt : p-1 < p := by omega\n          rw [Nat.mod_eq_of_lt hlt]\n    have hk_eq_pm1 : k = p-1 := by\n      calc\n        k = modInv p (modInv p k) := (modInv_involution p hp hk hk_le_pm1).symm\n        _ = modInv p (p-1) := by rw [ha_eq_pm1]\n        _ = p-1 := by rw [h_modInv_self]\n    omega\n  haveI : Fact p.Prime := \u27e8hp\u27e9\n  have hsum : f p (modInv p k) + modInv p (modInv p k + 1) = p+1 :=\n    sum_val_eq_p_add_one p (modInv p k) ha_add_one_lt_p\n  have h_recurrence : modInv p (k+1) = f p (modInv p k) := modInv_recurrence p hp hk hk'\n  have h_equiv : (f p (modInv p k) < modInv p k) \u2194 ((modInv p k + 1) + modInv p (modInv p k + 1) > p+2) :=\n    helper_ineq p (modInv p k) (modInv p (modInv p k + 1)) hsum\n  constructor\n  \u00b7 intro h\n    rw [h_recurrence] at h\n    exact (h_equiv.mp h)\n  \u00b7 intro h\n    have h_f_lt_a : f p (modInv p k) < modInv p k := h_equiv.mpr h\n    rw [h_recurrence]\n    exact h_f_lt_a"
+    },
+    {
+      "id": "f",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "f(p,j) = j\u00b7(j+1)^{-1} pmod{p} as an integer in {0,\u2026,p-1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- $f(p,j) = j\\cdot(j+1)^{-1} \\pmod{p}$ as an integer in $\\{0,\\dots,p-1\\}$. -/)]\ndef f (p : \u2115) (j : \u2115) : \u2115 := ZMod.val ((j : ZMod p) * ((j+1 : ZMod p)\u207b\u00b9))"
+    },
+    {
+      "id": "helper_ineq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For naturals p,a,t with f p a + t = p+1, we have f p a < a \u21d4 a+1+t > p+2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For naturals $p,a,t$ with $f\\,p\\,a + t = p+1$, we have $f\\,p\\,a < a \\iff a+1+t > p+2$. -/)\n  (proof := /-- Simple arithmetic using `omega`. -/)]\nlemma helper_ineq (p a t : \u2115) (hsum : f p a + t = p+1) : (f p a < a) \u2194 (a+1 + t > p+2) := by\n  omega"
+    },
+    {
+      "id": "modInv",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "mathit{modInv} p k is the integer in {1,\u2026,p-1} such that k\u00b7mathit{modInv}(k) \u2261 1 pmod{p}.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- $\\mathit{modInv}\\,p\\,k$ is the integer in $\\{1,\\dots,p-1\\}$ such that $k\\cdot\\mathit{modInv}(k) \\equiv 1 \\pmod{p}$. -/)]\ndef modInv (p : \u2115) (k : \u2115) : \u2115 := ZMod.val ((k : ZMod p)\u207b\u00b9)"
+    },
+    {
+      "id": "modInv_involution",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p, the modular inverse map is an involution on {1,\u2026,p-1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$, the modular inverse map is an involution on $\\{1,\\dots,p-1\\}$. -/)\n  (proof := /-- Since $\\mathbb{Z}/p\\mathbb{Z}$ is a field, the inverse of the inverse of $k$ is $k$. Hence $\\mathit{modInv}\\,p\\,(\\mathit{modInv}\\,p\\,k) = k$. -/)]\nlemma modInv_involution (p : \u2115) (hp : p.Prime) (hk : 1 \u2264 k) (hk' : k \u2264 p-1) : modInv p (modInv p k) = k := by\n  have hp_pos : 0 < p := hp.pos\n  haveI : NeZero p := NeZero.of_pos hp_pos\n  haveI : Fact p.Prime := \u27e8hp\u27e9\n  have hkpos : k \u2260 0 := by\n    linarith\n  have hkltp : k < p := by\n    have hpm1_lt_p : p - 1 < p := by\n      omega\n    omega\n  have hk_modp_ne_zero : (k : ZMod p) \u2260 0 := by\n    intro hzero\n    apply hkpos\n    have hval := congrArg ZMod.val hzero\n    simp [ZMod.val_natCast, Nat.mod_eq_of_lt hkltp] at hval\n    exact hval\n  calc\n    modInv p (modInv p k) = ZMod.val (((modInv p k : ZMod p)\u207b\u00b9)) := rfl\n    _ = ZMod.val (((ZMod.val ((k : ZMod p)\u207b\u00b9) : ZMod p))\u207b\u00b9) := rfl\n    _ = ZMod.val ((((k : ZMod p)\u207b\u00b9 : ZMod p))\u207b\u00b9) := by\n      rw [ZMod.natCast_zmod_val]\n    _ = ZMod.val (((k : ZMod p)\u207b\u00b9)\u207b\u00b9) := rfl\n    _ = ZMod.val ((k : ZMod p)) := by\n      simpa using congrArg ZMod.val (inv_inv (a := (k : ZMod p)))\n    _ = k := by\n      rw [ZMod.val_natCast, Nat.mod_eq_of_lt hkltp]"
+    },
+    {
+      "id": "modInv_range",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p and 1 \u2264 k \u2264 p-1, we have 1 \u2264 mathit{modInv} p k \u2264 p-1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$ and $1 \\leq k \\leq p-1$, we have $1 \\leq \\mathit{modInv}\\,p\\,k \\leq p-1$. -/)\n  (proof := /-- Because $k$ is non-zero modulo $p$, its inverse is non-zero, so its representative lies between $1$ and $p-1$. -/)]\nlemma modInv_range (p : \u2115) (hp : p.Prime) (hk : 1 \u2264 k) (hk' : k \u2264 p-1) : 1 \u2264 modInv p k \u2227 modInv p k \u2264 p-1 := by\n  have hk0 : k \u2260 0 := by\n    exact Nat.ne_of_gt (Nat.lt_of_lt_of_le (by decide : 0 < 1) hk)\n  have hpm1_lt_p : p - 1 < p := Nat.sub_lt hp.pos (by decide)\n  have hk_lt_p : k < p := hk'.trans_lt hpm1_lt_p\n  have hcop_pk : Nat.Coprime p k := by\n    exact Nat.coprime_of_lt_prime hk0 hk_lt_p hp\n  have hcop : Nat.Coprime k p := hcop_pk.symm\n  have hunit : IsUnit (k : ZMod p) := by\n    rw [ZMod.isUnit_iff_coprime]\n    exact hcop\n  haveI : Fact (1 < p) := \u27e8hp.one_lt\u27e9\n  haveI : Nontrivial (ZMod p) := ZMod.nontrivial p\n  have hinv_isUnit : IsUnit ((k : ZMod p)\u207b\u00b9) := by\n    have h : IsUnit (((k : \u2124) : ZMod p)) := by\n      simpa using hunit\n    simpa using ZMod.isUnit_inv (n := (k : \u2124)) h\n  have hinv_ne_zero : (k : ZMod p)\u207b\u00b9 \u2260 0 := hinv_isUnit.ne_zero\n  have hval_pos : 0 < ZMod.val ((k : ZMod p)\u207b\u00b9) := by\n    rw [ZMod.val_pos]\n    exact hinv_ne_zero\n  have hval_lt_p : ZMod.val ((k : ZMod p)\u207b\u00b9) < p := by\n    haveI : NeZero p := \u27e8hp.ne_zero\u27e9\n    exact ZMod.val_lt ((k : ZMod p)\u207b\u00b9)\n  have h1le : 1 \u2264 modInv p k := by\n    unfold modInv\n    exact Nat.succ_le_of_lt hval_pos\n  have hle_pm1 : modInv p k \u2264 p-1 := by\n    unfold modInv\n    exact Nat.le_sub_one_of_lt hval_lt_p\n  exact And.intro h1le hle_pm1"
+    },
+    {
+      "id": "modInv_recurrence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p and 1 \u2264 k \u2264 p-2, we have mathit{modInv} p (k+1) = f p (mathit{modInv} p k).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$ and $1 \\leq k \\leq p-2$, we have $\\mathit{modInv}\\,p\\,(k+1) = f\\,p\\,(\\mathit{modInv}\\,p\\,k)$. -/)\n  (proof := /-- By the identity $k \\equiv I(k)^{-1}$ and algebraic manipulation in $\\mathbb{Z}/p\\mathbb{Z}$. -/)]\nlemma modInv_recurrence (p : \u2115) (hp : p.Prime) (hk : 1 \u2264 k) (hk' : k \u2264 p-2) : modInv p (k+1) = f p (modInv p k) := by\n  have hp_fact : Fact (Nat.Prime p) := Fact.mk hp\n  have modInv_eq_inv_val (k' : \u2115) : (modInv p k' : ZMod p) = (k' : ZMod p)\u207b\u00b9 := by\n    have hp_pos : NeZero p := NeZero.of_pos (Nat.Prime.pos hp)\n    calc\n      (modInv p k' : ZMod p) = (ZMod.val ((k' : ZMod p)\u207b\u00b9) : ZMod p) := rfl\n      _ = ((k' : ZMod p)\u207b\u00b9) := by simpa using (ZMod.natCast_zmod_val ((k' : ZMod p)\u207b\u00b9))\n  have inv_recurrence_identity (k' : \u2115) (hk0 : (k' : ZMod p) \u2260 0) (hk1_0 : (k'+1 : ZMod p) \u2260 0) (hsum_ne_zero : ((k' : ZMod p)\u207b\u00b9) + 1 \u2260 0) : (k'+1 : ZMod p)\u207b\u00b9 = ((k' : ZMod p)\u207b\u00b9) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9 := by\n    have h_mul : (k' : ZMod p) * ((k' : ZMod p)\u207b\u00b9) = 1 := mul_inv_cancel\u2080 hk0\n    have h_mul' : (k'+1 : ZMod p) * (((k' : ZMod p)\u207b\u00b9) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9) = 1 := by\n      calc\n        (k'+1 : ZMod p) * (((k' : ZMod p)\u207b\u00b9) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9)\n            = ((k'+1 : ZMod p) * ((k' : ZMod p)\u207b\u00b9)) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9 := by ring\n        _ = (((k' : ZMod p) * ((k' : ZMod p)\u207b\u00b9)) + (1 * ((k' : ZMod p)\u207b\u00b9))) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9 := by ring\n        _ = (1 + ((k' : ZMod p)\u207b\u00b9)) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9 := by simp [h_mul]\n        _ = ((k' : ZMod p)\u207b\u00b9 + 1) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9 := by ring\n        _ = 1 := mul_inv_cancel\u2080 hsum_ne_zero\n    apply mul_left_cancel\u2080 hk1_0\n    calc\n      (k'+1 : ZMod p) * ((k'+1 : ZMod p)\u207b\u00b9) = 1 := mul_inv_cancel\u2080 hk1_0\n      _ = (k'+1 : ZMod p) * (((k' : ZMod p)\u207b\u00b9) * (((k' : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9) := by rw [h_mul']\n  have hk_lt_p : k < p := by omega\n  have hk_pos : 0 < k := by omega\n  have hk_not_dvd : \u00ac p \u2223 k := Nat.not_dvd_of_pos_of_lt hk_pos hk_lt_p\n  have hk0 : (k : ZMod p) \u2260 0 := by\n    rw [ne_eq, ZMod.natCast_eq_zero_iff]\n    exact hk_not_dvd\n  have hk1_lt_p : k+1 < p := by omega\n  have hk1_pos : 0 < k+1 := by omega\n  have hk1_not_dvd : \u00ac p \u2223 (k+1) := Nat.not_dvd_of_pos_of_lt hk1_pos hk1_lt_p\n  have hk1_0 : (k+1 : ZMod p) \u2260 0 := by\n    intro hzero\n    apply hk1_not_dvd\n    have hzero' : ((k+1 : \u2115) : ZMod p) = 0 := by simpa using hzero\n    exact ((ZMod.natCast_eq_zero_iff (k+1) p).mp hzero')\n  have hsum_ne_zero : ((k : ZMod p)\u207b\u00b9) + 1 \u2260 0 := by\n    intro hsum0\n    apply hk1_not_dvd\n    have hx_eq_neg_one : (k : ZMod p)\u207b\u00b9 = -1 := by\n      calc\n        (k : ZMod p)\u207b\u00b9 = ((k : ZMod p)\u207b\u00b9 + 1) - 1 := by ring\n        _ = 0 - 1 := by rw [hsum0]\n        _ = -1 := by ring\n    have h_mul : (k : ZMod p) * ((k : ZMod p)\u207b\u00b9) = 1 := mul_inv_cancel\u2080 hk0\n    have h_temp : (k : ZMod p) * (-1) = 1 := by simpa [hx_eq_neg_one] using h_mul\n    have h_k_eq_neg_one : (k : ZMod p) = -1 := by\n      calc\n        (k : ZMod p) = (k : ZMod p) * 1 := by ring\n        _ = (k : ZMod p) * ((-1) * (-1)) := by ring\n        _ = ((k : ZMod p) * (-1)) * (-1) := by ring\n        _ = 1 * (-1) := by rw [h_temp]\n        _ = -1 := by ring\n    have h_k1_zero : (k+1 : ZMod p) = 0 := by\n      calc\n        (k+1 : ZMod p) = (k : ZMod p) + 1 := by norm_num\n        _ = (-1) + 1 := by rw [h_k_eq_neg_one]\n        _ = 0 := by ring\n    have h_k1_zero' : ((k+1 : \u2115) : ZMod p) = 0 := by simpa using h_k1_zero\n    exact ((ZMod.natCast_eq_zero_iff (k+1) p).mp h_k1_zero')\n  have h_identity : (k+1 : ZMod p)\u207b\u00b9 = ((k : ZMod p)\u207b\u00b9) * (((k : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9 :=\n    inv_recurrence_identity k hk0 hk1_0 hsum_ne_zero\n  calc\n    modInv p (k+1) = ZMod.val ((k+1 : ZMod p)\u207b\u00b9) := by simp [modInv]\n    _ = ZMod.val (((k : ZMod p)\u207b\u00b9) * (((k : ZMod p)\u207b\u00b9) + 1)\u207b\u00b9) := by rw [h_identity]\n    _ = ZMod.val ((modInv p k : ZMod p) * ((modInv p k + 1 : ZMod p)\u207b\u00b9)) := by simp [modInv_eq_inv_val k]\n    _ = f p (modInv p k) := rfl"
+    },
+    {
+      "id": "modInv_sub",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.65,
+      "proof_length": 15,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p and 1 \u2264 s \u2264 p-1, operatorname{modInv}(p, p-s) = p - operatorname{modInv}(p, s).",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$ and $1 \\le s \\le p-1$, $\\operatorname{modInv}(p, p-s) = p - \\operatorname{modInv}(p, s)$. -/)\n  (proof := /-- Using the field structure of $\\mathbb{Z}/p\\mathbb{Z}$ and the fact that $(p-s) = -s$ modulo $p$. -/)]\nlemma modInv_sub (p : \u2115) (hp : p.Prime) (s : \u2115) (hs1 : 1 \u2264 s) (hs2 : s \u2264 p-1) : modInv p (p - s) = p - modInv p s := by\n  haveI : Fact p.Prime := \u27e8hp\u27e9\n  have hp_ne_zero : p \u2260 0 := hp.ne_zero\n  haveI : NeZero p := \u27e8hp_ne_zero\u27e9\n  have hs_nonzero : (s : ZMod p) \u2260 0 := by\n    apply ne_zero_of_lt_ZMod p s\n    \u00b7 omega\n    \u00b7 omega\n  have h_inv_nonzero : ((s : ZMod p)\u207b\u00b9) \u2260 0 := inv_ne_zero hs_nonzero\n  haveI : NeZero ((s : ZMod p)\u207b\u00b9) := \u27e8h_inv_nonzero\u27e9\n  have h_p_zero : (p : ZMod p) = 0 := ZMod.natCast_self p\n  have h_eq_neg : (p - s : ZMod p) = -(s : ZMod p) := by\n    calc\n      (p - s : ZMod p) = (p : ZMod p) - (s : ZMod p) := by simp\n      _ = 0 - (s : ZMod p) := by simp [h_p_zero]\n      _ = -(s : ZMod p) := by simp\n  have h_inv_eq_neg_inv : ((p - s : ZMod p)\u207b\u00b9) = -((s : ZMod p)\u207b\u00b9) := by\n    calc\n      ((p - s : ZMod p)\u207b\u00b9) = (-(s : ZMod p))\u207b\u00b9 := by rw [h_eq_neg]\n      _ = -((s : ZMod p)\u207b\u00b9) := by rw [inv_neg]\n  have h_val_neg : (-((s : ZMod p)\u207b\u00b9)).val = p - ((s : ZMod p)\u207b\u00b9).val :=\n    ZMod.val_neg_of_ne_zero ((s : ZMod p)\u207b\u00b9)\n  have hs_le_p : s \u2264 p := by omega\n  rw [modInv, modInv]\n  rw [Nat.cast_sub hs_le_p]\n  rw [h_inv_eq_neg_inv]\n  exact h_val_neg"
+    },
+    {
+      "id": "mul_inv_eq_one_ZMod",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "In \u2124/p\u2124 with p prime, if a \u2260 0 then a \u00b7 a^{-1} = 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": null
+    },
+    {
+      "id": "ne_zero_add_one_ZMod",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a+1 < p then (a+1 : \u2124/p\u2124) \u2260 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": null
+    },
+    {
+      "id": "ne_zero_of_lt_ZMod",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.23,
+      "proof_length": 19,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a \u2260 0 and a < p then (a : \u2124/p\u2124) \u2260 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- If $a \\neq 0$ and $a < p$ then $(a : \\mathbb{Z}/p\\mathbb{Z}) \\neq 0$. -/)\n  (proof := /-- If $(a : \\mathbb{Z}/p\\mathbb{Z}) = 0$, then $p \\mid a$, but $a < p$ and $a \\neq 0$ gives a contradiction. -/)]\nlemma ne_zero_of_lt_ZMod (p a : \u2115) (ha_pos : a \u2260 0) (h : a < p) : (a : ZMod p) \u2260 0 := by\n  intro hzero\n  have hdiv : p \u2223 a := by\n    rw [ZMod.natCast_eq_zero_iff] at hzero\n    exact hzero\n  have ha_pos' : 0 < a := Nat.pos_of_ne_zero ha_pos\n  have hp_le_a : p \u2264 a := Nat.le_of_dvd ha_pos' hdiv\n  linarith"
+    },
+    {
+      "id": "not_sum_eq_p_add_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p and 1 \u2264 s \u2264 p-1, we have s + operatorname{modInv}(p,s) \u2260 p+2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$ and $1 \\le s \\le p-1$, we have $s + \\operatorname{modInv}(p,s) \\neq p+2$. -/)\n  (proof := /-- Algebraic manipulation in $\\mathbb{Z}/p\\mathbb{Z}$: from $s + \\operatorname{modInv}(p,s) = p+2$ we deduce $(s-1)^2=0$ in $\\mathbb{Z}/p\\mathbb{Z}$, hence $s=1$, contradiction. -/)]\nlemma not_sum_eq_p_add_two (p : \u2115) (hp : p.Prime) (s : \u2115) (hs1 : 1 \u2264 s) (hs2 : s \u2264 p-1) : s + modInv p s \u2260 p + 2 := by\n  haveI : Fact (Nat.Prime p) := \u27e8hp\u27e9\n  intro h_eq\n  have hs_pos : s \u2260 0 := by omega\n  have hs_lt_p : s < p := by\n    omega\n  have h_coprime : s.Coprime p :=\n    (Nat.coprime_of_lt_prime hs_pos hs_lt_p hp).symm\n  have h_mul : (s : ZMod p) * (modInv p s : ZMod p) = (1 : ZMod p) := by\n    simpa [modInv] using ZMod.mul_val_inv h_coprime\n  have h_sum : (s : ZMod p) + (modInv p s : ZMod p) = (2 : ZMod p) := by\n    have h_eq' : ((s + modInv p s : \u2115) : ZMod p) = ((p + 2 : \u2115) : ZMod p) :=\n      congrArg (fun x : \u2115 => (x : ZMod p)) h_eq\n    have h_left : ((s + modInv p s : \u2115) : ZMod p) = (s : ZMod p) + (modInv p s : ZMod p) := by simp\n    have h_right : ((p + 2 : \u2115) : ZMod p) = (2 : ZMod p) := by\n      calc\n        ((p + 2 : \u2115) : ZMod p) = (p : ZMod p) + (2 : ZMod p) := by simp\n        _ = (0 : ZMod p) + (2 : ZMod p) := by simp [ZMod.natCast_self p]\n        _ = (2 : ZMod p) := by simp\n    calc\n      (s : ZMod p) + (modInv p s : ZMod p) = ((s + modInv p s : \u2115) : ZMod p) := by simp\n      _ = ((p + 2 : \u2115) : ZMod p) := by rw [h_eq']\n      _ = (2 : ZMod p) := by rw [h_right]\n  have h_sq_eq_zero : ((s : ZMod p) - (1 : ZMod p)) ^ 2 = 0 := by\n    calc\n      ((s : ZMod p) - (1 : ZMod p)) ^ 2 = ((s : ZMod p) ^ 2 - 2 * (s : ZMod p) + 1) := by ring\n      _ = ((s : ZMod p) ^ 2 - 2 * (s : ZMod p) + (s : ZMod p) * (modInv p s : ZMod p)) := by rw [\u2190 h_mul]\n      _ = (s : ZMod p) ^ 2 + (s : ZMod p) * (modInv p s : ZMod p) - 2 * (s : ZMod p) := by ring\n      _ = (s : ZMod p) * ((s : ZMod p) + (modInv p s : ZMod p) - (2 : ZMod p)) := by ring\n      _ = (s : ZMod p) * ((2 : ZMod p) - (2 : ZMod p)) := by rw [h_sum]\n      _ = (s : ZMod p) * 0 := by ring\n      _ = 0 := by ring\n  have h_s_eq_one_z : (s : ZMod p) = (1 : ZMod p) := by\n    have h_zero : (s : ZMod p) - (1 : ZMod p) = 0 := by\n      have := (sq_eq_zero_iff.mp h_sq_eq_zero)\n      exact this\n    exact sub_eq_zero.mp h_zero\n  have h_s_mod_p : s \u2261 1 [MOD p] := by\n    have h_temp : (s : ZMod p) = ((1 : \u2115) : ZMod p) := by simpa using h_s_eq_one_z\n    exact (ZMod.natCast_eq_natCast_iff s 1 p).mp h_temp\n  have h_s_eq_one_nat : s = 1 := by\n    have h_mod_eq : s % p = 1 % p := h_s_mod_p\n    have hs_mod_eq_s : s % p = s := Nat.mod_eq_of_lt hs_lt_p\n    have h1_mod_eq_1 : 1 % p = 1 := Nat.mod_eq_of_lt (by\n      exact Nat.Prime.one_lt hp)\n    calc\n      s = s % p := by symm; exact hs_mod_eq_s\n      _ = 1 % p := h_mod_eq\n      _ = 1 := h1_mod_eq_1\n  have h_modInv_one : modInv p 1 = 1 := by\n    haveI : Fact (1 < p) := \u27e8hp.one_lt\u27e9\n    simp [modInv, ZMod.val_one]\n  have h_contra : (2 : \u2115) = p + 2 := by\n    calc\n      (2 : \u2115) = 1 + 1 := by omega\n      _ = s + modInv p s := by\n        rw [h_s_eq_one_nat, h_modInv_one]\n      _ = p + 2 := h_eq\n  have hp_pos : p \u2260 0 := by exact hp.ne_zero\n  omega"
+    },
+    {
+      "id": "not_sum_eq_p_sub_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p and 1 \u2264 s \u2264 p-1, we have s + operatorname{modInv}(p,s) \u2260 p-2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For a prime $p$ and $1 \\le s \\le p-1$, we have $s + \\operatorname{modInv}(p,s) \\neq p-2$. -/)\n  (proof := /-- Algebraic manipulation in $\\mathbb{Z}/p\\mathbb{Z}$: from $s + \\operatorname{modInv}(p,s) = p-2$ we deduce $(s+1)^2=0$, hence $s = p-1$, contradiction. -/)]\nlemma not_sum_eq_p_sub_two (p : \u2115) (hp : p.Prime) (s : \u2115) (hs1 : 1 \u2264 s) (hs2 : s \u2264 p-1) : s + modInv p s \u2260 p - 2 := by\n  intro h_eq\n  exfalso\n  have hs_pos : s \u2260 0 := by omega\n  have hs_lt_p : s < p := by\n    have : s \u2264 p - 1 := hs2\n    omega\n  have ha_ne_zero : (s : ZMod p) \u2260 0 := ne_zero_of_lt_ZMod p s hs_pos hs_lt_p\n  haveI : NeZero p := \u27e8hp.ne_zero\u27e9\n  haveI : Fact p.Prime := \u27e8hp\u27e9\n  have h_one_ne_zero : (1 : ZMod p) \u2260 0 := by\n    intro hzero\n    have hp_ge2 : 2 \u2264 p := hp.two_le\n    have h1ltp : 1 < p := by omega\n    have hval1 : (1 : ZMod p).val = 1 := by\n      calc\n        (1 : ZMod p).val = 1 % p := by simpa using ZMod.val_natCast p 1\n        _ = 1 := Nat.mod_eq_of_lt h1ltp\n    have hval0 : (0 : ZMod p).val = 0 := by simp\n    have hval_eq : (1 : ZMod p).val = (0 : ZMod p).val := by simpa [hzero]\n    rw [hval1, hval0] at hval_eq\n    exact Nat.one_ne_zero hval_eq\n  have h_inv_ne_zero : ((s : ZMod p)\u207b\u00b9) \u2260 0 := by\n    intro hzero\n    have : (1 : ZMod p) = 0 := by\n      calc\n        (1 : ZMod p) = (s : ZMod p) * ((s : ZMod p)\u207b\u00b9) := by\n          symm; exact mul_inv_cancel\u2080 ha_ne_zero\n        _ = (s : ZMod p) * 0 := by rw [hzero]\n        _ = 0 := by simp\n    exact h_one_ne_zero this\n  have hmod_lt_p : modInv p s < p := by\n    unfold modInv\n    exact ZMod.val_lt ((s : ZMod p)\u207b\u00b9)\n  have h_modInv_eq : (modInv p s : ZMod p) = ((s : ZMod p)\u207b\u00b9) := by\n    unfold modInv\n    simpa using (ZMod.natCast_zmod_val ((s : ZMod p)\u207b\u00b9))\n  set a := (s : ZMod p) with ha\n  set b := (modInv p s : ZMod p) with hb\n  have hb_eq_inv : b = a\u207b\u00b9 := by\n    calc\n      b = (modInv p s : ZMod p) := rfl\n      _ = ((s : ZMod p)\u207b\u00b9) := h_modInv_eq\n      _ = a\u207b\u00b9 := by rfl\n  have hp_ge2 : 2 \u2264 p := hp.two_le\n  have h_mul_zero : (a + 1) * (b + 1) = 0 := by\n    calc\n      (a + 1) * (b + 1) = a * b + a + b + 1 := by ring\n      _ = a * a\u207b\u00b9 + a + b + 1 := by rw [hb_eq_inv]\n      _ = 1 + a + b + 1 := by rw [mul_inv_cancel\u2080 ha_ne_zero]\n      _ = a + b + 2 := by ring\n      _ = ((s + modInv p s : \u2115) : ZMod p) + 2 := by\n        simp [a, b]\n      _ = ((p - 2 : \u2115) : ZMod p) + 2 := by rw [h_eq]\n      _ = 0 := by\n        calc\n          ((p - 2 : \u2115) : ZMod p) + 2 = ((p-2 + 2 : \u2115) : ZMod p) := by simp\n          _ = (p : ZMod p) := by simp [Nat.sub_add_cancel hp_ge2]\n          _ = 0 := by simp\n  have h_zero_or : (a + 1 = 0) \u2228 (b + 1 = 0) :=\n    eq_zero_or_eq_zero_of_mul_eq_zero h_mul_zero\n  have h_neg_one_eq : (-1 : ZMod p) = ((p-1 : \u2115) : ZMod p) := by\n    have hp_ge1 : 1 \u2264 p := by omega\n    calc\n      (-1 : ZMod p) = (0 - 1 : ZMod p) := by simp\n      _ = ((p : ZMod p) - 1) := by simp\n      _ = ((p-1 : \u2115) : ZMod p) := by\n        have h_temp := (Nat.cast_sub (R := ZMod p) hp_ge1).symm\n        simpa using h_temp\n  rcases h_zero_or with (h_a1 | h_b1)\n  \u00b7 -- a + 1 = 0\n    have ha_eq_neg_one : a = -1 := by\n      rw [\u2190 add_eq_zero_iff_eq_neg]\n      exact h_a1\n    have h_cast_eq : (s : ZMod p) = ((p-1 : \u2115) : ZMod p) := by\n      calc\n        (s : ZMod p) = a := rfl\n        _ = -1 := ha_eq_neg_one\n        _ = ((p-1 : \u2115) : ZMod p) := h_neg_one_eq\n    have h_mod_eq : s \u2261 p-1 [MOD p] := by\n      rw [\u2190 ZMod.natCast_eq_natCast_iff]\n      exact h_cast_eq\n    have hs_mod_eq : s % p = s := Nat.mod_eq_of_lt hs_lt_p\n    have hp1_mod_eq : (p-1) % p = p-1 := by\n      apply Nat.mod_eq_of_lt\n      omega\n    have hs_eq_p_sub_one : s = p-1 := by\n      calc\n        s = s % p := by rw [hs_mod_eq]\n        _ = (p-1) % p := h_mod_eq\n        _ = p-1 := by rw [hp1_mod_eq]\n    have h_contra : (p-1) + modInv p s = p - 2 := by\n      calc\n        (p-1) + modInv p s = s + modInv p s := by rw [hs_eq_p_sub_one]\n        _ = p - 2 := h_eq\n    omega\n  \u00b7 -- b + 1 = 0\n    have hb_eq_neg_one : b = -1 := by\n      rw [\u2190 add_eq_zero_iff_eq_neg]\n      exact h_b1\n    have h_cast_eq : (modInv p s : ZMod p) = ((p-1 : \u2115) : ZMod p) := by\n      calc\n        (modInv p s : ZMod p) = b := rfl\n        _ = -1 := hb_eq_neg_one\n        _ = ((p-1 : \u2115) : ZMod p) := h_neg_one_eq\n    have h_mod_eq : modInv p s \u2261 p-1 [MOD p] := by\n      rw [\u2190 ZMod.natCast_eq_natCast_iff]\n      exact h_cast_eq\n    have hmod_mod_eq : modInv p s % p = modInv p s := Nat.mod_eq_of_lt hmod_lt_p\n    have hp1_mod_eq : (p-1) % p = p-1 := by\n      apply Nat.mod_eq_of_lt\n      omega\n    have hmod_eq_p_sub_one : modInv p s = p-1 := by\n      calc\n        modInv p s = modInv p s % p := by rw [hmod_mod_eq]\n        _ = (p-1) % p := h_mod_eq\n        _ = p-1 := by rw [hp1_mod_eq]\n    have h_contra : s + (p-1) = p - 2 := by\n      calc\n        s + (p-1) = s + modInv p s := by rw [hmod_eq_p_sub_one]\n        _ = p - 2 := h_eq\n    omega"
+    },
+    {
+      "id": "putnam_2025_b5",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 13,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let p be a prime number greater than 3. For each k \u2208 {1, \u2026, p-1}, let I(k) \u2208 {1, 2, \u2026, p-1} be such that k \u00b7 I(k) \u2261 1 pmod{p}. Prove that the number of integers k \u2208 {1, \u2026, p-2} such that I(k+1) < I(k) is greater than p/4 - 1.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Let $p$ be a prime number greater than 3. For each $k \\in \\{1, \\ldots, p-1\\}$,\nlet $I(k) \\in \\{1, 2, \\ldots, p-1\\}$ be such that $k \\cdot I(k) \\equiv 1 \\pmod{p}$.\nProve that the number of integers $k \\in \\{1, \\ldots, p-2\\}$ such that\n$I(k+1) < I(k)$ is greater than $p/4 - 1$. -/)\n  (proof := /-- By `descentCount_eq_card`, we reduce to the cardinality bound `card_bound`. The result follows immediately. -/)]\ntheorem putnam_2025_b5\n    (p : \u2115)\n    (hp_prime : p.Prime)\n    (hp_gt : 3 < p) :\n    (p : \u211a) / 4 - 1 < descentCount p := by\n  calc\n    (p : \u211a) / 4 - 1 < ((Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 2 (p-1))).card : \u211a) := card_bound p hp_prime hp_gt\n    _ = (descentCount p : \u211a) := by\n      simp [descentCount_eq_card p hp_prime hp_gt]"
+    },
+    {
+      "id": "small_prime_card_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For primes 5 \u2264 p < 19, the inequality holds by direct computation.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For primes $5 \\le p < 19$, the inequality holds by direct computation. -/)\n  (proof := /-- Using `native_dec_trivial` to check each prime $p=5,7,11,13,17$. -/)]\nlemma small_prime_card_bound (p : \u2115) (hp : p.Prime) (hp_gt : 3 < p) (hp_small : p < 19) : (p : \u211a) / 4 - 1 < (Finset.filter (\u03bb s => s + modInv p s > p+2) (Finset.Icc 2 (p-1))).card := by\n  have hp_gt3 : 4 \u2264 p := by omega\n  interval_cases p\n  \u00b7 -- p = 4\n    have h : \u00ac (4 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 5\n    have hcard : (Finset.filter (\u03bb s => s + modInv 5 s > 5+2) (Finset.Icc 2 (5-1))).card = 1 := by\n      decide\n    have h_ineq : (5 : \u211a) / 4 - 1 < (1 : \u211a) := by\n      norm_num\n    simpa [hcard]\n  \u00b7 -- p = 6\n    have h : \u00ac (6 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 7\n    have hcard : (Finset.filter (\u03bb s => s + modInv 7 s > 7+2) (Finset.Icc 2 (7-1))).card = 1 := by\n      decide\n    have h_ineq : (7 : \u211a) / 4 - 1 < (1 : \u211a) := by\n      norm_num\n    simpa [hcard]\n  \u00b7 -- p = 8\n    have h : \u00ac (8 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 9\n    have h : \u00ac (9 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 10\n    have h : \u00ac (10 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 11\n    have hcard : (Finset.filter (\u03bb s => s + modInv 11 s > 11+2) (Finset.Icc 2 (11-1))).card = 5 := by\n      decide\n    have h_ineq : (11 : \u211a) / 4 - 1 < (5 : \u211a) := by\n      norm_num\n    simpa [hcard]\n  \u00b7 -- p = 12\n    have h : \u00ac (12 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 13\n    have hcard : (Finset.filter (\u03bb s => s + modInv 13 s > 13+2) (Finset.Icc 2 (13-1))).card = 3 := by\n      decide\n    have h_ineq : (13 : \u211a) / 4 - 1 < (3 : \u211a) := by\n      norm_num\n    simpa [hcard]\n  \u00b7 -- p = 14\n    have h : \u00ac (14 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 15\n    have h : \u00ac (15 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 16\n    have h : \u00ac (16 : \u2115).Prime := by norm_num\n    exact absurd hp h\n  \u00b7 -- p = 17\n    have hcard : (Finset.filter (\u03bb s => s + modInv 17 s > 17+2) (Finset.Icc 2 (17-1))).card = 7 := by\n      decide\n    have h_ineq : (17 : \u211a) / 4 - 1 < (7 : \u211a) := by\n      norm_num\n    simpa [hcard]\n  \u00b7 -- p = 18\n    have h : \u00ac (18 : \u2115).Prime := by norm_num\n    exact absurd hp h"
+    },
+    {
+      "id": "sum_val_eq_p_add_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "theorem",
+      "statement": "For a prime p and a with a+1 < p, we have f p a + mathit{modInv} p (a+1) = p+1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem sum_val_eq_p_add_one_negation : \u00ac (\u2200 (p : \u2115) [Fact p.Prime] (a : \u2115) (ha : a+1 < p), (f p a) + (modInv p (a+1)) = p+1) := by\n  intro h\n  haveI : Fact (Nat.Prime 2) := \u27e8Nat.prime_two\u27e9\n  have h0 : (0 : \u2115) + 1 < (2 : \u2115) := by\n    decide\n  have hsum := h (2 : \u2115) (0 : \u2115) h0\n  have hf20 : f (2 : \u2115) 0 = 0 := by\n    unfold f\n    -- compute ZMod.val ((0 : ZMod 2) * ((1 : ZMod 2)\u207b\u00b9)) = ZMod.val 0 = 0\n    norm_num\n  have hmodInv21 : modInv (2 : \u2115) 1 = 1 := by\n    unfold modInv\n    -- compute ZMod.val ((1 : ZMod 2)\u207b\u00b9)\n    -- (1 : ZMod 2)\u207b\u00b9 = 1\n    -- then ZMod.val 1 = 1\n    have h1lt2 : 1 < (2 : \u2115) := by decide\n    haveI : Fact (1 < (2 : \u2115)) := \u27e8h1lt2\u27e9\n    simpa using ZMod.val_one (n := (2 : \u2115))\n  rw [hf20, hmodInv21] at hsum\n  omega"
+    }
+  ],
+  "edges": [
+    {
+      "source": "modInv_sub",
+      "target": "card_A_eq_card_B",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_sum_eq_p_add_two",
+      "target": "card_C_le_6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_preimage_at_most_two",
+      "target": "card_C_le_6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_sum_eq_p_sub_two",
+      "target": "card_C_le_6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_C_le_6",
+      "target": "card_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "small_prime_card_bound",
+      "target": "card_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_A_eq_card_B",
+      "target": "card_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_Icc_one_to_p_sub_one",
+      "target": "card_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne_zero_of_lt_ZMod",
+      "target": "card_preimage_at_most_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "modInv_involution",
+      "target": "descentCount_eq_card",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "descent_iff",
+      "target": "descentCount_eq_card",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "modInv_range",
+      "target": "descentCount_eq_card",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_val_eq_p_add_one",
+      "target": "descent_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "modInv_recurrence",
+      "target": "descent_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f",
+      "target": "descent_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "modInv_involution",
+      "target": "descent_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "helper_ineq",
+      "target": "descent_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "modInv_range",
+      "target": "descent_iff",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne_zero_of_lt_ZMod",
+      "target": "modInv_sub",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne_zero_of_lt_ZMod",
+      "target": "ne_zero_add_one_ZMod",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne_zero_of_lt_ZMod",
+      "target": "not_sum_eq_p_add_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne_zero_of_lt_ZMod",
+      "target": "not_sum_eq_p_sub_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "descentCount_eq_card",
+      "target": "putnam_2025_b5",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "modInv",
+      "target": "putnam_2025_b5",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_bound",
+      "target": "putnam_2025_b5",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mul_inv_eq_one_ZMod",
+      "target": "sum_val_eq_p_add_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne_zero_of_lt_ZMod",
+      "target": "sum_val_eq_p_add_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne_zero_add_one_ZMod",
+      "target": "sum_val_eq_p_add_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

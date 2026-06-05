@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">IMO 2025 P1. 441 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item current">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item current">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "T_set",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The set T_n = {(x,y) \u2208 \u2115^2 | x \u2265 1, y \u2265 1, x+y \u2264 n+1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The set $T_n = \\{(x,y) \\in \\mathbb{N}^2 \\mid x \\ge 1, y \\ge 1, x+y \\le n+1\\}$. -/)]\ndef T_set (n : \u2115) : Finset (\u2115 \u00d7 \u2115) :=\n  (Finset.Icc 1 n).product (Finset.Icc 1 n) |>.filter (\u03bb \u27e8x,y\u27e9 => x + y \u2264 n + 1)"
+    },
+    {
+      "id": "at_most_three_sunny_lines",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.39,
+      "proof_length": 8,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "At most three sunny lines can cover exactly (k+1)/2 points in T_k.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- At most three sunny lines can cover exactly $(k+1)/2$ points in $T_k$. -/)\n  (proof := /-- By classification, there are at most three possibilities. -/)]\nlemma at_most_three_sunny_lines (k : \u2115) (hkodd : Odd k) (lines' : Finset (\u211d \u00d7 \u211d)) (hall_sunny : \u2200 l \u2208 lines', l.1 \u2260 0 \u2227 l.1 \u2260 -1) (hcover : \u2200 p \u2208 T_set k, (\u2203 l \u2208 lines', l.1 * p.1 + l.2 = p.2)) (hcard' : (lines'.filter (fun l \u21a6 l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = k) : \n  lines'.card \u2264 3 := by\n  sorry_using [T_set, total_points_inequality]"
+    },
+    {
+      "id": "imo2025_p1_left",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Main theorem: k \u2208 {0,1,3}.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Main theorem: $k \\in \\{0,1,3\\}$. -/)\n  (proof := /-- Combine reduction, bound, parity, and classification. -/)]\ntheorem imo2025_p1_left (n k : \u2115) (verts : Finset \u211d) (lines : Finset (\u211d \u00d7 \u211d)) (points : Finset (\u2115 \u00d7 \u2115)) (hn : 3 \u2264 n) (hcard : lines.card + verts.card = n) (hallpoints : \u2200 p, p \u2208 points \u2194 p.1 \u2265 1 \u2227 p.2 \u2265 1 \u2227 p.1 + p.2 \u2264 n + 1) (hmain : \u2200 p \u2208 points, (\u2203 l \u2208 lines, l.1 * p.1 + l.2 = p.2) \u2228 (\u2203 x \u2208 verts, p.1 = x)) (hk : (lines.filter (fun l \u21a6 l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = k) : k = 0 \u2228 k = 1 \u2228 k = 3 := by\n  rcases reduction_to_all_sunny n k verts lines points hn hcard hallpoints hmain hk with \u27e8lines', verts', hcard_filter, hcard_sum, hall_sunny, hcover\u27e9\n  have hfilter_eq : lines'.filter (fun l \u21a6 l.1 \u2260 0 \u2227 l.1 \u2260 -1) = lines' := by\n    apply Finset.Subset.antisymm\n    \u00b7 exact Finset.filter_subset _ _\n    \u00b7 intro l hl\n      have hprop := hall_sunny l hl\n      exact Finset.mem_filter.mpr \u27e8hl, hprop\u27e9\n  have hlines_card : lines'.card = k := by\n    simpa [hfilter_eq] using hcard_filter\n  have hverts_card : verts'.card = 0 := by\n    rw [hlines_card] at hcard_sum\n    omega\n  have hcover_sunny : \u2200 p \u2208 T_set k, (\u2203 l \u2208 lines', l.1 * p.1 + l.2 = p.2) := by\n    intro p hp\n    rcases hcover p hp with (h | h)\n    \u00b7 exact h\n    \u00b7 rcases h with \u27e8x, hx, hx'\u27e9\n      have hxcard := Finset.card_pos.mpr \u27e8x, hx\u27e9\n      rw [hverts_card] at hxcard\n      omega\n  have hineq : lines'.card * ((k+1)/2 : \u2115) \u2265 k*(k+1)/2 :=\n    total_points_inequality k lines' hall_sunny hcover_sunny\n  rw [hlines_card] at hineq\n  by_cases hkzero : k = 0\n  \u00b7 left; exact hkzero\n  \u00b7 have hkpos : k \u2265 1 := by omega\n    have hkodd : Odd k := k_odd_of_inequality k hkpos hineq\n    have hk_le_3 : k \u2264 3 := by\n      have hcard_at_most_three : lines'.card \u2264 3 :=\n        at_most_three_sunny_lines k hkodd lines' hall_sunny hcover_sunny hcard_filter\n      rw [hlines_card] at hcard_at_most_three\n      exact hcard_at_most_three\n    have hcases : k = 1 \u2228 k = 3 := by\n      have hk_cases : k = 1 \u2228 k = 2 \u2228 k = 3 := by\n        omega\n      rcases hk_cases with (hk1|hk2|hk3)\n      \u00b7 left; exact hk1\n      \u00b7 rcases hkodd with \u27e8t, ht\u27e9\n        subst hk2\n        omega\n      \u00b7 right; exact hk3\n    rcases hcases with (hk1 | hk3)\n    \u00b7 right; left; exact hk1\n    \u00b7 right; right; exact hk3"
+    },
+    {
+      "id": "k_odd_of_inequality",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.12,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If k \u2265 1 and k \u230a (k+1)/2 \u230b \u2265 k(k+1)/2, then k is odd.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $k \\ge 1$ and $k \\lfloor (k+1)/2 \\rfloor \\ge k(k+1)/2$, then $k$ is odd. -/)\n  (proof := /-- Suppose $k$ is even, then $\\lfloor (k+1)/2 \\rfloor = k/2$, and the inequality becomes $k \\cdot k/2 \\ge k(k+1)/2$, which is false for $k>0$. Thus $k$ must be odd. -/)]\nlemma k_odd_of_inequality (k : \u2115) (hkpos : k \u2265 1) (hineq : k * ((k+1)/2 : \u2115) \u2265 k*(k+1)/2) : Odd k := by\n  rcases Nat.even_or_odd k with (h_even | h_odd)\n  \u00b7 rcases h_even with \u27e8m, hm\u27e9\n    subst hm\n    -- k is 2*m\n    -- hkpos : 2*m \u2265 1\n    -- hineq : (2*m)*((2*m+1)/2) \u2265 (2*m)*(2*m+1)/2\n    have hdiv_small : (2*m+1)/2 = m := by\n      calc\n        (2*m+1)/2 = div2 (2*m+1) := by simpa using (Nat.div2_val (2*m+1)).symm\n        _ = m := Nat.div2_bit1 m\n    have hRHS : (2*m)*(2*m+1)/2 = 2*m*m + m := by\n      have hdiv : 2 \u2223 2*m := by simp\n      calc\n        (2*m)*(2*m+1)/2 = ((2*m)/2)*(2*m+1) := by rw [Nat.mul_div_right_comm hdiv]\n        _ = m*(2*m+1) := by\n          have h : (2*m)/2 = m := by omega\n          rw [h]\n        _ = 2*m*m + m := by ring\n    have hLHS : (2*m)*((2*m+1)/2) = 2*m*m := by\n      rw [hdiv_small]\n    -- rewrite hineq using two_mul to match the form (m+m) etc.\n    have hineq' : (m+m)*((m+m+1)/2) \u2265 (m+m)*(m+m+1)/2 := by\n      simpa [two_mul] using hineq\n    have hLHS' : (m+m)*((m+m+1)/2) = 2*m*m := by\n      simpa [two_mul] using hLHS\n    have hRHS' : (m+m)*(m+m+1)/2 = 2*m*m + m := by\n      simpa [two_mul] using hRHS\n    rw [hLHS', hRHS'] at hineq'\n    -- hineq' : 2*m*m \u2265 2*m*m + m\n    -- hkpos : 2*m \u2265 1\n    omega\n  \u00b7 exact h_odd"
+    },
+    {
+      "id": "reduction_to_all_sunny",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "There exists a configuration of k sunny lines covering T_k.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- There exists a configuration of $k$ sunny lines covering $T_k$. -/)\n  (proof := /-- By iteratively removing non-sunny lines using the previous lemmas. -/)]\nlemma reduction_to_all_sunny (n k : \u2115) (verts : Finset \u211d) (lines : Finset (\u211d \u00d7 \u211d)) (points : Finset (\u2115 \u00d7 \u2115)) (hn : 3 \u2264 n) (hcard : lines.card + verts.card = n) (hallpoints : \u2200 p, p \u2208 points \u2194 p.1 \u2265 1 \u2227 p.2 \u2265 1 \u2227 p.1 + p.2 \u2264 n + 1) (hmain : \u2200 p \u2208 points, (\u2203 l \u2208 lines, l.1 * p.1 + l.2 = p.2) \u2228 (\u2203 x \u2208 verts, p.1 = x)) (hk : (lines.filter (fun l \u21a6 l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = k) : \n  \u2203 (lines' : Finset (\u211d \u00d7 \u211d)) (verts' : Finset \u211d), \n    (lines'.filter (fun l \u21a6 l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = k \u2227\n    lines'.card + verts'.card = k \u2227\n    (\u2200 l \u2208 lines', l.1 \u2260 0 \u2227 l.1 \u2260 -1) \u2227\n    (\u2200 p \u2208 T_set k, (\u2203 l \u2208 lines', l.1 * p.1 + l.2 = p.2) \u2228 (\u2203 x \u2208 verts', p.1 = x)) := by\n  sorry_using []"
+    },
+    {
+      "id": "total_points_inequality",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The k sunny lines cover at most k\u230a (k+1)/2\u230b points, but |T_k| = k(k+1)/2, so k\u230a (k+1)/2\u230b \u2265 k(k+1)/2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- The $k$ sunny lines cover at most $k\\lfloor (k+1)/2\\rfloor$ points, but $|T_k| = k(k+1)/2$, so $k\\lfloor (k+1)/2\\rfloor \\ge k(k+1)/2$. -/)\n  (proof := /-- By `sunny_line_points_bound` and `card_T_set`. -/)]\nlemma total_points_inequality (k : \u2115) (lines' : Finset (\u211d \u00d7 \u211d)) (hall_sunny : \u2200 l \u2208 lines', l.1 \u2260 0 \u2227 l.1 \u2260 -1) (hcover : \u2200 p \u2208 T_set k, (\u2203 l \u2208 lines', l.1 * p.1 + l.2 = p.2)) : lines'.card * ((k+1)/2 : \u2115) \u2265 k*(k+1)/2 := by\n  sorry_using []"
+    },
+    {
+      "id": "a_le_n_from_sum",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.95,
+      "proof_length": 17,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a,b,n are positive naturals with a+b \u2264 n+1, then a \u2264 n.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If `a,b,n` are positive naturals with `a+b \u2264 n+1`, then `a \u2264 n`. -/)\n  (proof := /-- Since `b \u2265 1`, we have `a = (a+b) - b \u2264 (n+1) - 1 = n`. -/)]\nlemma a_le_n_from_sum (a b n : \u2115) (ha : a > 0) (hb : b > 0) (hsum : a + b \u2264 n + 1) : a \u2264 n := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "card_Icc_one_to_n",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The cardinality of the Finset {1,2,...,n} as \u2115 is n.",
+      "is_main": false,
+      "col": 1,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- The cardinality of the Finset {1,2,...,n} as \u2115 is n. -/)\n  (proof := /-- By `Nat.card_Icc`. -/)]\nlemma card_Icc_one_to_n (n : \u2115) : (Finset.Icc 1 n).card = n := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "card_filter_sunny_lines1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.63,
+      "proof_length": 22,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Among the two lines (0,1) and (2, -2*n+4), exactly one is sunny (the second one).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Among the two lines `(0,1)` and `(2, -2*n+4)`, exactly one is sunny (the second one). -/)\n  (proof := /-- Compute filter manually: the first line has slope 0, the second has slope 2 \u2260 0, -1. So only the second remains. -/)]\nlemma card_filter_sunny_lines1 (n : \u2115) : (({((0 : \u211d), (1 : \u211d)), ((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))} : Finset (\u211d \u00d7 \u211d)).filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = 1 := by\n  let p : \u211d \u00d7 \u211d \u2192 Prop := fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1\n  have h0 : \u00ac p ((0 : \u211d), (1 : \u211d)) := by\n    unfold p\n    norm_num\n  have h2 : p ((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4)) := by\n    unfold p\n    constructor\n    \u00b7 norm_num\n    \u00b7 norm_num\n  have hfilter : (({((0 : \u211d), (1 : \u211d)), ((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))} : Finset (\u211d \u00d7 \u211d)).filter p) = ({((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))} : Finset (\u211d \u00d7 \u211d)) := by\n    calc\n      (({((0 : \u211d), (1 : \u211d)), ((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))} : Finset (\u211d \u00d7 \u211d)).filter p) = \n        (Finset.filter p (insert ((0 : \u211d), (1 : \u211d)) ({((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))} : Finset (\u211d \u00d7 \u211d)))) := rfl\n      _ = Finset.filter p ({((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))} : Finset (\u211d \u00d7 \u211d)) := by\n        rw [Finset.filter_insert, if_neg h0]\n      _ = ({((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))} : Finset (\u211d \u00d7 \u211d)) := by\n        rw [Finset.filter_singleton, if_pos h2]\n  rw [hfilter]\n  simp"
+    },
+    {
+      "id": "card_filter_sunny_lines3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Among the three lines L1, L2, L3, all three are sunny.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Among the three lines L1, L2, L3, all three are sunny. -/)\n  (proof := /-- Each slope is not 0 nor -1. -/)]\nlemma card_filter_sunny_lines3 (n : \u2115) : (({((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = 3 := by\n  have h_all : \u2200 x \u2208 ({((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)), (x.1 \u2260 0 \u2227 x.1 \u2260 -1) := by\n    intro x hx\n    simp [Finset.mem_insert, Finset.mem_singleton] at hx\n    rcases hx with (\u27e8rfl, rfl\u27e9 | \u27e8rfl, rfl\u27e9 | \u27e8rfl, rfl\u27e9)\n    \u00b7 norm_num\n    \u00b7 norm_num\n    \u00b7 norm_num\n  have h_filter_eq : ({((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1) = ({((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)) := by\n    apply Finset.filter_true_of_mem\n    exact h_all\n  rw [h_filter_eq]\n  -- now need to show card = 3\n  have hne12 : ((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)) \u2260 ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)) := by\n    intro h\n    have hfst : (1 : \u211d) = (-1/2 : \u211d) := congr_arg Prod.fst h\n    norm_num at hfst\n  have hne13 : ((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)) \u2260 ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d)) := by\n    intro h\n    have hfst : (1 : \u211d) = (-2 : \u211d) := congr_arg Prod.fst h\n    norm_num at hfst\n  have hne23 : ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)) \u2260 ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d)) := by\n    intro h\n    have hfst : (-1/2 : \u211d) = (-2 : \u211d) := congr_arg Prod.fst h\n    norm_num at hfst\n  have hmem12_not : ((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)) \u2209 ({((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)) := by\n    intro h\n    rcases Finset.mem_insert.mp h with (h' | h')\n    \u00b7 exact hne12 h'\n    \u00b7 have h_eq := Finset.mem_singleton.mp h'\n      exact hne13 h_eq\n  have hmem23_not : ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)) \u2209 ({((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)) := by\n    intro h\n    have h' := Finset.mem_singleton.mp h\n    exact hne23 h'\n  have hcard : ({((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).card = 3 := by\n    calc\n      ({((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).card\n          = (({((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).card + 1) := by\n            apply Finset.card_insert_of_not_mem\n            exact hmem12_not\n      _ = ((({((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).card + 1) + 1) := by\n            have : ({((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).card = ({((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))} : Finset (\u211d \u00d7 \u211d)).card + 1 := by\n              apply Finset.card_insert_of_not_mem\n              exact hmem23_not\n            rw [this]\n      _ = ((1 + 1) + 1) := by simp\n      _ = 3 := by norm_num\n  exact hcard"
+    },
+    {
+      "id": "card_image_Icc_cast",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The cardinality of the image of {1,...,m} under the natural embedding into \u211d is m.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- The cardinality of the image of {1,...,m} under the natural embedding into \u211d is m. -/)\n  (proof := /-- By `card_Icc_one_to_n` and `Finset.card_image_of_injective`. -/)]\nlemma card_image_Icc_cast (m : \u2115) : ((Finset.Icc 1 m).image (fun i : \u2115 => (i : \u211d))).card = m := by\n  have hinj : Function.Injective (fun (i : \u2115) => (i : \u211d)) := by\n    exact Nat.cast_injective\n  calc\n    ((Finset.Icc 1 m).image (fun i : \u2115 => (i : \u211d))).card = (Finset.Icc 1 m).card := by\n      apply Finset.card_image_of_injective _ hinj\n    _ = m := card_Icc_one_to_n m"
+    },
+    {
+      "id": "case_k0",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.49,
+      "proof_length": 14,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Case k=0: choose empty lines and xs = image of {1,...,n}.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Case `k=0`: choose empty lines and xs = image of {1,...,n}. -/)\n  (proof := /-- Use `card_image_Icc_cast` for cardinal, `a_le_n_from_sum` and `mem_image_Icc_of_bounds` for covering, and filter empty gives 0. -/)]\nlemma case_k0 (n : \u2115) (hn : 3 \u2264 n) : \u2203 lines : Finset (\u211d \u00d7 \u211d), \u2203 xs : Finset \u211d, lines.card + xs.card = n \u2227 (\u2200 a b : \u2115, a > 0 \u2192 b > 0 \u2192 a + b \u2264 n + 1 \u2192 (\u2203 l \u2208 lines, l.1 * a + l.2 = b) \u2228 (\u2203 x \u2208 xs, a = x)) \u2227 (lines.filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = 0 := by\n  refine \u27e8\u2205, (Finset.Icc 1 n).image (fun i : \u2115 => (i : \u211d)), ?_, ?_, ?_\u27e9\n  \u00b7 simp [card_image_Icc_cast n]\n  \u00b7 intro a b ha hb hsum\n    right\n    have ha1 : 1 \u2264 a := Nat.succ_le_of_lt ha\n    have hm : a \u2264 n := a_le_n_from_sum a b n ha hb hsum\n    have mem : (a : \u211d) \u2208 ((Finset.Icc 1 n).image (fun i : \u2115 => (i : \u211d))) := mem_image_Icc_of_bounds a n ha1 hm\n    exact \u27e8(a:\u211d), mem, rfl\u27e9\n  \u00b7 simp"
+    },
+    {
+      "id": "case_k1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.89,
+      "proof_length": 33,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Case k=1: choose xs = image of {1,...,n-2}, lines = {(0,1),(2, -2*n+4)}.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Case `k=1`: choose xs = image of {1,...,n-2}, lines = {(0,1),(2, -2*n+4)}. -/)\n  (proof := /-- Use `card_image_Icc_cast` for xs.card = n-2, lines.card = 2, so total n. Covering: for a \u2264 n-2, use vertical xs; for remaining points (n-1,1),(n,1),(n-1,2), use line y=1 or y=2x-2n+4. Filter sunny yields 1. -/)]\nlemma case_k1 (n : \u2115) (hn : 3 \u2264 n) : \u2203 lines : Finset (\u211d \u00d7 \u211d), \u2203 xs : Finset \u211d, lines.card + xs.card = n \u2227 (\u2200 a b : \u2115, a > 0 \u2192 b > 0 \u2192 a + b \u2264 n + 1 \u2192 (\u2203 l \u2208 lines, l.1 * a + l.2 = b) \u2228 (\u2203 x \u2208 xs, a = x)) \u2227 (lines.filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = 1 := by\n  let xs : Finset \u211d := (Finset.Icc 1 (n-2)).image (fun i : \u2115 => (i : \u211d))\n  let lines : Finset (\u211d \u00d7 \u211d) := {((0 : \u211d), (1 : \u211d)), ((2 : \u211d), ((-2 : \u211d) * (n : \u211d) + 4))}\n  have h2n : 2 \u2264 n := by omega\n  have hcard_xs : xs.card = n - 2 := card_image_Icc_cast (n-2)\n  have hcard_lines : lines.card = 2 := by\n    simp [lines]\n  have hsum : lines.card + xs.card = n := by\n    rw [hcard_lines, hcard_xs]\n    omega\n  have hgoal2 : \u2200 a b : \u2115, a > 0 \u2192 b > 0 \u2192 a + b \u2264 n + 1 \u2192 (\u2203 l \u2208 lines, l.1 * a + l.2 = b) \u2228 (\u2203 x \u2208 xs, a = x) := by\n    intro a b ha hb hsum_ab\n    have ha1 : a \u2265 1 := by omega\n    by_cases ha_le : a \u2264 n-2\n    \u00b7 -- a in xs\n      have hmem : (a : \u211d) \u2208 xs := by\n        apply mem_image_Icc_of_bounds a (n-2) ha1 ha_le\n      right\n      refine \u27e8(a : \u211d), hmem, ?_\u27e9\n      rfl\n    \u00b7 -- a > n-2, i.e., a \u2265 n-1\n      have ha_ge : a \u2265 n-1 := by omega\n      have hb_le2 : b \u2264 2 := by\n        omega\n      have hb_cases : b = 1 \u2228 b = 2 := by\n        omega\n      rcases hb_cases with (hb1 | hb2)\n      \u00b7 -- b = 1\n        subst hb1\n        left\n        refine \u27e8(0, 1), ?_, ?_\u27e9\n        \u00b7 simp [lines]\n        \u00b7 simpa using covered_by_y1 a\n      \u00b7 -- b = 2\n        subst hb2\n        have ha_eq : a = n-1 := by\n          omega\n        subst ha_eq\n        left\n        refine \u27e8(2, (-2 : \u211d) * (n : \u211d) + 4), ?_, ?_\u27e9\n        \u00b7 simp [lines]\n        \u00b7 have h1n : 1 \u2264 n := by omega\n          have hcast : ((n-1 : \u2115) : \u211d) = (n : \u211d) - 1 := by\n            simpa using Nat.cast_sub (R := \u211d) h1n\n          simp [hcast]\n          ring\n  have hgoal3 : (lines.filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = 1 := by\n    simpa [lines] using card_filter_sunny_lines1 n\n  refine \u27e8lines, xs, hsum, hgoal2, hgoal3\u27e9"
+    },
+    {
+      "id": "case_k3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.79,
+      "proof_length": 32,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Case k=3: choose xs = image of {1,...,n-3}, lines = L1,L2,L3.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- Case `k=3`: choose xs = image of {1,...,n-3}, lines = L1,L2,L3. -/)\n  (proof := /-- Use `card_image_Icc_cast` for xs.card = n-3, lines.card = 3, total n. Covering: for a \u2264 n-3, use vertical xs; for remaining six points, use L1, L2, L3 appropriately. Filter sunny yields 3. -/)]\nlemma case_k3 (n : \u2115) (hn : 3 \u2264 n) : \u2203 lines : Finset (\u211d \u00d7 \u211d), \u2203 xs : Finset \u211d, lines.card + xs.card = n \u2227 (\u2200 a b : \u2115, a > 0 \u2192 b > 0 \u2192 a + b \u2264 n + 1 \u2192 (\u2203 l \u2208 lines, l.1 * a + l.2 = b) \u2228 (\u2203 x \u2208 xs, a = x)) \u2227 (lines.filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = 3 := by\n  let lines : Finset (\u211d \u00d7 \u211d) := {((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d))}\n  let xs : Finset \u211d := (Finset.Icc 1 (n-3)).image (fun i : \u2115 => (i : \u211d))\n  have hfilter_eq_lines : lines.filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1) = lines := by\n    apply Finset.filter_true_of_mem\n    intro l hl\n    have : l = ((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)) \u2228 l = ((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)) \u2228 l = ((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d)) := by\n      simpa [lines] using hl\n    rcases this with (h|h|h)\n    \u00b7 subst h; norm_num\n    \u00b7 subst h; norm_num\n    \u00b7 subst h; norm_num\n  have hfilter_card : (lines.filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = 3 := card_filter_sunny_lines3 n\n  have hlines_card : lines.card = 3 := by\n    calc\n      lines.card = (lines.filter (fun l : \u211d \u00d7 \u211d => l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card := by rw [hfilter_eq_lines]\n      _ = 3 := hfilter_card\n  have hxs_card : xs.card = n - 3 := by\n    dsimp [xs]\n    have := card_image_Icc_cast (n-3)\n    simpa using this\n  have hsum_card : lines.card + xs.card = n := by\n    rw [hlines_card, hxs_card]\n    omega\n  have hcover : \u2200 a b : \u2115, a > 0 \u2192 b > 0 \u2192 a + b \u2264 n + 1 \u2192 (\u2203 l \u2208 lines, l.1 * a + l.2 = b) \u2228 (\u2203 x \u2208 xs, a = x) := by\n    intro a b ha_pos hb_pos hsum\n    have ha_le_n : a \u2264 n := a_le_n_from_sum a b n ha_pos hb_pos hsum\n    have hn2 : 2 \u2264 n := by omega\n    have hn3 : 3 \u2264 n := hn\n    have hn1 : 1 \u2264 n := by omega\n    have h2n1 : 1 \u2264 2*n := by omega\n    by_cases h : a \u2264 n - 3\n    \u00b7 -- a \u2264 n-3, so a is in xs\n      have ha_ge_one : a \u2265 1 := by omega\n      have hmem : (a : \u211d) \u2208 xs := by\n        apply mem_image_Icc_of_bounds a (n-3) ha_ge_one h\n      right; refine \u27e8(a : \u211d), hmem, ?_\u27e9\n      simp\n    \u00b7 -- a > n-3\n      have ha_gt : a > n - 3 := by omega\n      by_cases ha_eq_n : a = n\n      \u00b7 subst a\n        have hb_eq_1 : b = 1 := by\n          omega\n        subst b\n        left; refine \u27e8((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ?_, ?_\u27e9\n        \u00b7 simp [lines]\n        \u00b7 simpa using covered_by_L2_2 n\n      \u00b7 by_cases ha_eq_n_sub_1 : a = n-1\n        \u00b7 subst a\n          have hb_cases : b = 1 \u2228 b = 2 := by\n            omega\n          rcases hb_cases with (rfl|rfl)\n          \u00b7 left; refine \u27e8((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d)), ?_, ?_\u27e9\n            \u00b7 simp [lines]\n            \u00b7 simpa [Nat.cast_sub hn1, Nat.cast_sub h2n1, Nat.cast_mul, Nat.cast_one] using covered_by_L3_2 n\n          \u00b7 left; refine \u27e8((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ?_, ?_\u27e9\n            \u00b7 simp [lines]\n            \u00b7 simpa [Nat.cast_sub hn1, Nat.cast_sub hn3, Nat.cast_one] using covered_by_L1_2 n\n        \u00b7 have ha_eq_n_sub_2 : a = n-2 := by\n            omega\n          subst a\n          have hb_cases : b = 1 \u2228 b = 2 \u2228 b = 3 := by\n            omega\n          rcases hb_cases with (rfl|rfl|rfl)\n          \u00b7 left; refine \u27e8((1 : \u211d), (-((n : \u2115) - 3 : \u2115) : \u211d)), ?_, ?_\u27e9\n            \u00b7 simp [lines]\n            \u00b7 simpa [Nat.cast_sub hn2, Nat.cast_sub hn3, Nat.cast_one] using covered_by_L1_1 n\n          \u00b7 left; refine \u27e8((-1/2 : \u211d), (((n : \u2115) + 2 : \u211d)/2)), ?_, ?_\u27e9\n            \u00b7 simp [lines]\n            \u00b7 simpa [Nat.cast_sub hn2, Nat.cast_add, Nat.cast_one] using covered_by_L2_1 n\n          \u00b7 left; refine \u27e8((-2 : \u211d), ((2*(n : \u2115) - 1 : \u2115) : \u211d)), ?_, ?_\u27e9\n            \u00b7 simp [lines]\n            \u00b7 simpa [Nat.cast_sub hn2, Nat.cast_sub h2n1, Nat.cast_mul, Nat.cast_one] using covered_by_L3_1 n\n  refine \u27e8lines, xs, hsum_card, hcover, ?_\u27e9\n  exact hfilter_card"
+    },
+    {
+      "id": "covered_by_L1_1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural n, 1*(n-2 : \u211d) + (-(n-3 : \u211d)) = 1. So L1 covers (n-2,1).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural `n`, `1*(n-2 : \u211d) + (-(n-3 : \u211d)) = 1`. So L1 covers `(n-2,1)`. -/)\n  (proof := /-- Compute `1*(n-2 : \u211d) + (-(n-3 : \u211d)) = 1`. -/)]\nlemma covered_by_L1_1 (n : \u2115) : (1 : \u211d) * ((n : \u211d) - 2) + (-((n : \u211d) - 3)) = (1 : \u211d) := by\n  simp\n  ring"
+    },
+    {
+      "id": "covered_by_L1_2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural n, 1*(n-1 : \u211d) + (-(n-3 : \u211d)) = 2. So L1 covers (n-1,2).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural `n`, `1*(n-1 : \u211d) + (-(n-3 : \u211d)) = 2`. So L1 covers `(n-1,2)`. -/)\n  (proof := /-- Compute `1*(n-1 : \u211d) + (-(n-3 : \u211d)) = 2`. -/)]\nlemma covered_by_L1_2 (n : \u2115) : (1 : \u211d) * ((n : \u211d) - 1) + (-((n : \u211d) - 3)) = (2 : \u211d) := by\n  push_cast\n  ring"
+    },
+    {
+      "id": "covered_by_L2_1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural n, (-1/2)*(n-2 : \u211d) + ((n+2)/2) = 2. So L2 covers (n-2,2).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural `n`, `(-1/2)*(n-2 : \u211d) + ((n+2)/2) = 2`. So L2 covers `(n-2,2)`. -/)\n  (proof := /-- Compute `(-1/2 : \u211d)*(n-2 : \u211d) + ((n+2)/2) = 2`. -/)]\nlemma covered_by_L2_1 (n : \u2115) : ((-1/2 : \u211d) * ((n : \u211d) - 2)) + (((n : \u2115) + 2 : \u211d)/2) = (2 : \u211d) := by\n  push_cast\n  ring"
+    },
+    {
+      "id": "covered_by_L2_2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.16,
+      "proof_length": 12,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural n, (-1/2)*n + (n+2)/2 = 1. So L2 covers (n,1).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural `n`, `(-1/2)*n + (n+2)/2 = 1`. So L2 covers `(n,1)`. -/)\n  (proof := /-- Compute `(-1/2 : \u211d)*(n : \u211d) + ((n+2 : \u211d)/2) = 1`. -/)]\nlemma covered_by_L2_2 (n : \u2115) : ((-1/2 : \u211d) * ((n : \u2115) : \u211d)) + (((n : \u2115) + 2 : \u211d)/2) = (1 : \u211d) := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    },
+    {
+      "id": "covered_by_L3_1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.16,
+      "proof_length": 12,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural n, (-2)*(n-2 : \u211d) + (2*n-1 : \u211d) = 3. So L3 covers (n-2,3).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural `n`, `(-2)*(n-2 : \u211d) + (2*n-1 : \u211d) = 3`. So L3 covers `(n-2,3)`. -/)\n  (proof := /-- Compute `(-2 : \u211d)*(n-2 : \u211d) + (2*n-1 : \u211d) = 3`. -/)]\nlemma covered_by_L3_1 (n : \u2115) : (-2 : \u211d) * ((n : \u211d) - 2) + ((2 : \u211d) * (n : \u211d) - 1) = (3 : \u211d) := by\n  push_cast\n  ring"
+    },
+    {
+      "id": "covered_by_L3_2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.16,
+      "proof_length": 12,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural n, (-2)*(n-1 : \u211d) + (2*n-1 : \u211d) = 1. So L3 covers (n-1,1).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural `n`, `(-2)*(n-1 : \u211d) + (2*n-1 : \u211d) = 1`. So L3 covers `(n-1,1)`. -/)\n  (proof := /-- Compute `(-2 : \u211d)*(n-1 : \u211d) + (2*n-1 : \u211d) = 1`. -/)]\nlemma covered_by_L3_2 (n : \u2115) : (-2 : \u211d) * ((n : \u211d) - 1) + ((2 : \u211d) * (n : \u211d) - 1) = (1 : \u211d) := by\n  push_cast\n  ring"
+    },
+    {
+      "id": "imo2025_p1_right",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 10,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Main theorem: For any n\u22653 and k \u2208 {0,1,3}, there exist lines and xs satisfying the required properties.",
+      "is_main": true,
+      "col": 1,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Main theorem: For any `n\u22653` and `k \u2208 {0,1,3}`, there exist `lines` and `xs` satisfying the required properties. -/)\n  (proof := /-- By case analysis on `hk`, apply `case_k0`, `case_k1`, or `case_k3`. -/)]\ntheorem imo2025_p1_right (n k : \u2115) (hn : 3 \u2264 n) (hk : k = 0 \u2228 k = 1 \u2228 k = 3) : \u2203 lines : Finset (\u211d \u00d7 \u211d), \u2203 xs : Finset \u211d, lines.card + xs.card = n \u2227 (\u2200 a b : \u2115, a > 0 \u2192 b > 0 \u2192 a + b \u2264 n + 1 \u2192 (\u2203 l \u2208 lines, l.1 * a + l.2 = b) \u2228 (\u2203 x \u2208 xs, a = x)) \u2227 (lines.filter (fun l \u21a6 l.1 \u2260 0 \u2227 l.1 \u2260 -1)).card = k := by\n  rcases hk with (hk|hk|hk)\n  \u00b7 rw [hk]\n    exact case_k0 n hn\n  \u00b7 rw [hk]\n    exact case_k1 n hn\n  \u00b7 rw [hk]\n    exact case_k3 n hn"
+    },
+    {
+      "id": "mem_image_Icc_of_bounds",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a is a natural number with 1 \u2264 a and a \u2264 m, then (a : \u211d) belongs to the image of {1,...,m} under the natural embedding.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If `a` is a natural number with `1 \u2264 a` and `a \u2264 m`, then `(a : \u211d)` belongs to the image of {1,...,m} under the natural embedding. -/)\n  (proof := /-- By `Finset.mem_image` and `Finset.mem_Icc`. -/)]\nlemma mem_image_Icc_of_bounds (a m : \u2115) (ha : a \u2265 1) (hm : a \u2264 m) : (a : \u211d) \u2208 ((Finset.Icc 1 m).image (fun i : \u2115 => (i : \u211d))) := by\n  (first | (decide; done) | (omega; done) | (norm_num; done) | (linarith; done) | (nlinarith; done) | (field_simp; ring; done) | (simp_all; done) | (aesop; done))"
+    }
+  ],
+  "edges": [
+    {
+      "source": "total_points_inequality",
+      "target": "at_most_three_sunny_lines",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "reduction_to_all_sunny",
+      "target": "imo2025_p1_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "at_most_three_sunny_lines",
+      "target": "imo2025_p1_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "k_odd_of_inequality",
+      "target": "imo2025_p1_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "total_points_inequality",
+      "target": "imo2025_p1_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "T_set",
+      "target": "imo2025_p1_left",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_Icc_one_to_n",
+      "target": "card_image_Icc_cast",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_le_n_from_sum",
+      "target": "case_k0",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_image_Icc_cast",
+      "target": "case_k0",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_image_Icc_of_bounds",
+      "target": "case_k0",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_image_Icc_cast",
+      "target": "case_k1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_filter_sunny_lines1",
+      "target": "case_k1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_image_Icc_of_bounds",
+      "target": "case_k1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "covered_by_L1_2",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "covered_by_L3_1",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "covered_by_L3_2",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "covered_by_L2_1",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_le_n_from_sum",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "covered_by_L1_1",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_image_Icc_cast",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_filter_sunny_lines3",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "covered_by_L2_2",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mem_image_Icc_of_bounds",
+      "target": "case_k3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case_k1",
+      "target": "imo2025_p1_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case_k3",
+      "target": "imo2025_p1_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "case_k0",
+      "target": "imo2025_p1_right",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

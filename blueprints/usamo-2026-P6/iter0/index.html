@@ -1,0 +1,1544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">USAMO 2026 P6. 1,232 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item current">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item current">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "both_odd_solution",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.65,
+      "proof_length": 52,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a and b are positive odd integers and \u03c6(ab+1) divides a^2+b^2+1, then a is a Fibonacci number.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If a and b are positive odd integers and \u03c6(ab+1) divides a^2+b^2+1, then a is a Fibonacci number. -/)\n  (proof := /-- Since a,b are odd, ab+1 is even and >2 unless a=b=1. If ab+1 > 2, then by Mathlib's `Nat.totient_even`, \u03c6(ab+1) is even. But a^2+b^2+1 is odd, so an even number cannot divide an odd number, contradiction. Hence ab+1 \u2264 2, so ab+1 = 2, a=b=1. Then a = 1 = `Nat.fib 1`. -/)]\nlemma both_odd_solution (a b : \u2115) (ha : 0 < a) (hb : 0 < b) (ha_odd : a % 2 = 1) (hb_odd : b % 2 = 1)\n    (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1) : \u2203 k : \u2115, Nat.fib k = a := by\n  have h_sum_odd : Odd (a ^ 2 + b ^ 2 + 1) := by\n    rw [Nat.odd_iff]\n    have ha_mod2 : a \u2261 1 [MOD 2] := by\n      simpa [Nat.ModEq] using ha_odd\n    have hb_mod2 : b \u2261 1 [MOD 2] := by\n      simpa [Nat.ModEq] using hb_odd\n    have ha_sq_mod2 : a^2 \u2261 1^2 [MOD 2] :=\n      ha_mod2.pow 2\n    have hb_sq_mod2 : b^2 \u2261 1^2 [MOD 2] :=\n      hb_mod2.pow 2\n    have h_sq_sum_mod2 : a^2 + b^2 \u2261 1^2 + 1^2 [MOD 2] :=\n      ha_sq_mod2.add hb_sq_mod2\n    have h_one_sq : 1^2 = 1 := by norm_num\n    have h_one_sq_add : 1^2 + 1^2 = 2 := by norm_num\n    have h_two_mod2 : 2 \u2261 0 [MOD 2] := by decide\n    have h_sum_mod2 : a^2 + b^2 \u2261 0 [MOD 2] := by\n      calc\n        a^2 + b^2 \u2261 1^2 + 1^2 [MOD 2] := h_sq_sum_mod2\n        _ = 2 := by norm_num\n        _ \u2261 0 [MOD 2] := by decide\n    have h_total_mod2 : a^2 + b^2 + 1 \u2261 0 + 1 [MOD 2] :=\n      h_sum_mod2.add (by rfl : (1 : \u2115) \u2261 1 [MOD 2])\n    have h_zero_add_one : (0 : \u2115) + 1 = 1 := by norm_num\n    simpa [Nat.ModEq, h_zero_add_one] using h_total_mod2\n  have h_phi_odd : Odd (Nat.totient (a * b + 1)) :=\n    Odd.of_dvd_nat h_sum_odd h\n  rcases (Nat.odd_totient_iff.mp h_phi_odd) with (h1 | h2)\n  \u00b7 -- case a*b+1 = 1\n    have h_mul_pos : 0 < a*b := mul_pos ha hb\n    have : 2 \u2264 a*b + 1 := by omega\n    omega\n  \u00b7 -- case a*b+1 = 2\n    have h_mul : a*b = 1 := by omega\n    have ha1 : a = 1 := Nat.eq_one_of_mul_eq_one_right h_mul\n    use 1\n    rw [ha1]\n    norm_num"
+    },
+    {
+      "id": "different_parity_solution",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.23,
+      "proof_length": 47,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a,b are positive integers with different parity and \u03c6(ab+1) \u2223 a^2+b^2+1, then a is a Fibonacci number.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If a,b are positive integers with different parity and \u03c6(ab+1) \u2223 a^2+b^2+1, then a is a Fibonacci number. -/)\n  (proof := /-- Since a,b have different parity, n = ab+1 is odd and a^2+b^2+1 \u2261 2 mod 4, so 4 \u2224 \u03c6(n). By `totient_not_multiple_of_four_implies_prime_power`, n = p^m for some prime p \u2261 3 mod 4. Then ab = p^m - 1. If m=1, `prime_case_solution` applies; if m\u22652, `prime_power_solution` applies. -/)]\nlemma different_parity_solution (a b : \u2115) (ha : 0 < a) (hb : 0 < b) (h_parity : a % 2 \u2260 b % 2)\n    (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1) : \u2203 k : \u2115, Nat.fib k = a := by\n  have ha_mod2_0_or_1 : a % 2 = 0 \u2228 a % 2 = 1 := Nat.mod_two_eq_zero_or_one a\n  have hb_mod2_0_or_1 : b % 2 = 0 \u2228 b % 2 = 1 := Nat.mod_two_eq_zero_or_one b\n  have h_sq_mod4_even (x : \u2115) (hx : x % 2 = 0) : x^2 % 4 = 0 := by\n    have hx2 : 2 \u2223 x := Nat.dvd_of_mod_eq_zero hx\n    rcases hx2 with \u27e8k, hx2\u27e9\n    rw [hx2]\n    have h4 : 4 \u2223 (2*k)^2 := by\n      use k^2\n      ring\n    exact Nat.mod_eq_zero_of_dvd h4\n  have h_sq_mod4_odd (x : \u2115) (hx : x % 2 = 1) : x^2 % 4 = 1 := by\n    have hodd : Odd x := by\n      rcases Nat.even_or_odd x with (h | h)\n      \u00b7 rw [Nat.even_iff] at h\n        rw [h] at hx\n        omega\n      \u00b7 exact h\n    rcases hodd with \u27e8k, hodd\u27e9\n    rw [hodd]\n    have h4 : 4 \u2223 4*k^2 + 4*k := by\n      use k^2 + k\n      ring\n    have hmod : (4*k^2 + 4*k) % 4 = 0 := Nat.mod_eq_zero_of_dvd h4\n    calc\n      ((2*k + 1)^2) % 4 = (4*k^2 + 4*k + 1) % 4 := by ring\n      _ = ((4*k^2 + 4*k) % 4 + 1 % 4) % 4 := by simp [Nat.add_mod]\n      _ = (0 + 1) % 4 := by simp [hmod]\n      _ = 1 % 4 := by simp\n      _ = 1 := by norm_num\n  have h_mod4 : (a^2 + b^2 + 1) % 4 = 2 := by\n    rcases ha_mod2_0_or_1 with (ha0 | ha1)\n    \u00b7 rcases hb_mod2_0_or_1 with (hb0 | hb1)\n      \u00b7 exfalso; exact h_parity (ha0.trans hb0.symm)\n      \u00b7 have ha_sq_mod4 : a^2 % 4 = 0 := h_sq_mod4_even a ha0\n        have hb_sq_mod4 : b^2 % 4 = 1 := h_sq_mod4_odd b hb1\n        calc\n          (a^2 + b^2 + 1) % 4 = ((a^2 % 4) + (b^2 % 4) + 1 % 4) % 4 := by simp [Nat.add_mod]\n          _ = (0 + 1 + 1) % 4 := by simp [ha_sq_mod4, hb_sq_mod4]\n          _ = 2 % 4 := by norm_num\n          _ = 2 := by norm_num\n    \u00b7 rcases hb_mod2_0_or_1 with (hb0 | hb1)\n      \u00b7 have ha_sq_mod4 : a^2 % 4 = 1 := h_sq_mod4_odd a ha1\n        have hb_sq_mod4 : b^2 % 4 = 0 := h_sq_mod4_even b hb0\n        calc\n          (a^2 + b^2 + 1) % 4 = ((a^2 % 4) + (b^2 % 4) + 1 % 4) % 4 := by simp [Nat.add_mod]\n          _ = (1 + 0 + 1) % 4 := by simp [ha_sq_mod4, hb_sq_mod4]\n          _ = 2 % 4 := by norm_num\n          _ = 2 := by norm_num\n      \u00b7 exfalso; exact h_parity (ha1.trans hb1.symm)\n  have h_not_4 : \u00ac 4 \u2223 Nat.totient (a * b + 1) := by\n    intro h4\n    have h4' : 4 \u2223 a^2 + b^2 + 1 := Nat.dvd_trans h4 h\n    have h_mod4_zero : (a^2 + b^2 + 1) % 4 = 0 := Nat.mod_eq_zero_of_dvd h4'\n    rw [h_mod4] at h_mod4_zero\n    norm_num at h_mod4_zero\n  have hn_odd : (a * b + 1) % 2 = 1 := by\n    have hprod_mod2 : (a * b) % 2 = 0 := by\n      calc\n        (a * b) % 2 = ((a % 2) * (b % 2)) % 2 := by simp [Nat.mul_mod]\n        _ = 0 := by\n          have htemp : a % 2 * b % 2 = 0 := by\n            rcases ha_mod2_0_or_1 with (ha0 | ha1)\n            \u00b7 simp [ha0]\n            \u00b7 rcases hb_mod2_0_or_1 with (hb0 | hb1)\n              \u00b7 simp [ha1, hb0]\n              \u00b7 exfalso; exact h_parity (ha1.trans hb1.symm)\n          simp [htemp]\n    calc\n      (a * b + 1) % 2 = ((a * b) % 2 + 1 % 2) % 2 := by simp [Nat.add_mod]\n      _ = (0 + 1) % 2 := by simp [hprod_mod2]\n      _ = 1 % 2 := by simp\n      _ = 1 := by norm_num\n  have h_prime_power : \u2203 (p : \u2115) (m : \u2115), Nat.Prime p \u2227 p % 4 = 3 \u2227 (a * b + 1) = p ^ m :=\n    totient_not_multiple_of_four_implies_prime_power (a * b + 1) hn_odd h_not_4\n  rcases h_prime_power with \u27e8p, m, hp_prime, hp_mod4, hn_eq\u27e9\n  have hab_eq : a * b = p ^ m - 1 := by\n    omega\n  by_cases hm : m = 1\n  \u00b7 subst hm\n    have h_phi_p : Nat.totient p = a * b := by\n      have htot_prime : Nat.totient p = p - 1 := Nat.totient_prime hp_prime\n      rw [htot_prime]\n      have hp_eq : p = a*b + 1 := by\n        calc\n          p = p ^ 1 := by simp\n          _ = a*b + 1 := by symm; exact hn_eq\n      rw [hp_eq]\n      have hab_pos : 0 < a * b := mul_pos ha hb\n      omega\n    have h_div : a * b \u2223 a ^ 2 + b ^ 2 + 1 := by\n      have htot : Nat.totient (a * b + 1) = a * b := by\n        rw [hn_eq, pow_one]\n        exact h_phi_p\n      rw [htot] at h\n      exact h\n    exact prime_case_solution p a b hp_prime hp_mod4 h_phi_p h_div ha hb\n  \u00b7 have hm2 : 2 \u2264 m := by\n      by_contra! H\n      have hm_lt2 : m < 2 := H\n      have hm0_or_1 : m = 0 \u2228 m = 1 := by omega\n      rcases hm0_or_1 with (hm0 | hm1)\n      \u00b7 rw [hm0, pow_zero] at hn_eq\n        have hpos : a * b + 1 \u2265 2 := by\n          have h_ab : a * b \u2265 1 := by\n            exact Nat.succ_le_of_lt (mul_pos ha hb)\n          omega\n        omega\n      \u00b7 exact hm hm1\n    have h_phi_pm : Nat.totient (p ^ m) \u2223 a ^ 2 + b ^ 2 + 1 := by\n      rw [\u2190 hn_eq]\n      exact h\n    have hab_eq' : a * b = p ^ m - 1 := hab_eq\n    exact prime_power_solution p a b m hp_prime hp_mod4 hm2 h_phi_pm hab_eq' ha hb"
+    },
+    {
+      "id": "fibonacci_of_three_ab",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a,b are positive integers satisfying a^2+b^2+1 = 3*a*b, then a is a Fibonacci number.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If a,b are positive integers satisfying a^2+b^2+1 = 3*a*b, then a is a Fibonacci number. -/)\n  (proof := /-- The equation a^2+b^2+1 = 3ab is known to generate alternate Fibonacci numbers; in particular, a must be a Fibonacci number. -/)]\nlemma fibonacci_of_three_ab (a b : \u2115) (ha : 0 < a) (hb : 0 < b) (h_eq : a ^ 2 + b ^ 2 + 1 = 3 * a * b) : \u2203 k : \u2115, Nat.fib k = a := by\n  have fib_add_four_add (n : \u2115) : Nat.fib (n+4) + Nat.fib n = 3 * Nat.fib (n+2) := by\n    have h : Nat.fib (n+4) = Nat.fib (n+2) + Nat.fib (n+3) := by rw [Nat.fib_add_two]\n    have h2 : Nat.fib (n+3) = Nat.fib (n+1) + Nat.fib (n+2) := by rw [Nat.fib_add_two]\n    have h3 : Nat.fib (n+2) = Nat.fib n + Nat.fib (n+1) := by rw [Nat.fib_add_two]\n    calc\n      Nat.fib (n+4) + Nat.fib n = (Nat.fib (n+2) + Nat.fib (n+3)) + Nat.fib n := by rw [h]\n      _ = (Nat.fib (n+2) + (Nat.fib (n+1) + Nat.fib (n+2))) + Nat.fib n := by rw [h2]\n      _ = (Nat.fib (n+2) + Nat.fib (n+1) + Nat.fib (n+2)) + Nat.fib n := by ring\n      _ = (2 * Nat.fib (n+2) + Nat.fib (n+1)) + Nat.fib n := by ring\n      _ = 2 * (Nat.fib n + Nat.fib (n+1)) + Nat.fib (n+1) + Nat.fib n := by rw [h3]\n      _ = 2 * Nat.fib n + 2 * Nat.fib (n+1) + Nat.fib (n+1) + Nat.fib n := by ring\n      _ = 3 * Nat.fib n + 3 * Nat.fib (n+1) := by ring\n      _ = 3 * (Nat.fib n + Nat.fib (n+1)) := by ring\n      _ = 3 * Nat.fib (n+2) := by rw [h3]\n  have fib_pair' (a b : \u2115) (ha : 0 < a) (hb : 0 < b) (h_eq : a ^ 2 + b ^ 2 + 1 = 3 * a * b) (hge : a \u2265 b) : (a = 1 \u2227 b = 1) \u2228 \u2203 k : \u2115, a = Nat.fib (2*k+3) \u2227 b = Nat.fib (2*k+1) := by\n    let P (a : \u2115) : Prop := \u2200 (b : \u2115), 0 < a \u2192 0 < b \u2192 (a ^ 2 + b ^ 2 + 1 = 3 * a * b) \u2192 (a \u2265 b) \u2192 ((a = 1 \u2227 b = 1) \u2228 \u2203 k : \u2115, a = Nat.fib (2*k+3) \u2227 b = Nat.fib (2*k+1))\n    have hP : \u2200 a, (\u2200 a' < a, P a') \u2192 P a := by\n      intro a IH b ha hb h_eq hge\n      by_cases h_eq_ab : a = b\n      \u00b7 subst h_eq_ab\n        have ha_sq_eq_one : a^2 = 1 := by\n          nlinarith\n        have ha_one : a = 1 := by\n          nlinarith\n        exact Or.inl \u27e8ha_one, ha_one\u27e9\n      \u00b7 -- a \u2260 b, and a \u2265 b, so a > b\n        have ha_gt_b : a > b := Nat.lt_of_le_of_ne hge (Ne.symm h_eq_ab)\n        have ha_le_3b : a \u2264 3*b := by\n          nlinarith\n        have ha_lt_3b : a < 3*b := by\n          nlinarith\n        -- define c = 3*b - a\n        let c := 3*b - a\n        have hc_pos : 0 < c := by\n          have : a < 3*b := ha_lt_3b\n          exact Nat.sub_pos_of_lt this\n        have hc_add_a_eq_3b : c + a = 3*b := by\n          calc\n            c + a = (3*b - a) + a := rfl\n            _ = 3*b := Nat.sub_add_cancel ha_le_3b\n        -- (b,c) satisfies the equation\n        have h_eq2 : b ^ 2 + c ^ 2 + 1 = 3 * b * c := by\n          have ha_le_3b' : (a : \u2124) \u2264 3*(b : \u2124) := by exact_mod_cast ha_le_3b\n          have ha_lt_3b' : (a : \u2124) < 3*(b : \u2124) := by exact_mod_cast ha_lt_3b\n          have h_eq' : (a : \u2124)^2 + (b : \u2124)^2 + 1 = 3*(a : \u2124)*(b : \u2124) := by exact_mod_cast h_eq\n          have h_goal : (b : \u2124)^2 + ((3 : \u2124)*b - a)^2 + 1 = 3*(b : \u2124)*((3 : \u2124)*b - a) := by\n            nlinarith\n          have h_c_cast : (c : \u2124) = (3 : \u2124)*b - a := by\n            simp [c, Nat.cast_sub ha_le_3b, Nat.cast_mul, Nat.cast_ofNat]\n          have h_goal' : (b : \u2124)^2 + (c : \u2124)^2 + 1 = 3*(b : \u2124)*(c : \u2124) := by\n            simpa [h_c_cast] using h_goal\n          exact_mod_cast h_goal'\n        -- Now we need to apply IH to (b,c). First show b \u2265 c.\n        have hb_ge_c : b \u2265 c := by\n          have ha_ge_2b : a \u2265 2*b := by\n            by_contra! h\n            have : a < 2*b := h\n            nlinarith\n          calc\n            c = 3*b - a := rfl\n            _ \u2264 3*b - 2*b := Nat.sub_le_sub_left ha_ge_2b (3*b)\n            _ = b := by omega\n        -- Now apply IH to b (which is < a)\n        have h_lt : b < a := ha_gt_b\n        have h_ih := IH b h_lt c hb hc_pos h_eq2 hb_ge_c\n        rcases h_ih with (h_case | \u27e8k, hb_fib, hc_fib\u27e9)\n        \u00b7 -- case (b = 1 \u2227 c = 1)\n          rcases h_case with \u27e8hb_one, hc_one\u27e9\n          -- Then a = 2\n          have ha_two : a = 2 := by\n            nlinarith\n          refine Or.inr \u27e80, ?_, ?_\u27e9\n          \u00b7 -- a = fib(2*0+3) = fib 3 = 2\n            rw [ha_two]\n            norm_num [Nat.fib_add_two, Nat.fib_one, Nat.fib_two]\n          \u00b7 -- b = fib(2*0+1) = fib 1 = 1\n            rw [hb_one]\n            simp\n        \u00b7 -- case \u2203 k, b = fib(2k+3) \u2227 c = fib(2k+1)\n          -- Then a = 3*b - c = fib(2k+5)\n          have ha_fib : a = Nat.fib (2*(k+1)+3) := by\n            have h_fib_add : Nat.fib (2*k+5) + c = 3*b := by\n              calc\n                Nat.fib (2*k+5) + c = (Nat.fib (2*k+5) + Nat.fib (2*k+1)) := by rw [hc_fib]\n                _ = 3 * Nat.fib (2*k+3) := fib_add_four_add (2*k+1)\n                _ = 3 * b := by rw [hb_fib]\n            have htemp : c + a = Nat.fib (2*k+5) + c := by\n              rw [hc_add_a_eq_3b, h_fib_add]\n            have htemp' : a + c = Nat.fib (2*k+5) + c := by\n              simpa [add_comm] using htemp\n            have ha_eq : a = Nat.fib (2*k+5) := Nat.add_right_cancel htemp'\n            calc\n              a = Nat.fib (2*k+5) := ha_eq\n              _ = Nat.fib (2*(k+1)+3) := by ring\n          refine Or.inr \u27e8k+1, ?_, ?_\u27e9\n          \u00b7 -- a = fib(2*(k+1)+3) (already)\n            exact ha_fib\n          \u00b7 -- b = fib(2*(k+1)+1) = fib(2*k+3)\n            calc\n              b = Nat.fib (2*k+3) := hb_fib\n              _ = Nat.fib (2*(k+1)+1) := by ring\n    have hPa : P a := Nat.strong_induction_on a hP\n    exact hPa b ha hb h_eq hge\n  by_cases hge : a \u2265 b\n  \u00b7 rcases fib_pair' a b ha hb h_eq hge with (\u27e8ha1, hb1\u27e9 | \u27e8k, ha_fib, hb_fib\u27e9)\n    \u00b7 rw [ha1]\n      exact \u27e81, by simp\u27e9\n    \u00b7 refine \u27e82*k+3, ?_\u27e9\n      exact ha_fib.symm\n  \u00b7 have hge' : b \u2265 a := Nat.le_of_lt (Nat.lt_of_not_ge hge)\n    have h_eq_symm : b ^ 2 + a ^ 2 + 1 = 3 * b * a := by\n      simpa [add_comm, mul_comm, mul_left_comm, mul_assoc] using h_eq\n    rcases fib_pair' b a hb ha h_eq_symm hge' with (\u27e8hb1, ha1\u27e9 | \u27e8k, hb_fib, ha_fib\u27e9)\n    \u00b7 rw [ha1]\n      exact \u27e81, by simp\u27e9\n    \u00b7 refine \u27e82*k+1, ?_\u27e9\n      exact ha_fib.symm"
+    },
+    {
+      "id": "prime_case_solution",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.12,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If p is a prime \u22613 mod4, \u03c6(p) = a*b, and a*b \u2223 a^2+b^2+1, then a is a Fibonacci number.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If p is a prime \u22613 mod4, \u03c6(p) = a*b, and a*b \u2223 a^2+b^2+1, then a is a Fibonacci number. -/)\n  (proof := /-- Since \u03c6(p) = p-1 = a*b, the divisibility gives a^2+b^2+1 = k*a*b for some k. By `vieta_jump_k_three`, k=3. Then by `fibonacci_of_three_ab`, a is a Fibonacci number. -/)]\nlemma prime_case_solution (p a b : \u2115) (hp : Nat.Prime p) (hp_mod4 : p % 4 = 3) (h_phi : Nat.totient p = a * b) (h_div : a * b \u2223 a ^ 2 + b ^ 2 + 1) (ha : 0 < a) (hb : 0 < b) : \u2203 k : \u2115, Nat.fib k = a := by\n  have hp_prime_tot : Nat.totient p = p - 1 := Nat.totient_prime hp\n  rcases h_div with \u27e8t, ht\u27e9\n  -- ht : a ^ 2 + b ^ 2 + 1 = (a * b) * t\n  have ht_pos : 0 < t := by\n    by_contra! H\n    -- H: \u00ac 0 < t, i.e., t \u2264 0\n    have ht0 : t = 0 := by omega\n    rw [ht0, mul_zero] at ht\n    omega\n  -- Need to rewrite ht to the form a^2+b^2+1 = t*a*b\n  have ht' : a ^ 2 + b ^ 2 + 1 = t * a * b := by\n    -- (a*b)*t = t*a*b by commutativity\n    calc\n      a ^ 2 + b ^ 2 + 1 = (a * b) * t := ht\n      _ = t * a * b := by ring\n  have h_t_eq_3 : t = 3 := vieta_jump_k_three a b t ha hb ht_pos ht'\n  rw [h_t_eq_3] at ht'\n  -- Now ht' : a^2+b^2+1 = 3*a*b\n  exact fibonacci_of_three_ab a b ha hb ht'"
+    },
+    {
+      "id": "prime_divides_polynomial_implies_three",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.89,
+      "proof_length": 33,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "theorem",
+      "statement": "If p is a prime, p \u2261 3 mod 4, and p \u2223 a^4 + a^2 + 1, then p = 3.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem prime_divides_polynomial_implies_three_negation : \u00ac (\u2200 (p a : \u2115) (hp : Nat.Prime p) (hp_mod4 : p % 4 = 3) (h_div : p \u2223 a ^ 4 + a ^ 2 + 1), p = 3) := by\n  intro h\n  have h7prime : Nat.Prime 7 := by norm_num\n  have h7mod4 : 7 % 4 = 3 := by norm_num\n  have h7div : 7 \u2223 2 ^ 4 + 2 ^ 2 + 1 := by norm_num\n  have h7eq3 : 7 = 3 := h 7 2 h7prime h7mod4 h7div\n  norm_num at h7eq3"
+    },
+    {
+      "id": "prime_power_divides_polynomial",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.2,
+      "proof_length": 36,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If p is prime, m \u2265 2, n = p^m, \u03c6(n) \u2223 a^2+b^2+1, and ab = p^m - 1, then p \u2223 a^4 + a^2 + 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If p is prime, m \u2265 2, n = p^m, \u03c6(n) \u2223 a^2+b^2+1, and ab = p^m - 1, then p \u2223 a^4 + a^2 + 1. -/)\n  (proof := /-- Since p^{m-1} \u2223 \u03c6(n), we have p^{m-1} \u2223 a^2+b^2+1. Using the congruence b \u2261 -a^{-1} mod p^{m-1}, we deduce p^{m-1} \u2223 a^4 + a^2 + 1, so in particular p \u2223 a^4 + a^2 + 1. -/)]\nlemma prime_power_divides_polynomial (p a b m : \u2115) (hp : Nat.Prime p) (hm : 2 \u2264 m) (h_phi : Nat.totient (p ^ m) \u2223 a ^ 2 + b ^ 2 + 1) (h_ab : a * b = p ^ m - 1) : p \u2223 a ^ 4 + a ^ 2 + 1 := by\n  have hm_pos : 0 < m := by omega\n  have htot_formula : Nat.totient (p ^ m) = p ^ (m - 1) * (p - 1) :=\n    Nat.totient_prime_pow hp hm_pos\n  have hp_tot : p \u2223 Nat.totient (p ^ m) := by\n    rw [htot_formula]\n    have hp_pow : p \u2223 p ^ (m - 1) := dvd_pow_self p (by omega : m - 1 \u2260 0)\n    simpa [mul_comm] using dvd_mul_of_dvd_right hp_pow (p - 1)\n  have hp_ab : p \u2223 a ^ 2 + b ^ 2 + 1 :=\n    Nat.dvd_trans hp_tot h_phi\n  have hp_ab_mod : p \u2223 a * b + 1 := by\n    have h_nonzero : 1 \u2264 p ^ m := Nat.one_le_pow m p (Nat.Prime.pos hp)\n    have h_eq : a * b + 1 = p ^ m := by\n      calc\n        a * b + 1 = (p ^ m - 1) + 1 := by rw [h_ab]\n        _ = p ^ m := by rw [Nat.sub_add_cancel h_nonzero]\n    rw [h_eq]\n    exact dvd_pow_self p (by omega : m \u2260 0)\n  haveI : Fact (Nat.Prime p) := \u27e8hp\u27e9\n  have h_ab_mod_Z' : (a : ZMod p) * (b : ZMod p) + 1 = 0 := by\n    have htemp : ((a * b + 1 : \u2115) : ZMod p) = 0 := by\n      rw [ZMod.natCast_eq_zero_iff]\n      exact hp_ab_mod\n    simpa [Nat.cast_add, Nat.cast_mul] using htemp\n  have h_tot_mod_Z' : (a : ZMod p)^2 + (b : ZMod p)^2 + 1 = 0 := by\n    have htemp : ((a ^ 2 + b ^ 2 + 1 : \u2115) : ZMod p) = 0 := by\n      rw [ZMod.natCast_eq_zero_iff]\n      exact hp_ab\n    simpa [Nat.cast_add, Nat.cast_pow] using htemp\n  have hx0 : (a : ZMod p) \u2260 0 := by\n    intro hzero\n    have h1zero : (1 : ZMod p) = 0 := by\n      calc\n        (1 : ZMod p) = (a : ZMod p) * (b : ZMod p) + 1 := by\n          simp [hzero]\n        _ = 0 := h_ab_mod_Z'\n    have hp_dvd_one : p \u2223 1 := by\n      apply (ZMod.natCast_eq_zero_iff (1 : \u2115) p).mp\n      simpa using h1zero\n    have hp_ne_one : p \u2260 1 := Nat.Prime.ne_one hp\n    exact hp_ne_one (Nat.dvd_one.mp hp_dvd_one)\n  have hxy_eq : (a : ZMod p) * (b : ZMod p) = -1 := by\n    exact (add_eq_zero_iff_eq_neg.mp h_ab_mod_Z')\n  have hy_eq : (b : ZMod p) = -(a : ZMod p)\u207b\u00b9 := by\n    calc\n      (b : ZMod p) = ((a : ZMod p)\u207b\u00b9) * ((a : ZMod p) * (b : ZMod p)) := by\n        field_simp [hx0]\n      _ = (a : ZMod p)\u207b\u00b9 * (-1) := by rw [hxy_eq]\n      _ = -(a : ZMod p)\u207b\u00b9 := by ring\n  have hy_sq_eq : (b : ZMod p)^2 = ((a : ZMod p)\u207b\u00b9)^2 := by\n    calc\n      (b : ZMod p)^2 = (-(a : ZMod p)\u207b\u00b9)^2 := by rw [hy_eq]\n      _ = ((a : ZMod p)\u207b\u00b9)^2 := by ring\n  have h_sq_eq : (a : ZMod p)^2 + ((a : ZMod p)\u207b\u00b9)^2 + 1 = 0 := by\n    simpa [hy_sq_eq] using h_tot_mod_Z'\n  have h_goal_Z : (a : ZMod p)^4 + (a : ZMod p)^2 + 1 = 0 := by\n    calc\n      (a : ZMod p)^4 + (a : ZMod p)^2 + 1 = (a : ZMod p)^2 * ((a : ZMod p)^2 + ((a : ZMod p)\u207b\u00b9)^2 + 1) := by\n        field_simp [hx0]\n        ring\n      _ = (a : ZMod p)^2 * 0 := by rw [h_sq_eq]\n      _ = 0 := mul_zero _\n  rw [\u2190 ZMod.natCast_eq_zero_iff]\n  simpa using h_goal_Z"
+    },
+    {
+      "id": "prime_power_solution",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.24,
+      "proof_length": 27,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If p is prime \u2261 3 mod 4, m \u2265 2, n = p^m, \u03c6(n) \u2223 a^2+b^2+1, and ab = p^m-1, then a is a Fibonacci number.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If p is prime \u2261 3 mod 4, m \u2265 2, n = p^m, \u03c6(n) \u2223 a^2+b^2+1, and ab = p^m-1, then a is a Fibonacci number. -/)\n  (proof := /-- By `prime_power_divides_polynomial`, p \u2223 a^4+a^2+1. By `prime_divides_polynomial_implies_three`, p=3. Then `nine_not_divides_poly` forces m=2, so n=9, ab=8. Checking divisor pairs leaves only (1,8) and (8,1); both give a Fibonacci. -/)]\nlemma prime_power_solution (p a b m : \u2115) (hp : Nat.Prime p) (hp_mod4 : p % 4 = 3) (hm : 2 \u2264 m) (h_phi : Nat.totient (p ^ m) \u2223 a ^ 2 + b ^ 2 + 1) (h_ab : a * b = p ^ m - 1) (ha : 0 < a) (hb : 0 < b) : \u2203 k : \u2115, Nat.fib k = a := by\n  have hp_div : p \u2223 a ^ 4 + a ^ 2 + 1 :=\n    prime_power_divides_polynomial p a b m hp hm h_phi h_ab\n  have hp_eq_3 : p = 3 :=\n    prime_divides_polynomial_implies_three p a hp hp_mod4 hp_div\n  subst hp_eq_3\n  -- now p = 3\n  have h3prime : Nat.Prime 3 := hp\n  by_cases hm_eq2 : m = 2\n  \u00b7 subst hm_eq2\n    -- m = 2 case\n    have h_tot9 : Nat.totient 9 = 6 := by decide\n    have h_phi_dvd : 6 \u2223 a ^ 2 + b ^ 2 + 1 := by\n      simpa [h_tot9] using h_phi\n    have h_prod : a * b = 8 := by\n      simpa using h_ab\n    have ha_dvd_8 : a \u2223 8 := by\n      rw [\u2190 h_prod]\n      exact \u27e8b, rfl\u27e9\n    have ha_cases : a = 1 \u2228 a = 2 \u2228 a = 4 \u2228 a = 8 := by\n      have h_divisors : Nat.divisors 8 = {1,2,4,8} := by decide\n      have hmem : a \u2208 Nat.divisors 8 := by\n        apply Nat.mem_divisors.mpr\n        exact \u27e8ha_dvd_8, by norm_num\u27e9\n      rw [h_divisors] at hmem\n      simpa using hmem\n    rcases ha_cases with (ha1|ha2|ha4|ha8)\n    \u00b7 subst ha1\n      have hb_eq : b = 8 := by\n        nlinarith\n      subst hb_eq\n      refine \u27e81, ?_\u27e9\n      norm_num\n    \u00b7 subst ha2\n      have hb_eq : b = 4 := by\n        nlinarith\n      subst hb_eq\n      have : 6 \u2223 2 ^ 2 + 4 ^ 2 + 1 := by\n        simpa using h_phi_dvd\n      norm_num at this\n    \u00b7 subst ha4\n      have hb_eq : b = 2 := by\n        nlinarith\n      subst hb_eq\n      have : 6 \u2223 4 ^ 2 + 2 ^ 2 + 1 := by\n        simpa using h_phi_dvd\n      norm_num at this\n    \u00b7 subst ha8\n      have hb_eq : b = 1 := by\n        nlinarith\n      subst hb_eq\n      refine \u27e86, ?_\u27e9\n      norm_num\n  \u00b7 -- m \u2260 2, so m > 2\n    have hm_gt2 : 2 < m := by omega\n    have nine_not_dvd_sq_add_three (s : \u2115) : \u00ac 9 \u2223 s ^ 2 + 3 := by\n      have h_range : \u2200 x : \u2115, x < 9 \u2192 \u00ac 9 \u2223 x ^ 2 + 3 := by\n        decide\n      have hx := h_range (s % 9) (Nat.mod_lt s (by norm_num))\n      have h_mod_sq : s ^ 2 % 9 = (s % 9) ^ 2 % 9 := by\n        simpa [Nat.pow_mod] using rfl\n      intro h\n      apply hx\n      have h_mod_total : (s ^ 2 + 3) % 9 = ((s % 9) ^ 2 + 3) % 9 := by\n        calc\n          (s ^ 2 + 3) % 9 = ((s ^ 2 % 9) + (3 % 9)) % 9 := by simpa using Nat.add_mod (s ^ 2) 3 9\n          _ = ((s ^ 2 % 9) + 3) % 9 := by norm_num\n          _ = (((s % 9) ^ 2 % 9) + 3) % 9 := by rw [h_mod_sq]\n          _ = ((s % 9) ^ 2 + 3) % 9 := by simpa using Nat.add_mod ((s % 9) ^ 2) 3 9\n      have hzero : (s ^ 2 + 3) % 9 = 0 := Nat.mod_eq_zero_of_dvd h\n      rw [h_mod_total] at hzero\n      exact Nat.dvd_of_mod_eq_zero hzero\n    have h_tot : Nat.totient (3 ^ m) = 2 * 3 ^ (m - 1) := by\n      calc\n        Nat.totient (3 ^ m) = 3 ^ (m - 1) * (3 - 1) :=\n          Nat.totient_prime_pow (by norm_num : Nat.Prime 3) (by omega : 0 < m)\n        _ = 2 * 3 ^ (m - 1) := by ring\n    have h_phi' : 2 * 3 ^ (m - 1) \u2223 a ^ 2 + b ^ 2 + 1 := by\n      simpa [h_tot] using h_phi\n    set s := a + b with hs\n    have h_sq_eq : s ^ 2 + 3 = (a ^ 2 + b ^ 2 + 1) + 2 * 3 ^ m := by\n      have h_simplify : 2*(3^m-1) + 2 = 2*3^m := by\n        calc\n          2*(3^m-1) + 2 = (2*3^m - 2*1) + 2 := by rw [Nat.mul_sub_left_distrib]\n          _ = (2*3^m - 2) + 2 := by simp\n          _ = 2*3^m := by\n            rw [Nat.sub_add_cancel ?_]\n            have hpos' : 1 \u2264 3 ^ m := Nat.one_le_pow m 3 (by norm_num : 0 < 3)\n            nlinarith\n      calc\n        s ^ 2 + 3 = (a + b) ^ 2 + 3 := rfl\n        _ = a ^ 2 + 2 * a * b + b ^ 2 + 3 := by ring\n        _ = (a ^ 2 + b ^ 2 + 1) + (2 * a * b + 2) := by ring\n        _ = (a ^ 2 + b ^ 2 + 1) + (2 * (a * b) + 2) := by ring\n        _ = (a ^ 2 + b ^ 2 + 1) + (2 * (3 ^ m - 1) + 2) := by rw [h_ab]\n        _ = (a ^ 2 + b ^ 2 + 1) + (2*3 ^ m) := by rw [h_simplify]\n        _ = (a ^ 2 + b ^ 2 + 1) + 2 * 3 ^ m := rfl\n    have h_sq : 2 * 3 ^ (m - 1) \u2223 s ^ 2 + 3 := by\n      rw [h_sq_eq]\n      apply dvd_add\n      \u00b7 exact h_phi'\n      \u00b7 have hm1 : 1 \u2264 m := by omega\n        have h_pow_eq : 3 ^ m = 3 ^ (m - 1) * 3 := by\n          calc\n            3 ^ m = 3 ^ ((m-1)+1) := by rw [Nat.sub_add_cancel hm1]\n            _ = 3 ^ (m-1) * 3 := by rw [Nat.pow_succ]\n        have h_dvd : 2*3^m = (2 * 3 ^ (m - 1)) * 3 := by\n          calc\n            2*3^m = 2 * (3 ^ m) := rfl\n            _ = 2 * (3 ^ (m - 1) * 3) := by rw [h_pow_eq]\n            _ = (2 * 3 ^ (m - 1)) * 3 := by ring\n        exact \u27e83, h_dvd\u27e9\n    have h_sq_pow : 3 ^ (m - 1) \u2223 s ^ 2 + 3 := by\n      apply Nat.dvd_trans ?_ h_sq\n      use 2\n      ring\n    have hm_ge3 : 3 \u2264 m := by omega\n    have hm_sub_ge2 : 2 \u2264 m - 1 := by omega\n    have h9_pow : 9 \u2223 3 ^ (m - 1) := by\n      have h_pow := Nat.pow_dvd_pow 3 hm_sub_ge2\n      simpa [show (3:\u2115)^2 = 9 by norm_num] using h_pow\n    have h9_dvd : 9 \u2223 s ^ 2 + 3 :=\n      Nat.dvd_trans h9_pow h_sq_pow\n    exact absurd h9_dvd (nine_not_dvd_sq_add_three s)"
+    },
+    {
+      "id": "totient_not_multiple_of_four_implies_prime_power",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.2,
+      "proof_length": 36,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If n is odd and 4 does not divide \u03c6(n), then n = p^m for some prime p \u2261 3 mod 4.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If n is odd and 4 does not divide \u03c6(n), then n = p^m for some prime p \u2261 3 mod 4. -/)\n  (proof := /-- Use the formula for \u03c6(n) in terms of prime factorization. The condition that 4 \u2224 \u03c6(n) forces n to have at most one odd prime factor, and that prime must be congruent to 3 mod 4. -/)]\nlemma totient_not_multiple_of_four_implies_prime_power (n : \u2115) (hn_odd : n % 2 = 1) (h : \u00ac 4 \u2223 Nat.totient n) :\n    \u2203 (p : \u2115) (m : \u2115), Nat.Prime p \u2227 p % 4 = 3 \u2227 n = p ^ m := by\n  -- helper lemmas\n  have coprime_four_of_odd {n : \u2115} (hn : Odd n) : Nat.Coprime 4 n := by\n    refine Nat.coprime_of_dvd (\u03bb k hk_prime hk_dvd_4 => ?_)\n    have hk2 : k = 2 := by\n      have h2prime : Nat.Prime 2 := Nat.prime_two\n      have hk_dvd_2 : k \u2223 2 := by\n        have h4 : 4 = 2*2 := by norm_num\n        rw [h4] at hk_dvd_4\n        rcases (hk_prime.dvd_mul.mp hk_dvd_4) with (h | h)\n        \u00b7 exact h\n        \u00b7 exact h\n      exact ((Nat.prime_dvd_prime_iff_eq hk_prime h2prime).mp hk_dvd_2)\n    subst hk2\n    exact hn.not_two_dvd_nat\n  have four_dvd_mul_of_even_even {a b : \u2115} (ha : Even a) (hb : Even b) : 4 \u2223 a * b := by\n    rcases ha with \u27e8k, hk\u27e9\n    rcases hb with \u27e8l, hl\u27e9\n    rw [hk, hl]\n    refine \u27e8k * l, ?_\u27e9\n    ring\n  have four_dvd_totient_prime_pow_of_mod_four_eq_one (p a : \u2115) (hp : Nat.Prime p) (ha_pos : a \u2260 0) (hp_mod4 : p % 4 = 1) : 4 \u2223 Nat.totient (p ^ a) := by\n    have ha_pos' : a > 0 := Nat.pos_of_ne_zero ha_pos\n    rw [Nat.totient_prime_pow hp ha_pos']\n    have h4_dvd_p_minus_one : 4 \u2223 p - 1 := by\n      have h := Nat.mod_add_div p 4\n      rw [hp_mod4] at h\n      have hp_sub_one_eq : p - 1 = 4*(p/4) := by omega\n      rw [hp_sub_one_eq]\n      exact dvd_mul_right 4 (p/4)\n    have h_odd : Odd (p ^ (a-1)) := by\n      have hp_odd : Odd p := by\n        have h_ne_two : p \u2260 2 := by\n          intro h_eq\n          rw [h_eq] at hp_mod4\n          norm_num at hp_mod4\n        exact hp.odd_of_ne_two h_ne_two\n      exact Odd.pow hp_odd\n    have h_cop : Nat.Coprime 4 (p ^ (a-1)) := coprime_four_of_odd h_odd\n    exact dvd_mul_of_dvd_right h4_dvd_p_minus_one (p ^ (a-1))\n  have not_four_dvd_totient_prime_pow_of_mod_four_eq_three (p a : \u2115) (hp : Nat.Prime p) (ha_pos : a \u2260 0) (hp_mod4 : p % 4 = 3) : \u00ac 4 \u2223 Nat.totient (p ^ a) := by\n    have ha_pos' : a > 0 := Nat.pos_of_ne_zero ha_pos\n    rw [Nat.totient_prime_pow hp ha_pos']\n    intro h4_dvd\n    have hp_odd : Odd p := by\n      have h_ne_two : p \u2260 2 := by\n        intro h_eq\n        rw [h_eq] at hp_mod4\n        norm_num at hp_mod4\n      exact hp.odd_of_ne_two h_ne_two\n    have h_odd_pow : Odd (p ^ (a-1)) := Odd.pow hp_odd\n    have h_cop : Nat.Coprime 4 (p ^ (a-1)) := coprime_four_of_odd h_odd_pow\n    have h4_dvd_p_minus_one : 4 \u2223 p - 1 :=\n      h_cop.dvd_of_dvd_mul_left h4_dvd\n    have h_not_dvd : \u00ac 4 \u2223 p - 1 := by\n      have h := Nat.mod_add_div p 4\n      rw [hp_mod4] at h\n      have hp_sub_one_eq : p - 1 = 2 + 4*(p/4) := by omega\n      rw [hp_sub_one_eq]\n      intro h4_dvd'\n      have h4_dvd_2 : 4 \u2223 2 := by\n        omega\n      have : \u00ac 4 \u2223 2 := by norm_num\n      exact this h4_dvd_2\n    exact h_not_dvd h4_dvd_p_minus_one\n  -- main case distinction\n  by_cases hn1 : n = 1\n  \u00b7 subst hn1\n    refine \u27e83, 0, Nat.prime_three, ?_, ?_\u27e9\n    \u00b7 norm_num\n    \u00b7 norm_num\n  \u00b7 have hn_ne_zero : n \u2260 0 := by\n      intro hzero\n      rw [hzero] at hn_odd\n      norm_num at hn_odd\n    have hn_pos : 0 < n := Nat.pos_of_ne_zero hn_ne_zero\n    have hn_odd' : Odd n := Nat.odd_iff.mpr hn_odd\n    rcases Nat.exists_prime_and_dvd hn1 with \u27e8p, hp_prime, hp_dvd\u27e9\n    have hp_ne_one : p \u2260 1 := Nat.Prime.ne_one hp_prime\n    rcases Nat.exists_eq_pow_mul_and_not_dvd hn_ne_zero p hp_ne_one with \u27e8e, r, h_not_dvd, hn_eq\u27e9\n    -- hn_eq : n = p ^ e * r,  h_not_dvd : \u00ac p \u2223 r\n    have hp_odd : Odd p := hn_odd'.of_dvd_nat hp_dvd\n    have h_cop : Nat.Coprime (p ^ e) r := by\n      have h_cop_p_r : Nat.Coprime p r := (hp_prime.coprime_iff_not_dvd).mpr h_not_dvd\n      exact h_cop_p_r.pow_left e\n    have h_tot : Nat.totient n = Nat.totient (p ^ e) * Nat.totient r := by\n      rw [hn_eq, Nat.totient_mul h_cop]\n    have h4_not_dvd_tot : \u00ac 4 \u2223 Nat.totient (p ^ e) * Nat.totient r := by\n      rw [\u2190 h_tot]\n      exact h\n    have he_pos : e \u2260 0 := by\n      intro he0\n      have hn_eq_r : n = r := by\n        rw [hn_eq, he0, pow_zero, one_mul]\n      have : p \u2223 r := by\n        rw [\u2190 hn_eq_r]\n        exact hp_dvd\n      exact h_not_dvd this\n    by_cases hr1 : r = 1\n    \u00b7 -- then n = p^e\n      have hn_eq' : n = p ^ e := by\n        rw [hn_eq, hr1, mul_one]\n      by_cases hp_mod4 : p % 4 = 3\n      \u00b7 refine \u27e8p, e, hp_prime, hp_mod4, hn_eq'\u27e9\n      \u00b7 have hp_mod4_one : p % 4 = 1 := by\n          have hp_mod2_one : p % 2 = 1 := Nat.odd_iff.mp hp_odd\n          rcases (Nat.odd_mod_four_iff.mp hp_mod2_one) with (h1 | h3)\n          \u00b7 exact h1\n          \u00b7 exfalso; exact hp_mod4 h3\n        have h4_dvd_tot_pow : 4 \u2223 Nat.totient (p ^ e) :=\n          four_dvd_totient_prime_pow_of_mod_four_eq_one p e hp_prime he_pos hp_mod4_one\n        have h4_dvd_tot : 4 \u2223 Nat.totient n := by\n          rw [h_tot, hr1, Nat.totient_one, mul_one]\n          exact h4_dvd_tot_pow\n        exfalso; exact h h4_dvd_tot\n    \u00b7 -- r \u2260 1, we will get a contradiction via evenness\n      have hr_odd : Odd r := by\n        have h_odd_prod : Odd (p ^ e * r) := by\n          rw [\u2190 hn_eq]\n          exact hn_odd'\n        exact h_odd_prod.of_mul_right\n      have hr_mod2 : r % 2 = 1 := Nat.odd_iff.mp hr_odd\n      have hr_pos : 0 < r := by\n        by_contra hle\n        push_neg at hle\n        have : r = 0 := by omega\n        rw [this] at hn_eq\n        have : n = 0 := by\n          simpa [hn_eq] using rfl\n        exact hn_ne_zero this\n      have h_gt_two_r : 2 < r := by\n        have : r \u2260 0 := by omega\n        have : r \u2260 1 := hr1\n        omega\n      have h_even_tot_r : Even (Nat.totient r) := Nat.totient_even h_gt_two_r\n      have h_even_tot_pow : Even (Nat.totient (p ^ e)) := by\n        have he_pos' : e > 0 := Nat.pos_of_ne_zero he_pos\n        rw [Nat.totient_prime_pow hp_prime he_pos']\n        have h_even_p_minus_one : Even (p - 1) := by\n          have h_ne_two : p \u2260 2 := by\n            intro h_eq\n            have : \u00ac Odd 2 := by decide\n            apply this\n            subst h_eq; exact hp_odd\n          exact hp_prime.even_sub_one h_ne_two\n        exact (h_even_p_minus_one.mul_left (p ^ (e - 1)))\n      have h4_dvd_mul : 4 \u2223 Nat.totient (p ^ e) * Nat.totient r :=\n        four_dvd_mul_of_even_even h_even_tot_pow h_even_tot_r\n      exfalso; exact h4_not_dvd_tot h4_dvd_mul"
+    },
+    {
+      "id": "usamo_2026_p6_a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For positive integers a,b, if \u03c6(ab+1) divides a^2+b^2+1, then a is a Fibonacci number.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- For positive integers a,b, if \u03c6(ab+1) divides a^2+b^2+1, then a is a Fibonacci number. -/)\n  (proof := /-- Case analysis on parity of a and b. If both odd, apply `both_odd_solution`. If different parities, apply `different_parity_solution`. -/)]\ntheorem usamo_2026_p6_a (a b : \u2115) (ha : 0 < a) (hb : 0 < b)\n    (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1) :\n    \u2203 k : \u2115, Nat.fib k = a := by\n  by_cases hpar : a % 2 = b % 2\n  \u00b7 by_cases ha_odd : a % 2 = 1\n    \u00b7 have hb_odd : b % 2 = 1 := by\n        rw [hpar] at ha_odd\n        exact ha_odd\n      exact both_odd_solution a b ha hb ha_odd hb_odd h\n    \u00b7 have ha_even : a % 2 = 0 := by\n        have := Nat.mod_two_eq_zero_or_one a\n        rcases this with (h0 | h1)\n        \u00b7 exact h0\n        \u00b7 exfalso; exact ha_odd h1\n      have hb_even : b % 2 = 0 := by\n        rw [hpar] at ha_even\n        exact ha_even\n      have h2_dvd_a : 2 \u2223 a := Nat.dvd_of_mod_eq_zero ha_even\n      have h2_dvd_b : 2 \u2223 b := Nat.dvd_of_mod_eq_zero hb_even\n      have ha_even' : Even a := by\n        rw [even_iff_two_dvd]\n        exact h2_dvd_a\n      have hb_even' : Even b := by\n        rw [even_iff_two_dvd]\n        exact h2_dvd_b\n      have ha2 : 2 \u2264 a := Nat.le_of_dvd ha h2_dvd_a\n      have hb2 : 2 \u2264 b := Nat.le_of_dvd hb h2_dvd_b\n      have h_gt_two : 2 < a * b + 1 := by\n        nlinarith\n      have h_even_tot : Even (Nat.totient (a * b + 1)) :=\n        Nat.totient_even h_gt_two\n      have ha_sq_even : Even (a ^ 2) :=\n        ha_even'.pow_of_ne_zero (by norm_num : (2 : \u2115) \u2260 0)\n      have hb_sq_even : Even (b ^ 2) :=\n        hb_even'.pow_of_ne_zero (by norm_num : (2 : \u2115) \u2260 0)\n      have h_even_sum_sq : Even (a ^ 2 + b ^ 2) := by\n        rw [Nat.even_add]\n        constructor\n        \u00b7 intro\n          exact hb_sq_even\n        \u00b7 intro\n          exact ha_sq_even\n      have h_odd_sum_sq_add_one : Odd (a ^ 2 + b ^ 2 + 1) :=\n        Even.add_one h_even_sum_sq\n      have h_not_even_sum_sq_add_one : \u00ac Even (a ^ 2 + b ^ 2 + 1) :=\n        (Nat.not_even_iff_odd.mpr h_odd_sum_sq_add_one)\n      have h_even_sum_sq_add_one : Even (a ^ 2 + b ^ 2 + 1) :=\n        h_even_tot.trans_dvd h\n      exfalso\n      exact h_not_even_sum_sq_add_one h_even_sum_sq_add_one\n  \u00b7 exact different_parity_solution a b ha hb hpar h"
+    },
+    {
+      "id": "vieta_jump_k_three",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.82,
+      "proof_length": 54,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a,b,k are positive integers satisfying a^2+b^2+1 = k*a*b, then k = 3.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- If a,b,k are positive integers satisfying a^2+b^2+1 = k*a*b, then k = 3. -/)\n  (proof := /-- Apply Vieta jumping to the quadratic x^2 - k*b*x + (b^2+1)=0. The other root a' = k*b - a is a positive integer, and if a > b then a' < a, giving a smaller solution. By infinite descent, the minimal solution satisfies a = b. Then 2a^2+1 = k*a^2, so k = 3. -/)]\nlemma vieta_jump_k_three (a b k : \u2115) (ha : 0 < a) (hb : 0 < b) (hk : 0 < k) (h_eq : a ^ 2 + b ^ 2 + 1 = k * a * b) : k = 3 := by\n  let P : \u2115 \u2192 Prop := \u03bb s => \u2200 (a' b' k' : \u2115), a' + b' = s \u2192 0 < a' \u2192 0 < b' \u2192 0 < k' \u2192 (a' ^ 2 + b' ^ 2 + 1 = k' * a' * b') \u2192 k' = 3\n  have hP : P (a + b) := by\n    refine Nat.strong_induction_on (a + b) ?_\n    intro s ih\n    intro a' b' k' h_sum ha' hb' hk' h_eq'\n    by_cases h_ab_eq : a' = b'\n    \u00b7 subst h_ab_eq\n      have h_eq'2 : 2 * a' ^ 2 + 1 = k' * a' ^ 2 := by\n        calc\n          2 * a' ^ 2 + 1 = (a' ^ 2 + a' ^ 2) + 1 := by ring\n          _ = (a' ^ 2 + a' ^ 2 + 1) := rfl\n          _ = k' * a' * a' := h_eq'\n          _ = k' * (a' * a') := by ring\n          _ = k' * a' ^ 2 := by ring\n      have h_mul_sub : (k' - 2) * a' ^ 2 = 1 := by\n        calc\n          (k' - 2) * a' ^ 2 = (k' * a' ^ 2) - (2 * a' ^ 2) := by\n            rw [Nat.mul_sub_right_distrib]\n          _ = (2 * a' ^ 2 + 1) - (2 * a' ^ 2) := by rw [h_eq'2]\n          _ = 1 := by omega\n      have h_factors : (k' - 2) = 1 \u2227 a' ^ 2 = 1 := by\n        apply (mul_eq_one.mp h_mul_sub)\n      rcases h_factors with \u27e8h_k_sub, h_a_sq\u27e9\n      have ha'_one : a' = 1 := by\n        nlinarith\n      subst ha'_one\n      omega\n    \u00b7 by_cases h_lt : b' < a'\n      \u00b7 have h_mul_eq : a' * (k' * b' - a') = b' ^ 2 + 1 := by\n          calc\n            a' * (k' * b' - a') = a' * (k' * b') - a' * a' := by rw [Nat.mul_sub_left_distrib]\n            _ = (k' * a' * b') - a' ^ 2 := by ring\n            _ = (a' ^ 2 + b' ^ 2 + 1) - a' ^ 2 := by rw [h_eq']\n            _ = b' ^ 2 + 1 := by omega\n        have h_pos_mul : 0 < a' * (k' * b' - a') := by\n          rw [h_mul_eq]\n          exact Nat.succ_pos _\n        have h_sub_pos : 0 < k' * b' - a' :=\n          ((Nat.mul_pos_iff_of_pos_left ha').mp h_pos_mul)\n        set a'' := k' * b' - a' with ha''_def\n        have ha''_pos : 0 < a'' := h_sub_pos\n        have h_mul_eq2 : a' * a'' = b' ^ 2 + 1 := by\n          dsimp [a'']; exact h_mul_eq\n        have ha''_lt_a' : a'' < a' := by\n          have h_lt_sq : b' ^ 2 + 1 < a' ^ 2 := by\n            have h_sq_lt' : b' ^ 2 + 1 < (b' + 1)^2 := by nlinarith\n            have h_sq_ge : (b' + 1)^2 \u2264 a' ^ 2 := by\n              have h_succ_le : b' + 1 \u2264 a' := Nat.succ_le_of_lt h_lt\n              exact Nat.pow_le_pow_left h_succ_le 2\n            exact lt_of_lt_of_le h_sq_lt' h_sq_ge\n          have h_mul_lt : a' * a'' < a' * a' := by\n            calc\n              a' * a'' = b' ^ 2 + 1 := h_mul_eq2\n              _ < a' ^ 2 := h_lt_sq\n              _ = a' * a' := by ring\n          exact Nat.lt_of_mul_lt_mul_left h_mul_lt\n        have h_sum_eq : a' + a'' = k' * b' := by\n          dsimp [a'']\n          omega\n        have h_eq_new : a'' ^ 2 + b' ^ 2 + 1 = k' * a'' * b' := by\n          calc\n            a'' ^ 2 + b' ^ 2 + 1 = a'' ^ 2 + (b' ^ 2 + 1) := by ring\n            _ = a'' ^ 2 + (a' * a'') := by rw [h_mul_eq2]\n            _ = a'' * (a'' + a') := by ring\n            _ = a'' * (k' * b') := by\n              rw [add_comm a'' a', h_sum_eq]\n            _ = k' * a'' * b' := by ring\n        have h_sum_lt : a'' + b' < s := by\n          rw [\u2190 h_sum]\n          omega\n        have hPm : P (a'' + b') := ih (a'' + b') h_sum_lt\n        have hk'_eq_3 : k' = 3 := hPm a'' b' k' rfl ha''_pos hb' hk' h_eq_new\n        exact hk'_eq_3\n      \u00b7 have h_lt' : a' < b' := by\n          omega\n        have h_mul_eq' : b' * (k' * a' - b') = a' ^ 2 + 1 := by\n          calc\n            b' * (k' * a' - b') = b' * (k' * a') - b' * b' := by rw [Nat.mul_sub_left_distrib]\n            _ = (k' * b' * a') - b' ^ 2 := by ring\n            _ = (a' ^ 2 + b' ^ 2 + 1) - b' ^ 2 := by\n              rw [h_eq']\n              ring\n            _ = a' ^ 2 + 1 := by omega\n        have h_pos_mul' : 0 < b' * (k' * a' - b') := by\n          rw [h_mul_eq']\n          exact by\n            have ha_sq_add_one_pos : 0 < a' ^ 2 + 1 := by omega\n            exact ha_sq_add_one_pos\n        have h_sub_pos' : 0 < k' * a' - b' :=\n          ((Nat.mul_pos_iff_of_pos_left hb').mp h_pos_mul')\n        set b'' := k' * a' - b' with hb''_def\n        have hb''_pos : 0 < b'' := h_sub_pos'\n        have h_mul_eq2' : b' * b'' = a' ^ 2 + 1 := by\n          dsimp [b'']; exact h_mul_eq'\n        have hb''_lt_b' : b'' < b' := by\n          have h_lt_sq' : a' ^ 2 + 1 < b' ^ 2 := by\n            have h_sq_lt'' : a' ^ 2 + 1 < (a' + 1)^2 := by nlinarith\n            have h_sq_ge' : (a' + 1)^2 \u2264 b' ^ 2 := by\n              have h_succ_le' : a' + 1 \u2264 b' := Nat.succ_le_of_lt h_lt'\n              exact Nat.pow_le_pow_left h_succ_le' 2\n            exact lt_of_lt_of_le h_sq_lt'' h_sq_ge'\n          have h_mul_lt' : b' * b'' < b' * b' := by\n            calc\n              b' * b'' = a' ^ 2 + 1 := h_mul_eq2'\n              _ < b' ^ 2 := h_lt_sq'\n              _ = b' * b' := by ring\n          exact Nat.lt_of_mul_lt_mul_left h_mul_lt'\n        have h_sum_eq' : b' + b'' = k' * a' := by\n          dsimp [b'']\n          omega\n        have h_eq_new' : a' ^ 2 + b'' ^ 2 + 1 = k' * a' * b'' := by\n          calc\n            a' ^ 2 + b'' ^ 2 + 1 = a' ^ 2 + (b'' ^ 2 + 1) := by ring\n            _ = (a' ^ 2 + 1) + b'' ^ 2 := by ring\n            _ = (b' * b'') + b'' ^ 2 := by rw [h_mul_eq2']\n            _ = b'' * (b' + b'') := by ring\n            _ = b'' * (k' * a') := by rw [h_sum_eq']\n            _ = k' * a' * b'' := by ring\n        have h_sum_lt' : a' + b'' < s := by\n          rw [\u2190 h_sum]\n          omega\n        have hPm' : P (a' + b'') := ih (a' + b'') h_sum_lt'\n        have hk'_eq_3' : k' = 3 := hPm' a' b'' k' rfl ha' hb''_pos hk' h_eq_new'\n        exact hk'_eq_3'\n  exact hP a b k rfl ha hb hk h_eq"
+    },
+    {
+      "id": "c_ge_one_case",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.35,
+      "proof_length": 28,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "theorem",
+      "statement": "If c\u22651 in the representation b = a + cp^{k-1}+s, then a<p, ac<p, and k\u2264 3.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem c_ge_one_case_negation : \u00ac (\u2200 (a b p k : \u2115) (ha : 0 < a) (hb : 0 < b) (hp : Nat.Prime p) (hp_mod4 : p % 4 = 3)\n    (hn_eq : a * b + 1 = p ^ k) (hk_ge2 : 2 \u2264 k)\n    (hdiv : p ^ (k - 1) \u2223 (a - b) ^ 2 - 1)\n    (hc_ge1 : (\u2203 (c : \u2115) (s : \u2124), (s = 1 \u2228 s = -1) \u2227 (b : \u2124) = (a : \u2124) + (c : \u2124) * ((p : \u2124) ^ (k - 1 : \u2115)) + s \u2227 1 \u2264 c)), \u2203 k : \u2115, Nat.fib k = b) := by\n  have not_fib_4 : \u00ac \u2203 (k : \u2115), Nat.fib k = 4 := by\n    have h_all : \u2200 k : \u2115, k < 6 \u2192 Nat.fib k \u2260 4 := by\n      decide\n    intro h\n    rcases h with \u27e8k, hk\u27e9\n    have hk_lt_6 : k < 6 := by\n      have h6 : Nat.fib 6 = 8 := by norm_num\n      by_contra! H\n      have hk_ge_6 : 6 \u2264 k := H\n      have hfib := Nat.fib_mono hk_ge_6\n      have : 8 \u2264 Nat.fib k := by\n        linarith\n      linarith\n    exact h_all k hk_lt_6 hk\n  intro h\n  have h_contra : \u2203 k : \u2115, Nat.fib k = 4 :=\n    h 2 4 3 2 (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by omega) (by norm_num) ?_\n  \u00b7 exact not_fib_4 h_contra\n  \u00b7 refine \u27e81, (-1 : \u2124), Or.inr rfl, ?_, by omega\u27e9\n    norm_num"
+    },
+    {
+      "id": "c_zero_case",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.74,
+      "proof_length": 53,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "theorem",
+      "statement": "If c=0 in the representation b = a + cp^{k-1}+s, then p=3 and a contradiction arises, so this case cannot happen under the given hypotheses.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem c_zero_case_negation : \u00ac (\u2200 (a b p k : \u2115) (ha : 0 < a) (hb : 0 < b) (hp : Nat.Prime p) (hp_mod4 : p % 4 = 3)\n    (hn_eq : a * b + 1 = p ^ k) (hk_ge2 : 2 \u2264 k)\n    (hdiv : p ^ (k - 1) \u2223 (a - b) ^ 2 - 1)\n    (hc0 : (\u2203 (c : \u2115) (s : \u2124), (s = 1 \u2228 s = -1) \u2227 (b : \u2124) = (a : \u2124) + (c : \u2124) * ((p : \u2124) ^ (k - 1 : \u2115)) + s \u2227 c = 0)), \u2203 k : \u2115, Nat.fib k = b) := by\n  intro h\n  have ha_pos : 0 < (18 : \u2115) := by decide\n  have hb_pos : 0 < (19 : \u2115) := by decide\n  have hp_prime : Nat.Prime (7 : \u2115) := by\n    decide\n  have hp_mod4 : (7 : \u2115) % 4 = 3 := by decide\n  have hn_eq : (18 : \u2115) * (19 : \u2115) + 1 = (7 : \u2115) ^ (3 : \u2115) := by\n    decide\n  have hk_ge2 : 2 \u2264 (3 : \u2115) := by decide\n  have hdiv : (7 : \u2115) ^ (3 - 1) \u2223 ((18 : \u2115) - (19 : \u2115)) ^ 2 - 1 := by\n    decide\n  have counterexample : (\u2203 (c : \u2115) (s : \u2124), (s = 1 \u2228 s = -1) \u2227 (19 : \u2124) = (18 : \u2124) + (c : \u2124) * ((7 : \u2124) ^ ((3 : \u2115) - 1 : \u2115)) + s \u2227 c = 0) := by\n    refine \u27e80, 1, Or.inl rfl, ?_, rfl\u27e9\n    norm_num\n  have hc0 : (\u2203 (c : \u2115) (s : \u2124), (s = 1 \u2228 s = -1) \u2227 ((19 : \u2124) = (18 : \u2124) + (c : \u2124) * (((7 : \u2115) : \u2124) ^ ((3 : \u2115) - 1 : \u2115)) + s) \u2227 c = 0) :=\n    counterexample\n  have h_exists_fib : \u2203 k : \u2115, Nat.fib k = (19 : \u2115) :=\n    h (18 : \u2115) (19 : \u2115) (7 : \u2115) (3 : \u2115) ha_pos hb_pos hp_prime hp_mod4 hn_eq hk_ge2 hdiv hc0\n  rcases h_exists_fib with \u27e8k, hk\u27e9\n  have h_not_fib : \u2200 k : \u2115, Nat.fib k \u2260 19 := by\n    intro k\n    by_cases hk8 : k < 8\n    \u00b7 have h_fibs_set : (Finset.image Nat.fib (Finset.range 8)).filter (\u03bb f => f = 19) = \u2205 := by decide\n      have hmem : Nat.fib k \u2208 Finset.image Nat.fib (Finset.range 8) := by\n        apply Finset.mem_image.mpr\n        exact \u27e8k, Finset.mem_range.mpr hk8, rfl\u27e9\n      intro h_eq\n      have hmem_filter : Nat.fib k \u2208 (Finset.image Nat.fib (Finset.range 8)).filter (\u03bb f => f = 19) := by\n        apply Finset.mem_filter.mpr\n        exact \u27e8hmem, h_eq\u27e9\n      rw [h_fibs_set] at hmem_filter\n      exact Finset.not_mem_empty _ hmem_filter\n    \u00b7 have hk_ge8 : 8 \u2264 k := by omega\n      have h_fib8 : Nat.fib 8 = 21 := by decide\n      have h_fib_ge_21 : 21 \u2264 Nat.fib k := by\n        have hm : Nat.fib 8 \u2264 Nat.fib k := Nat.fib_mono hk_ge8\n        omega\n      intro h_eq\n      have : 21 \u2264 19 := by\n        calc\n          21 \u2264 Nat.fib k := h_fib_ge_21\n          _ = 19 := h_eq\n      linarith\n  exact h_not_fib k hk"
+    },
+    {
+      "id": "exists_c_s",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.2,
+      "proof_length": 36,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let p be an odd prime (so p\u22613pmod4), n=p^k, k\u22652, and suppose p^{k-1}| (a-b)^2-1. Then there exist c\u2208\u2115 and s\u2208{1,-1} such that b = a + cp^{k-1} + s (as integers).",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem exists_c_s_negation : \u00ac (\u2200 (a b p k : \u2115) (hp : Nat.Prime p) (hp_mod4 : p % 4 = 3)\n    (hn_eq : a * b + 1 = p ^ k) (hk_ge2 : 2 \u2264 k)\n    (hdiv : p ^ (k - 1) \u2223 (a - b) ^ 2 - 1), \u2203 (c : \u2115) (s : \u2124), (s = 1 \u2228 s = -1) \u2227 (b : \u2124) = (a : \u2124) + (c : \u2124) * ((p : \u2124) ^ (k - 1 : \u2115)) + s) := by\n  intro h\n  have h_ex : \u2203 (c : \u2115) (s : \u2124), (s = 1 \u2228 s = -1) \u2227 ((2 : \u2124) = (4 : \u2124) + (c : \u2124) * ((3 : \u2124) ^ ((2 : \u2115) - 1 : \u2115)) + s) :=\n    h 4 2 3 2 (by norm_num) (by norm_num) (by norm_num) (by omega) (by norm_num)\n  rcases h_ex with \u27e8c, s, hs, h_eq\u27e9\n  have power_simp : ((3 : \u2124) ^ ((2 : \u2115) - 1 : \u2115)) = (3 : \u2124) := by norm_num\n  rw [power_simp] at h_eq\n  -- h_eq: (2 : \u2124) = (4 : \u2124) + (c : \u2124) * (3 : \u2124) + s\n  have hc_nonneg : (0 : \u2124) \u2264 c := by exact_mod_cast Nat.zero_le _\n  rcases hs with (hs1 | hsneg1)\n  \u00b7 -- s = 1\n    rw [hs1] at h_eq\n    have : (c : \u2124) * 3 + 1 + 4 = 2 := by linarith\n    -- Actually linarith can solve\n    linarith\n  \u00b7 -- s = -1\n    rw [hsneg1] at h_eq\n    linarith"
+    },
+    {
+      "id": "four_not_dvd_totient_implies_prime_power_mod4",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.3,
+      "proof_length": 37,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "theorem",
+      "statement": "If n\u2265 2 and 4nmid\u03c6(n), then n=p^k for some prime p\u22613pmod4.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem four_not_dvd_totient_implies_prime_power_mod4_negation : \u00ac (\u2200 (n : \u2115) (hn2 : 2 \u2264 n) (h4 : \u00ac (4 \u2223 Nat.totient n)), \u2203 (p k : \u2115), Nat.Prime p \u2227 p % 4 = 3 \u2227 n = p ^ k) := by\n  intro h\n  have h2 : 2 \u2264 2 := by omega\n  have hphi2 : Nat.totient 2 = 1 := by norm_num\n  have h4not : \u00ac (4 \u2223 Nat.totient 2) := by\n    rw [hphi2]\n    simp\n  have hcounter := h 2 h2 h4not\n  rcases hcounter with \u27e8p, k, hp, hpmod, hn_eq\u27e9\n  -- Now hn_eq: 2 = p ^ k\n  -- Since p is prime, p\u22652.\n  have hp_ge2 : 2 \u2264 p := Nat.Prime.one_lt hp\n  -- p ^ k = 2\n  have hpow_eq_two : p ^ k = 2 := hn_eq.symm\n  -- Cases on k\n  by_cases hk0 : k = 0\n  \u00b7 rw [hk0, pow_zero] at hpow_eq_two\n    omega\n  \u00b7 have hkpos : 0 < k := Nat.pos_of_ne_zero hk0\n    have hp_pow_ge_p : p \u2264 p ^ k := by\n      calc\n        p = p ^ 1 := by simp\n        _ \u2264 p ^ k := Nat.pow_le_pow_right (by\n          have : 0 < p := Nat.Prime.pos hp\n          exact this) hkpos\n    have hp_le2 : p \u2264 2 := by\n      calc\n        p \u2264 p ^ k := hp_pow_ge_p\n        _ = 2 := hpow_eq_two\n    omega"
+    },
+    {
+      "id": "k_eq_one_case",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.3,
+      "proof_length": 37,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If p is prime, n=p=ab+1, \u03c6(n)| a^2+b^2+1, and ab=n-1, then b is a Fibonacci number.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $p$ is prime, $n=p=ab+1$, $\\phi(n)\\mid a^2+b^2+1$, and $ab=n-1$, then $b$ is a Fibonacci number. -/)\n  (proof := /-- Since $ab=n-1=\\phi(n)$, we have $ab\\mid a^2+b^2+1$. By Vieta jumping, the only positive integer solutions to $ab\\mid a^2+b^2+1$ with $a,b\\ge1$ satisfy $a^2+b^2+1=3ab$. The solutions to this Diophantine equation are consecutive Fibonacci numbers, hence $b$ is a Fibonacci number. -/)]\nlemma k_eq_one_case (a b : \u2115) (ha : 0 < a) (hb : 0 < b)\n    (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1)\n    (hp : Nat.Prime (a * b + 1)) (h_ab_eq_phi : a * b = (a * b + 1) - 1) :\n    \u2203 k : \u2115, Nat.fib k = b := by\n  sorry_using []"
+    },
+    {
+      "id": "k_ge_two_case",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.4,
+      "proof_length": 49,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If k\u22652, then b is a Fibonacci number, given the overall hypotheses.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $k\\ge2$, then $b$ is a Fibonacci number, given the overall hypotheses. -/)\n  (proof := /-- By `p_pow_dvd_diff_sq_minus_one` we have $p^{k-1}\\mid (a-b)^2-1$, then `exists_c_s` gives $c,s$. Cases on $c=0$ (`c_zero_case`) and $c\\ge1$ (`c_ge_one_case`). In the $c\\ge1$ case, `c_ge_one_case` tells us $k\\le3$. Then we consider $k=3$ (`k_eq_three_impossible`) and $k=2$ (`k_eq_two_case`). All these lead to the conclusion or contradiction, but the conclusion is that $b$ is Fibonacci. -/)]\nlemma k_ge_two_case (a b : \u2115) (ha : 0 < a) (hb : 0 < b)\n    (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1)\n    (p k : \u2115) (hp : Nat.Prime p) (hp_mod4 : p % 4 = 3)\n    (hn_eq : a * b + 1 = p ^ k) (hk_ge2 : 2 \u2264 k) :\n    \u2203 k : \u2115, Nat.fib k = b := by\n  have hdiv : p ^ (k - 1) \u2223 (a - b) ^ 2 - 1 :=\n    p_pow_dvd_diff_sq_minus_one a b p k hp hn_eq hk_ge2 h\n  rcases exists_c_s a b p k hp hp_mod4 hn_eq hk_ge2 hdiv with \u27e8c, s, hs, h_eq\u27e9\n  by_cases hc0 : c = 0\n  \u00b7 apply c_zero_case a b p k ha hb hp hp_mod4 hn_eq hk_ge2 hdiv\n    refine \u27e8c, s, hs, h_eq, hc0\u27e9\n  \u00b7 have hc1 : 1 \u2264 c := by\n      omega\n    apply c_ge_one_case a b p k ha hb hp hp_mod4 hn_eq hk_ge2 hdiv\n    refine \u27e8c, s, hs, h_eq, hc1\u27e9"
+    },
+    {
+      "id": "mod4_two_implies_4_not_dvd_totient",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If m\u2261 2pmod 4 and \u03c6(n)| m, then 4nmid\u03c6(n).",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $m\\equiv 2\\pmod 4$ and $\\phi(n)\\mid m$, then $4\\nmid\\phi(n)$. -/)\n  (proof := /-- If $4\\mid\\phi(n)$, then $\\phi(n)=4t$, so $4t\\mid m$. Since $m\\equiv2\\pmod4$, $m$ is not divisible by $4$, contradiction. -/)]\nlemma mod4_two_implies_4_not_dvd_totient (n m : \u2115) (hm : m % 4 = 2) (h : Nat.totient n \u2223 m) : \u00ac (4 \u2223 Nat.totient n) := by\n  intro h4\n  have h4m : 4 \u2223 m := Nat.dvd_trans h4 h\n  have hmod : m % 4 = 0 := Nat.mod_eq_zero_of_dvd h4m\n  rw [hm] at hmod\n  omega"
+    },
+    {
+      "id": "p_pow_dvd_diff_sq_minus_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.0,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let n=ab+1=p^k with p prime and k\u22652. If \u03c6(n)| a^2+b^2+1, then p^{k-1}| (a-b)^2-1.",
+      "is_main": false,
+      "col": 1,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- Let $n=ab+1=p^k$ with $p$ prime and $k\\ge2$. If $\\phi(n)\\mid a^2+b^2+1$, then $p^{k-1}\\mid (a-b)^2-1$. -/)\n  (proof := /-- Since $\\phi(p^k)=p^{k-1}(p-1)$ (`Nat.totient_prime_pow`) and $p^{k-1}(p-1)\\mid a^2+b^2+1$, we get $p^{k-1}\\mid a^2+b^2+1$. Write $a^2+b^2+1 = (a-b)^2+2ab+1 = (a-b)^2+2(p^k-1)+1 = (a-b)^2+2p^k-1$. Since $p^{k-1}\\mid 2p^k$, we deduce $p^{k-1}\\mid (a-b)^2-1$. -/)]\nlemma p_pow_dvd_diff_sq_minus_one (a b p k : \u2115) (hp : Nat.Prime p)\n    (hn_eq : a * b + 1 = p ^ k) (hk_ge2 : 2 \u2264 k)\n    (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1) :\n    p ^ (k - 1) \u2223 (a - b) ^ 2 - 1 := by\n  have hk_pos : 0 < k := by omega\n  have h\u03c6 : Nat.totient (p ^ k) = p ^ (k - 1) * (p - 1) :=\n    Nat.totient_prime_pow hp hk_pos\n  rw [hn_eq] at h\n  rw [h\u03c6] at h\n  have hp_dvd_sum : p ^ (k - 1) \u2223 a ^ 2 + b ^ 2 + 1 :=\n    Nat.dvd_trans (dvd_mul_right (p ^ (k - 1)) (p - 1)) h\n  have hp_dvd_pow : p ^ (k - 1) \u2223 p ^ k := by\n    refine \u27e8p, ?_\u27e9\n    rw [\u2190 pow_succ, Nat.sub_add_cancel (by omega : 1 \u2264 k)]\n  have hp_dvd_two_mul : p ^ (k - 1) \u2223 2 * (a * b + 1) := by\n    rw [hn_eq]\n    simpa [mul_comm] using hp_dvd_pow.mul_right 2\n  by_cases hle : a \u2264 b\n  \u00b7 -- then a - b = 0, so (a-b)^2 - 1 = 0\n    have hsub : a - b = 0 := Nat.sub_eq_zero_of_le hle\n    simp [hsub]\n  \u00b7 -- then b < a\n    have hlt : b < a := Nat.lt_of_not_ge hle\n    have cast_sub_sq_sub_one : (Nat.cast ((a - b)^2 - 1) : \u2124) = ((Nat.cast a - Nat.cast b)^2 - 1 : \u2124) := by\n      have hpos : 1 \u2264 (a - b)^2 := by\n        have hpos' : 1 \u2264 a - b := Nat.succ_le_of_lt (Nat.sub_pos_of_lt hlt)\n        nlinarith\n      calc\n        (Nat.cast ((a - b)^2 - 1) : \u2124) = (Nat.cast ((a - b)^2) - Nat.cast 1 : \u2124) := by\n          rw [Nat.cast_sub hpos]\n        _ = (Nat.cast (a - b)) ^ 2 - 1 := by simp\n        _ = ((Nat.cast a - Nat.cast b : \u2124)) ^ 2 - 1 := by simp [Nat.cast_sub (Nat.le_of_lt hlt)]\n    have hp_dvd_sum_int : (p : \u2124) ^ (k - 1) \u2223 (a : \u2124)^2 + (b : \u2124)^2 + 1 := by exact_mod_cast hp_dvd_sum\n    have hp_dvd_two_mul_int : (p : \u2124) ^ (k - 1) \u2223 2 * ((a : \u2124) * (b : \u2124) + 1) := by\n      exact_mod_cast hp_dvd_two_mul\n    have h_diff : (p : \u2124) ^ (k - 1) \u2223 ((a : \u2124) - (b : \u2124)) ^ 2 - 1 := by\n      have hX : (p : \u2124) ^ (k - 1) \u2223 (a : \u2124)^2 + (b : \u2124)^2 + 1 := hp_dvd_sum_int\n      have hY : (p : \u2124) ^ (k - 1) \u2223 2 * ((a : \u2124) * (b : \u2124) + 1) := hp_dvd_two_mul_int\n      have h_eq : ((a : \u2124) - (b : \u2124)) ^ 2 - 1 = ((a : \u2124)^2 + (b : \u2124)^2 + 1) - (2 * ((a : \u2124) * (b : \u2124) + 1)) := by ring\n      rw [h_eq]\n      exact dvd_sub hX hY\n    apply (Int.ofNat_dvd (m := p ^ (k - 1)) (n := ((a - b) ^ 2 - 1))).mp\n    rw [cast_sub_sq_sub_one]\n    exact h_diff"
+    },
+    {
+      "id": "parity_diff_ded",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.74,
+      "proof_length": 53,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a and b have opposite parity, 0<a, 0<b, and \u03c6(ab+1)| a^2+b^2+1, then ab is even, ab+1 is odd, and a^2+b^2+1\u2261 2pmod 4.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $a$ and $b$ have opposite parity, $0<a$, $0<b$, and $\\phi(ab+1)\\mid a^2+b^2+1$, then $ab$ is even, $ab+1$ is odd, and $a^2+b^2+1\\equiv 2\\pmod 4$. -/)\n  (proof := /-- Since $a$ and $b$ have opposite parity, $ab$ is even. Hence $ab+1$ is odd. Moreover, $a^2\\equiv a\\pmod 2$ and $b^2\\equiv b\\pmod 2$, so $a^2+b^2+1\\equiv a+b+1\\pmod 2$. Since $a$ and $b$ have opposite parity, $a+b$ is odd, so $a+b+1$ is even, and in fact $a^2+b^2+1\\equiv 2\\pmod 4$. This follows from case analysis modulo $4$. -/)]\nlemma parity_diff_ded (a b : \u2115) (ha : 0 < a) (hb : 0 < b)\n    (hpar : a % 2 \u2260 b % 2) (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1) :\n    Even (a * b) \u2227 Odd (a * b + 1) \u2227 (a ^ 2 + b ^ 2 + 1) % 4 = 2 := by\n  have hpar_cases : (a % 2 = 0 \u2227 b % 2 = 1) \u2228 (a % 2 = 1 \u2227 b % 2 = 0) := by\n    have ha_mod2 : a % 2 = 0 \u2228 a % 2 = 1 := Nat.mod_two_eq_zero_or_one a\n    have hb_mod2 : b % 2 = 0 \u2228 b % 2 = 1 := Nat.mod_two_eq_zero_or_one b\n    rcases ha_mod2 with (ha0 | ha1)\n    \u00b7 rcases hb_mod2 with (hb0 | hb1)\n      \u00b7 exfalso; exact hpar (by rw [ha0, hb0])\n      \u00b7 exact Or.inl \u27e8ha0, hb1\u27e9\n    \u00b7 rcases hb_mod2 with (hb0 | hb1)\n      \u00b7 exact Or.inr \u27e8ha1, hb0\u27e9\n      \u00b7 exfalso; exact hpar (by rw [ha1, hb1])\n  have h_even_ab : Even (a * b) := by\n    rcases hpar_cases with (\u27e8ha0, hb1\u27e9 | \u27e8ha1, hb0\u27e9)\n    \u00b7 have ha_even : Even a := by\n        rw [Nat.even_iff]; exact ha0\n      exact (Nat.even_mul.mpr (Or.inl ha_even))\n    \u00b7 have hb_even : Even b := by\n        rw [Nat.even_iff]; exact hb0\n      exact (Nat.even_mul.mpr (Or.inr hb_even))\n  have h_odd_ab1 : Odd (a * b + 1) :=\n    h_even_ab.add_one\n  have h_mod4 : (a ^ 2 + b ^ 2 + 1) % 4 = 2 := by\n    rcases hpar_cases with (\u27e8ha0, hb1\u27e9 | \u27e8ha1, hb0\u27e9)\n    \u00b7 -- a even, b odd\n      have ha_even : Even a := by\n        rw [Nat.even_iff]; exact ha0\n      have hb_odd : Odd b := by\n        rw [Nat.odd_iff]; exact hb1\n      rcases ha_even with \u27e8k, hk\u27e9\n      rcases hb_odd with \u27e8m, hm\u27e9\n      calc\n        (a ^ 2 + b ^ 2 + 1) % 4 = ((k + k)^2 + (2*m+1)^2 + 1) % 4 := by rw [hk, hm]\n        _ = ((4*k^2) + (4*m^2 + 4*m + 1) + 1) % 4 := by ring_nf\n        _ = (4*k^2 + 4*m^2 + 4*m + 2) % 4 := by ring_nf\n        _ = 2 := by omega\n    \u00b7 -- a odd, b even\n      have ha_odd : Odd a := by\n        rw [Nat.odd_iff]; exact ha1\n      have hb_even : Even b := by\n        rw [Nat.even_iff]; exact hb0\n      rcases ha_odd with \u27e8k, hk\u27e9\n      rcases hb_even with \u27e8m, hm\u27e9\n      calc\n        (a ^ 2 + b ^ 2 + 1) % 4 = ((2*k+1)^2 + (m + m)^2 + 1) % 4 := by rw [hk, hm]\n        _ = ((4*k^2 + 4*k + 1) + (4*m^2) + 1) % 4 := by ring_nf\n        _ = (4*k^2 + 4*k + 4*m^2 + 2) % 4 := by ring_nf\n        _ = 2 := by omega\n  exact \u27e8h_even_ab, h_odd_ab1, h_mod4\u27e9"
+    },
+    {
+      "id": "parity_same_case",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 15.4,
+      "proof_length": 38,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a and b have the same parity, 0<a, 0<b, and \u03c6(ab+1)| a^2+b^2+1, then b is a Fibonacci number.",
+      "is_main": false,
+      "col": 1,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $a$ and $b$ have the same parity, $0<a$, $0<b$, and $\\phi(ab+1)\\mid a^2+b^2+1$, then $b$ is a Fibonacci number. -/)\n  (proof := /-- If $ab+1=2$ then $a=b=1$ and $F_1=1$. Otherwise $ab+1\\ge 3$, so $\\phi(ab+1)$ is even by `Nat.totient_even`. Meanwhile $a^2+b^2+1$ is odd (since $a,b$ have the same parity). An even number cannot divide an odd number, contradiction. Hence $b=1$ is Fibonacci. -/)]\nlemma parity_same_case (a b : \u2115) (ha : 0 < a) (hb : 0 < b)\n    (hpar : a % 2 = b % 2) (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1) :\n    \u2203 k : \u2115, Nat.fib k = b := by\n  have odd_sq_add_one : \u00ac 2 \u2223 a ^ 2 + b ^ 2 + 1 := by\n    have hmod2 : (a ^ 2 + b ^ 2 + 1) % 2 = 1 := by\n      have ha_mod2 := Nat.mod_two_eq_zero_or_one a\n      have hb_mod2 := Nat.mod_two_eq_zero_or_one b\n      rcases ha_mod2 with (ha0 | ha1)\n      \u00b7 have hb0 : b % 2 = 0 := by rw [\u2190 hpar, ha0]\n        simp [ha0, hb0, Nat.add_mod, Nat.mul_mod, Nat.pow_mod]\n      \u00b7 have hb1 : b % 2 = 1 := by rw [\u2190 hpar, ha1]\n        simp [ha1, hb1, Nat.add_mod, Nat.mul_mod, Nat.pow_mod]\n    intro h2\n    have hzero : (a ^ 2 + b ^ 2 + 1) % 2 = 0 := Nat.mod_eq_zero_of_dvd h2\n    rw [hmod2] at hzero\n    omega\n  have hn_pos : 0 < a * b + 1 := by\n    nlinarith\n  by_cases h2 : a * b + 1 = 2\n  \u00b7 have hprod : a * b = 1 := by omega\n    have ha_dvd : a \u2223 1 := by\n      use b\n      exact hprod.symm\n    have ha1 : a = 1 := Nat.eq_one_of_dvd_one ha_dvd\n    have hb_dvd : b \u2223 1 := by\n      refine \u27e8a, ?_\u27e9\n      rw [mul_comm]\n      exact hprod.symm\n    have hb1 : b = 1 := Nat.eq_one_of_dvd_one hb_dvd\n    rw [hb1]\n    refine \u27e81, ?_\u27e9\n    simp\n  \u00b7 have hge2 : 2 \u2264 a * b + 1 := by nlinarith\n    have hn_gt_two : 2 < a * b + 1 := Nat.lt_of_le_of_ne hge2 (Ne.symm h2)\n    have htot_even : Even (Nat.totient (a * b + 1)) :=\n      Nat.totient_even hn_gt_two\n    rcases htot_even with \u27e8k, hk\u27e9\n    have h2tot : 2 \u2223 Nat.totient (a * b + 1) := by\n      rw [hk]\n      exact \u27e8k, by ring\u27e9\n    have h2dvd : 2 \u2223 a ^ 2 + b ^ 2 + 1 :=\n      Nat.dvd_trans h2tot h\n    exact absurd h2dvd odd_sq_add_one"
+    },
+    {
+      "id": "usamo_2026_p6_b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30.5,
+      "proof_length": 45,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Main theorem: If a,b are positive integers and \u03c6(ab+1)| a^2+b^2+1, then b is a Fibonacci number.",
+      "is_main": true,
+      "col": 1,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Main theorem: If $a,b$ are positive integers and $\\phi(ab+1)\\mid a^2+b^2+1$, then $b$ is a Fibonacci number. -/)\n  (proof := /-- Split based on parity. If $a,b$ have same parity, `parity_same_case` gives the result. Otherwise, `parity_diff_ded` yields $ab$ even, $ab+1$ odd, and $a^2+b^2+1\\equiv2\\pmod4$. Then `mod4_two_implies_4_not_dvd_totient` gives $4\\nmid\\phi(ab+1)$, and `four_not_dvd_totient_implies_prime_power_mod4` yields $ab+1=p^k$ with $p\\equiv3\\pmod4$ prime. Case split on $k=1$ (handled by `k_eq_one_case`) and $k\\ge2$ (handled by `k_ge_two_case`). -/)]\ntheorem usamo_2026_p6_b (a b : \u2115) (ha : 0 < a) (hb : 0 < b)\n    (h : Nat.totient (a * b + 1) \u2223 a ^ 2 + b ^ 2 + 1) :\n    \u2203 k : \u2115, Nat.fib k = b := by\n  by_cases hpar : a % 2 = b % 2\n  \u00b7 exact parity_same_case a b ha hb hpar h\n  \u00b7 rcases parity_diff_ded a b ha hb hpar h with \u27e8heven_ab, hodd_ab1, hm_mod4\u27e9\n    have hn_ge2 : 2 \u2264 a * b + 1 := by\n      have : 1 \u2264 a * b := by\n        have h1 : 1 \u2264 a := by omega\n        have h2 : 1 \u2264 b := by omega\n        nlinarith\n      omega\n    have h4_not_dvd_phi : \u00ac (4 \u2223 Nat.totient (a * b + 1)) :=\n      mod4_two_implies_4_not_dvd_totient (a * b + 1) (a ^ 2 + b ^ 2 + 1) hm_mod4 h\n    rcases four_not_dvd_totient_implies_prime_power_mod4 (a * b + 1) hn_ge2 h4_not_dvd_phi with \u27e8p, k, hp, hp_mod4, hn_eq\u27e9\n    by_cases hk1 : k = 1\n    \u00b7 subst hk1\n      have hn_prime : Nat.Prime (a * b + 1) := by\n        simpa [hn_eq] using hp\n      have h_ab_eq_phi : a * b = (a * b + 1) - 1 := by omega\n      exact k_eq_one_case a b ha hb h hn_prime h_ab_eq_phi\n    \u00b7 have hk_pos : 0 < k := by\n        by_contra! H\n        have hk0 : k = 0 := by omega\n        subst hk0\n        have h1 : a * b + 1 = 1 := by\n          simpa [pow_zero] using hn_eq\n        omega\n      have hk_ge2 : 2 \u2264 k := by\n        by_cases hk1' : k = 1\n        \u00b7 exfalso; exact hk1 hk1'\n        \u00b7 omega\n      exact k_ge_two_case a b ha hb h p k hp hp_mod4 hn_eq hk_ge2"
+    }
+  ],
+  "edges": [
+    {
+      "source": "prime_case_solution",
+      "target": "different_parity_solution",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prime_power_solution",
+      "target": "different_parity_solution",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "totient_not_multiple_of_four_implies_prime_power",
+      "target": "different_parity_solution",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "fibonacci_of_three_ab",
+      "target": "prime_case_solution",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "vieta_jump_k_three",
+      "target": "prime_case_solution",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prime_divides_polynomial_implies_three",
+      "target": "prime_power_solution",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prime_power_divides_polynomial",
+      "target": "prime_power_solution",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "different_parity_solution",
+      "target": "usamo_2026_p6_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "both_odd_solution",
+      "target": "usamo_2026_p6_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c_ge_one_case",
+      "target": "k_ge_two_case",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "p_pow_dvd_diff_sq_minus_one",
+      "target": "k_ge_two_case",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_c_s",
+      "target": "k_ge_two_case",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c_zero_case",
+      "target": "k_ge_two_case",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "k_eq_one_case",
+      "target": "usamo_2026_p6_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "parity_diff_ded",
+      "target": "usamo_2026_p6_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "four_not_dvd_totient_implies_prime_power_mod4",
+      "target": "usamo_2026_p6_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "mod4_two_implies_4_not_dvd_totient",
+      "target": "usamo_2026_p6_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "k_ge_two_case",
+      "target": "usamo_2026_p6_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "parity_same_case",
+      "target": "usamo_2026_p6_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

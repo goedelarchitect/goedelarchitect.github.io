@@ -1,0 +1,2484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">PutnamBench 2015-A4. 1,853 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item current">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+<a href="../iter7/" class="nav-item">8</a>
+<a href="../iter8/" class="nav-item">9</a>
+<a href="../iter9/" class="nav-item">10</a>
+<a href="../iter10/" class="nav-item">11</a>
+<a href="../iter11/" class="nav-item current">12</a>
+<a href="../iter12/" class="nav-item">13</a>
+<a href="../iter13/" class="nav-item">14</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "S_def",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "S(x) = {n \u2208 \u2124 | n > 0 \u2227 \u230a n x\u230b text{ is even}}",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $S(x) = \\{n \\in \\mathbb{Z} \\mid n > 0 \\land \\lfloor n x\\rfloor \\text{ is even}\\}$ -/)]\ndef S_def (x : \u211d) : Set \u2124 := {n : \u2124 | n > 0 \u2227 Even \u230an * x\u230b}"
+    },
+    {
+      "id": "T_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any x\u2208[0,1), define T_N = \u03a3_{n=0}^{N-1} frac{mathbf{1}_{varepsilon_n=1} - c_n}{2^{n+1}}, where varepsilon_n = mathrm{sign\\_val}(x,n) and c_n = 1 if n\u2261 0pmod3 else 0. Then for all N, T_N \u2265 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- For any $x\\in[0,1)$, define $T_N = \\sum_{n=0}^{N-1} \\frac{\\mathbf{1}_{\\varepsilon_n=1} - c_n}{2^{n+1}}$, where $\\varepsilon_n = \\mathrm{sign\\_val}(x,n)$ and $c_n = 1$ if $n\\equiv 0\\pmod3$ else $0$. Then for all $N$, $T_N \\ge 0$. -/) (proof := /-- Induction using invariant. -/)]\nlemma T_nonneg (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) (N : \u2115) : 0 \u2264 Finset.sum (Finset.range N) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) := by\n  have sign_val_eq_one_or_neg_one (x : \u211d) (n : \u2115) : sign_val x n = 1 \u2228 sign_val x n = -1 := by\n    unfold sign_val\n    by_cases h : Even (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat\n    \u00b7 left\n      rcases h with \u27e8r, hr\u27e9\n      calc\n        (-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat = (-1 : \u211d) ^ (r + r) := by rw [hr]\n        _ = (-1 : \u211d) ^ (2 * r) := by rw [two_mul]\n        _ = ((-1 : \u211d) ^ 2) ^ r := by rw [pow_mul]\n        _ = 1 ^ r := by norm_num\n        _ = 1 := by simp\n    \u00b7 right\n      have hodd : Odd (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat :=\n        (Nat.not_even_iff_odd.mp h)\n      rcases hodd with \u27e8k, hk\u27e9\n      calc\n        (-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat = (-1 : \u211d) ^ (2 * k + 1) := by rw [hk]\n        _ = (-1 : \u211d) ^ (2 * k) * (-1 : \u211d) := by rw [pow_succ]\n        _ = ((-1 : \u211d) ^ 2) ^ k * (-1 : \u211d) := by rw [pow_mul]\n        _ = 1 ^ k * (-1 : \u211d) := by norm_num\n        _ = 1 * (-1 : \u211d) := by simp\n        _ = -1 := by simp\n  have sum_half_pow_Ico (k m : \u2115) (hkm : k < m) : \n    Finset.sum (Finset.Ico (k+1) m) (\u03bb j => 1 / ((2 : \u211d)^(j.succ : \u2115))) = 1 / ((2 : \u211d)^(k.succ : \u2115)) - 1 / ((2 : \u211d)^(m : \u2115)) := by\n    revert k\n    induction' m with m ih\n    \u00b7 intro k hkm; exfalso; exact Nat.not_lt_zero _ hkm\n    \u00b7 intro k hkm\n      have h_cases : k < m \u2228 k = m := by omega\n      rcases h_cases with (h_lt_m | rfl)\n      \u00b7 have hkm' : k+1 \u2264 m := by omega\n        rw [Finset.sum_Ico_succ_top hkm' (\u03bb j => 1 / ((2 : \u211d)^(j.succ : \u2115)))]\n        rw [ih k h_lt_m]\n        field_simp\n        have h1 : ((2 : \u211d)^(m.succ : \u2115)) = 2 * ((2 : \u211d)^(m : \u2115)) := by\n          simp [pow_succ, mul_comm]\n        have h2 : ((2 : \u211d)^(k.succ : \u2115)) = 2 * ((2 : \u211d)^(k : \u2115)) := by\n          simp [pow_succ, mul_comm]\n        rw [h1, h2]\n        ring\n      \u00b7 simp [Finset.Ico_self]\n  have sum_range_shift (k m : \u2115) (hkm : k < m) (f : \u2115 \u2192 \u211d) : \n    Finset.sum (Finset.range (m - k - 1)) (\u03bb i => f (k+1+i)) = Finset.sum (Finset.Ico (k+1) m) f := by\n    apply Finset.sum_bij (\u03bb i hi => k+1+i)\n    \u00b7 intro a ha\n      rw [Finset.mem_range] at ha\n      have ha' : k+1+a < m := by omega\n      exact Finset.mem_Ico.mpr \u27e8by omega, ha'\u27e9\n    \u00b7 intro a ha b hb h\n      omega\n    \u00b7 intro j hj\n      rw [Finset.mem_Ico] at hj\n      refine \u27e8j - (k+1), Finset.mem_range.mpr (by omega), ?_\u27e9\n      omega\n    \u00b7 intro a ha\n      rfl\n  have hS_nonneg_aux : \u2200 (N : \u2115), 0 \u2264 Finset.sum (Finset.range N) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) := by\n    intro N\n    refine Nat.strong_induction_on N ?_\n    intro M IH\n    set S := \u03bb (k : \u2115) => Finset.sum (Finset.range k) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) with hS\n    have hS0 : S 0 = 0 := by\n      simp [S]\n    by_cases h_neg : \u2203 (n : \u2115), n < M \u2227 n % 3 = 0 \u2227 sign_val x n = -1\n    \u00b7 let bad_set := Finset.filter (\u03bb n => n % 3 = 0 \u2227 sign_val x n = -1) (Finset.range M)\n      have h_nonempty : bad_set.Nonempty := by\n        rcases h_neg with \u27e8n, hn, hn_mod, hn_sign\u27e9\n        refine \u27e8n, Finset.mem_filter.mpr \u27e8Finset.mem_range.mpr hn, And.intro hn_mod hn_sign\u27e9\u27e9\n      let m := Finset.max' bad_set h_nonempty\n      have hm_mem : m \u2208 bad_set := Finset.max'_mem _ h_nonempty\n      have hm_range : m < M := by\n        rcases Finset.mem_filter.mp hm_mem with \u27e8hm_range', _\u27e9\n        exact Finset.mem_range.mp hm_range'\n      have hm_mod : m % 3 = 0 := (Finset.mem_filter.mp hm_mem).2.1\n      have hm_sign : sign_val x m = -1 := (Finset.mem_filter.mp hm_mem).2.2\n      have h_tail_nonneg : 0 \u2264 Finset.sum (Finset.Ico (m+1) M) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) := by\n        apply Finset.sum_nonneg\n        intro n hn\n        rw [Finset.mem_Ico] at hn\n        have hn_lt_M : n < M := hn.2\n        have h_not_bad : \u00ac (n % 3 = 0 \u2227 sign_val x n = -1) := by\n          intro h\n          have : n \u2208 bad_set := Finset.mem_filter.mpr \u27e8Finset.mem_range.mpr hn_lt_M, h\u27e9\n          have hle : n \u2264 m := Finset.le_max' bad_set n this\n          omega\n        rcases sign_val_eq_one_or_neg_one x n with (hsign | hsign)\n        \u00b7 by_cases hn_mod : n % 3 = 0\n          \u00b7 have hc3 : c3 n = 1 := by\n              unfold c3; simp [hn_mod]\n            simp [hsign, hn_mod, hc3]\n          \u00b7 have hc3 : c3 n = 0 := by\n              unfold c3; simp [hn_mod]\n            simp [hsign, hc3]\n        \u00b7 have hn_mod_not : n % 3 \u2260 0 := by\n            intro h_eq\n            apply h_not_bad\n            exact \u27e8h_eq, hsign\u27e9\n          have hc3 : c3 n = 0 := by\n            unfold c3; simp [hn_mod_not]\n          simp [hsign, hc3]\n          norm_num\n      have hm_le_M : m+1 \u2264 M := by omega\n      have hSM_eq : S M = S (m+1) + Finset.sum (Finset.Ico (m+1) M) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) := by\n        dsimp [S]\n        rw [\u2190 Finset.sum_range_add_sum_Ico (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) (h := hm_le_M)]\n      have hS_succ_nonneg : 0 \u2264 S (m+1) := by\n        rcases lookback x hx0 hx1 m hm_mod hm_sign with \u27e8k, hk_lt_m, hk_sign, hk_mod, hineq\u27e9\n        have hk_lt_m_succ : k < m+1 := by omega\n        have hSk_nonneg : 0 \u2264 S k := IH k (by omega)\n        have hS_m_ge : S m \u2265 S k + 1 / ((2 : \u211d)^(k.succ : \u2115)) - Finset.sum (Finset.range (m - k - 1)) (\u03bb i => c3 (k+1+i) / ((2 : \u211d)^((k+1+i).succ : \u2115))) := hineq\n        have h_lower_bound : 1 / ((2 : \u211d)^(k.succ : \u2115)) - Finset.sum (Finset.range (m - k - 1)) (\u03bb i => c3 (k+1+i) / ((2 : \u211d)^((k+1+i).succ : \u2115))) \u2265 1 / ((2 : \u211d)^(m.succ : \u2115)) := by\n          have h_sum_c3_le : Finset.sum (Finset.range (m - k - 1)) (\u03bb i => c3 (k+1+i) / ((2 : \u211d)^((k+1+i).succ : \u2115))) \u2264 \n            Finset.sum (Finset.range (m - k - 1)) (\u03bb i => 1 / ((2 : \u211d)^((k+1+i).succ : \u2115))) := by\n            refine Finset.sum_le_sum (\u03bb i hi => ?_)\n            have hc3_le_one : c3 (k+1+i) \u2264 (1 : \u211d) := by\n              unfold c3; split <;> norm_num\n            have hpos : 0 < ((2 : \u211d)^((k+1+i).succ : \u2115)) := by positivity\n            exact ((div_le_div_iff_of_pos_right hpos).mpr hc3_le_one)\n          have h_sum_geom : Finset.sum (Finset.range (m - k - 1)) (\u03bb i => 1 / ((2 : \u211d)^((k+1+i).succ : \u2115))) = 1 / ((2 : \u211d)^(k.succ : \u2115)) - 1 / ((2 : \u211d)^(m : \u2115)) := by\n            have h_eq : Finset.sum (Finset.range (m - k - 1)) (\u03bb i => 1 / ((2 : \u211d)^((k+1+i).succ : \u2115))) = \n              Finset.sum (Finset.Ico (k+1) m) (\u03bb j => 1 / ((2 : \u211d)^(j.succ : \u2115))) := by\n              rw [sum_range_shift k m hk_lt_m (\u03bb j => 1 / ((2 : \u211d)^(j.succ : \u2115)))]\n            rw [h_eq, sum_half_pow_Ico k m hk_lt_m]\n          have h_ineq2 : 1 / ((2 : \u211d)^(k.succ : \u2115)) - Finset.sum (Finset.range (m - k - 1)) (\u03bb i => c3 (k+1+i) / ((2 : \u211d)^((k+1+i).succ : \u2115))) \u2265\n            1 / ((2 : \u211d)^(k.succ : \u2115)) - (1 / ((2 : \u211d)^(k.succ : \u2115)) - 1 / ((2 : \u211d)^(m : \u2115))) := by\n            linarith\n          have h_simplify : 1 / ((2 : \u211d)^(k.succ : \u2115)) - (1 / ((2 : \u211d)^(k.succ : \u2115)) - 1 / ((2 : \u211d)^(m : \u2115))) = 1 / ((2 : \u211d)^(m : \u2115)) := by ring\n          rw [h_simplify] at h_ineq2\n          have h_pos : 1 / ((2 : \u211d)^(m : \u2115)) \u2265 1 / ((2 : \u211d)^(m.succ : \u2115)) := by\n            refine (one_div_le_one_div ?_ ?_).mpr ?_\n            \u00b7 positivity\n            \u00b7 positivity\n            \u00b7 have h_pow_le : (2 : \u211d)^(m : \u2115) \u2264 (2 : \u211d)^(m.succ : \u2115) := by\n                calc\n                  (2 : \u211d)^(m : \u2115) = (2 : \u211d)^(m : \u2115) * 1 := by ring\n                  _ \u2264 (2 : \u211d)^(m : \u2115) * 2 := mul_le_mul_of_nonneg_left (by norm_num) (by positivity)\n                  _ = (2 : \u211d)^(m.succ : \u2115) := by simp [pow_succ]\n              exact h_pow_le\n          linarith\n        have hS_m_ge2 : S m \u2265 1 / ((2 : \u211d)^(m.succ : \u2115)) := by\n          linarith\n        have hS_succ_eq : S (m+1) = S m + ((if sign_val x m = 1 then (1 : \u211d) else (0 : \u211d)) - c3 m) / ((2 : \u211d)^(m.succ : \u2115)) := by\n          dsimp [S]\n          rw [Finset.sum_range_succ]\n        have h_term_m : ((if sign_val x m = 1 then (1 : \u211d) else (0 : \u211d)) - c3 m) / ((2 : \u211d)^(m.succ : \u2115)) = -1 / ((2 : \u211d)^(m.succ : \u2115)) := by\n          have hc3_m : c3 m = 1 := by\n            unfold c3; simp [hm_mod]\n          simp [hm_sign, hc3_m]\n          norm_num\n        rw [hS_succ_eq, h_term_m]\n        have h_nonneg : 0 \u2264 S m - 1 / ((2 : \u211d)^(m.succ : \u2115)) := by\n          linarith\n        have : S m + -1 / ((2 : \u211d)^(m.succ : \u2115)) = S m - 1 / ((2 : \u211d)^(m.succ : \u2115)) := by ring\n        rw [this]\n        exact h_nonneg\n      have h_goal : 0 \u2264 S M := by\n        rw [hSM_eq]\n        nlinarith\n      simpa [S] using h_goal\n    \u00b7 have h_all_nonneg : \u2200 n, n < M \u2192 0 \u2264 ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)) := by\n        intro n hn\n        rcases sign_val_eq_one_or_neg_one x n with (hsign | hsign)\n        \u00b7 by_cases hn_mod : n % 3 = 0\n          \u00b7 have hc3 : c3 n = 1 := by\n              unfold c3; simp [hn_mod]\n            simp [hsign, hn_mod, hc3]\n          \u00b7 have hc3 : c3 n = 0 := by\n              unfold c3; simp [hn_mod]\n            simp [hsign, hc3]\n        \u00b7 have hn_mod_not : n % 3 \u2260 0 := by\n            intro h_eq\n            apply h_neg\n            exact \u27e8n, hn, h_eq, hsign\u27e9\n          have hc3 : c3 n = 0 := by\n            unfold c3; simp [hn_mod_not]\n          simp [hsign, hc3]\n          norm_num\n      have h_sum_nonneg : 0 \u2264 Finset.sum (Finset.range M) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) :=\n        Finset.sum_nonneg (\u03bb n hn => h_all_nonneg n (Finset.mem_range.mp hn))\n      simpa [S] using h_sum_nonneg\n  exact hS_nonneg_aux N"
+    },
+    {
+      "id": "b_val",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "b(x,n)=1 if \u230a (n+1)x\u230b is odd, else 0",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $b(x,n)=1$ if $\\lfloor (n+1)x\\rfloor$ is odd, else $0$ -/)]\nnoncomputable def b_val (x : \u211d) (n : \u2115) : \u211d := if Even (Int.floor (((n.succ : \u2115) : \u211d) * x)) then 0 else 1"
+    },
+    {
+      "id": "c",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "c_n = 1/2^{n+1}",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- $c_n = 1/2^{n+1}$ -/)]\nnoncomputable def c (n : \u2115) : \u211d := 1 / ((2 : \u211d) ^ (n.succ : \u2115))"
+    },
+    {
+      "id": "c3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "c_n = 1 if n\u2261 0pmod 3, else 0",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- $c_n = 1$ if $n\\equiv 0\\pmod 3$, else $0$ -/)]\nnoncomputable def c3 (n : \u2115) : \u211d := if n % 3 = 0 then (1 : \u211d) else (0 : \u211d)"
+    },
+    {
+      "id": "d",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "d_k = 1 if k\u2261 1pmod 3, else -1",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- $d_k = 1$ if $k\\equiv 1\\pmod 3$, else $-1$ -/)]\nnoncomputable def d (k : \u2115) : \u211d := if k % 3 = 1 then (1 : \u211d) else (-1 : \u211d)"
+    },
+    {
+      "id": "exists_d_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any N, there exists m\u2265 N with d_{m+1}=1.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For any $N$, there exists $m\\ge N$ with $d_{m+1}=1$. -/) (proof := /-- By period 3. -/)]\nlemma exists_d_pos (N : \u2115) : \u2203 m \u2265 N, d (m.succ) = (1 : \u211d) := by\n  have exists_m_succ_mod_three_eq_one (N : \u2115) : \u2203 m, m \u2265 N \u2227 (m.succ) % 3 = 1 := by\n    have hmod3 : N % 3 < 3 := Nat.mod_lt N (by decide : 0 < 3)\n    have h_cases : N % 3 = 0 \u2228 N % 3 = 1 \u2228 N % 3 = 2 := by\n      interval_cases N % 3\n      \u00b7 left; rfl\n      \u00b7 right; left; rfl\n      \u00b7 right; right; rfl\n    rcases h_cases with (h0|h1|h2)\n    \u00b7 refine \u27e8N, le_rfl, ?_\u27e9\n      omega\n    \u00b7 refine \u27e8N+2, by omega, ?_\u27e9\n      omega\n    \u00b7 refine \u27e8N+1, by omega, ?_\u27e9\n      omega\n  rcases exists_m_succ_mod_three_eq_one N with \u27e8m, hm, hm_mod\u27e9\n  refine \u27e8m, hm, ?_\u27e9\n  dsimp [d]\n  rw [hm_mod]\n  rfl"
+    },
+    {
+      "id": "exists_k",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For x\u2208[0,1) and m\u22610pmod3 with mathrm{sign\\_val}(x,m)=-1, there exists k<m with mathrm{sign\\_val}(x,k)=1 and c3(k)=0.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For $x\\in[0,1)$ and $m\\equiv0\\pmod3$ with $\\mathrm{sign\\_val}(x,m)=-1$, there exists $k<m$ with $\\mathrm{sign\\_val}(x,k)=1$ and $c3(k)=0$. -/) (proof := /-- By contradiction using `sign_val_of_cond`. -/)]\nlemma exists_k (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) (m : \u2115) (hm0 : m % 3 = 0)\n    (hm_sign : sign_val x m = -1) : \u2203 (k : \u2115), (k < m) \u2227 (sign_val x k = 1) \u2227 (c3 k = 0) := by\n  have sign_val_eq_one_or_neg_one (x : \u211d) (n : \u2115) : sign_val x n = 1 \u2228 sign_val x n = -1 := by\n    unfold sign_val\n    induction' (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat with k ih\n    \u00b7 left; simp\n    \u00b7 rw [pow_succ]\n      rcases ih with (h | h)\n      \u00b7 right; rw [h, mul_neg, one_mul]\n      \u00b7 left; rw [h, mul_neg, neg_mul, one_mul, neg_neg]\n  by_cases hcond : \u2200 n < m, n % 3 \u2260 0 \u2192 sign_val x n = -1\n  \u00b7 have hpos : sign_val x m = 1 := sign_val_of_cond x hx0 hx1 m hm0 hcond\n    rw [hpos] at hm_sign\n    linarith\n  \u00b7 push_neg at hcond\n    rcases hcond with \u27e8n, hnlt, hnmod, hnsign\u27e9\n    have hnsign_eq1 : sign_val x n = 1 := by\n      rcases sign_val_eq_one_or_neg_one x n with (h | h)\n      \u00b7 exact h\n      \u00b7 exfalso; exact hnsign h\n    have hc3 : c3 n = 0 := by\n      unfold c3\n      simp [hnmod]\n    exact \u27e8n, hnlt, hnsign_eq1, hc3\u27e9"
+    },
+    {
+      "id": "exists_x_f_def_close_to_4_7",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any varepsilon>0, there exists x\u2208[0,1) such that f(x) < 4/7 + varepsilon.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any $\\varepsilon>0$, there exists $x\\in[0,1)$ such that $f(x) < 4/7 + \\varepsilon$. -/)\n  (proof := /-- By `f_def_eq_half_plus_g` and `exists_x_g_close_to_one_seventh`, choose $x$ with $g(x) < 1/7 + 2\\varepsilon$, then $f(x) = (1+g(x))/2 < (1 + 1/7 + 2\\varepsilon)/2 = 4/7 + \\varepsilon$. -/)]\nlemma exists_x_f_def_close_to_4_7 (\u03b5 : \u211d) (h\u03b5 : \u03b5 > 0) : \u2203 x \u2208 Set.Ico (0 : \u211d) 1, f_def x < (4/7 : \u211d) + \u03b5 := by\n  rcases exists_x_g_close_to_one_seventh \u03b5 h\u03b5 with \u27e8x, hxIco, hg\u27e9\n  refine \u27e8x, hxIco, ?_\u27e9\n  have hx0 : 0 \u2264 x := hxIco.1\n  have hx1 : x < 1 := hxIco.2\n  rw [f_def_eq_half_plus_g x hx0 hx1]\n  have hcalc : (1 + ((1/7 : \u211d) + \u03b5)) / 2 = (4/7 : \u211d) + \u03b5 / 2 := by ring\n  calc\n    (1 + g x) / 2 < (1 + ((1/7 : \u211d) + \u03b5)) / 2 := by\n      nlinarith\n    _ = (4/7 : \u211d) + \u03b5 / 2 := by ring\n    _ < (4/7 : \u211d) + \u03b5 := by nlinarith"
+    },
+    {
+      "id": "exists_x_g_close_to_one_seventh",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any varepsilon>0, there exists x\u2208[0,1) such that g(x) < 1/7 + varepsilon.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For any $\\varepsilon>0$, there exists $x\\in[0,1)$ such that $g(x) < 1/7 + \\varepsilon$. -/)\n  (proof := /-- Using the same functional equation, one can construct a sequence of dyadic rationals $x_k$ such that $g(x_k)\\to 1/7$ as $k\\to\\infty$. -/)]\nlemma exists_x_g_close_to_one_seventh (\u03b5 : \u211d) (h\u03b5 : \u03b5 > 0) : \u2203 x \u2208 Set.Ico (0 : \u211d) 1, g x < (1/7 : \u211d) + \u03b5 := by\n  -- Choose N such that 2/\u03b5 < N\n  have hN_ex : \u2203 N : \u2115, (2 / \u03b5 : \u211d) < (N : \u211d) := by\n    simpa using exists_nat_gt (2 / \u03b5)\n  rcases hN_ex with \u27e8N, hNgt\u27e9\n  have hNpos' : (N : \u211d) > 0 := by\n    have hpos : (2 / \u03b5 : \u211d) > 0 := div_pos (by norm_num) h\u03b5\n    linarith\n  have hNpos : N \u2265 1 := by\n    by_contra! H\n    have hN0 : (N : \u211d) \u2264 0 := by exact_mod_cast (show N \u2264 0 from by omega)\n    linarith\n  have hNpos_real : (0 : \u211d) < (N : \u211d) := hNpos'\n  have hpos_eps : (0 : \u211d) < \u03b5 := h\u03b5\n  have hpow : (N : \u211d) < (2 : \u211d) ^ N := by\n    exact_mod_cast (Nat.lt_two_pow_self (n := N))\n  have hpos_2N : (0 : \u211d) < (2 : \u211d) ^ N := by positivity\n  have h_one_div : 1 / ((2 : \u211d) ^ N) < 1 / (N : \u211d) := by\n    exact (one_div_lt_one_div hpos_2N hNpos_real).mpr hpow\n  have h_2N_N : 2 / ((2 : \u211d) ^ N) < 2 / (N : \u211d) := by\n    calc\n      2 / ((2 : \u211d) ^ N) = 2 * (1 / ((2 : \u211d) ^ N)) := by ring\n      _ < 2 * (1 / (N : \u211d)) := by\n        refine mul_lt_mul_of_pos_left h_one_div (by norm_num : (0 : \u211d) < 2)\n      _ = 2 / (N : \u211d) := by ring\n  have hineq : (2 : \u211d) < \u03b5 * (N : \u211d) := by\n    calc\n      (2 : \u211d) = (2 / \u03b5) * \u03b5 := by field_simp [h\u03b5.ne.symm]\n      _ < (N : \u211d) * \u03b5 := by nlinarith\n      _ = \u03b5 * (N : \u211d) := mul_comm _ _\n  have h_lt_N : 2 / (N : \u211d) < \u03b5 := by\n    calc\n      2 / (N : \u211d) = (2 : \u211d) * (1 / (N : \u211d)) := by ring\n      _ < (\u03b5 * (N : \u211d)) * (1 / (N : \u211d)) := by\n        refine mul_lt_mul_of_pos_right hineq ?_\n        have hpos_inv : 0 < 1 / (N : \u211d) := div_pos (by norm_num) hNpos_real\n        exact hpos_inv\n      _ = \u03b5 := by field_simp [hNpos_real.ne.symm]\n  have h_2N_eps : 2 / ((2 : \u211d) ^ N) < \u03b5 := by\n    nlinarith\n  have hx_mem : xN N \u2208 Set.Ico (0 : \u211d) 1 := xN_in_Ico N hNpos\n  have hg_bound : g (xN N) < (1/7 : \u211d) + \u03b5 := by\n    have htemp := norm_bound N hNpos\n    nlinarith\n  exact \u27e8xN N, hx_mem, hg_bound\u27e9"
+    },
+    {
+      "id": "explicit_x_parity",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For N\u2265 1 and k<N, we have (-1)^{\u230a (k+1)x_N\u230b} = d_{k+1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- For $N\\ge 1$ and $k<N$, we have $(-1)^{\\lfloor (k+1)x_N\\rfloor} = d_{k+1}$. -/) (proof := /-- By explicit computation of $\\lfloor (k+1)x_N\\rfloor$ modulo 2. -/)]\nlemma explicit_x_parity (N : \u2115) (hNpos : N \u2265 1) (k : \u2115) (hk : k < N) : ((-1 : \u211d) ^ (Int.floor (((k.succ : \u2115) : \u211d) * xN N)).toNat) = d (k.succ) := by\n  set m := k.succ with hm_def\n  have hm_pos : m \u2260 0 := by omega\n  have hm_le_N : m \u2264 N := Nat.succ_le_of_lt hk\n  have hxN_pos : 0 < xN N := by\n    have hNpos_nat : 0 < N := by omega\n    have hNpos' : (0 : \u211d) < N := by exact_mod_cast hNpos_nat\n    have h_div : 1 / (6*(N : \u211d)) \u2264 1/6 := by\n      field_simp\n      exact_mod_cast hNpos\n    unfold xN\n    nlinarith\n  have hm_pos' : (0 : \u211d) < (m : \u211d) := by exact_mod_cast (Nat.pos_of_ne_zero hm_pos)\n  have hmul_pos : 0 < (m : \u211d) * xN N := mul_pos hm_pos' hxN_pos\n  have hfloor_nonneg_int : 0 \u2264 (Int.floor ((m : \u211d) * xN N) : \u2124) := by\n    exact Int.floor_nonneg.mpr (by exact_mod_cast hmul_pos.le)\n  have h0_case (hmod : m % 3 = 0) : Int.floor ((m : \u211d) * xN N) = (2 * ((m/3 : \u2115) : \u2124) - 1) := by\n    set t := m/3 with ht_def\n    have hm_eq_nat : m = 3*t := by\n      have := Nat.div_add_mod m 3\n      rw [hmod, add_zero] at this\n      omega\n    have hm_eq : (m : \u211d) = 3*(t : \u211d) := by exact_mod_cast hm_eq_nat\n    have hNpos_nat : 0 < N := by omega\n    have hNpos' : (0 : \u211d) < N := by exact_mod_cast hNpos_nat\n    have hmpos_nat : 0 < m := Nat.pos_of_ne_zero hm_pos\n    have hmpos' : (0 : \u211d) < m := by exact_mod_cast hmpos_nat\n    have hm_le_N' : (m : \u211d) \u2264 (N : \u211d) := by exact_mod_cast hm_le_N\n    have h\u03b4_pos : 0 < (m : \u211d) / (6 * (N : \u211d)) := by\n      refine _root_.div_pos hmpos' ?_\n      nlinarith\n    have h\u03b4_le_6th : (m : \u211d) / (6 * (N : \u211d)) \u2264 1/6 := by\n      have h : (m : \u211d) / (N : \u211d) \u2264 1 := by\n        refine (div_le_one ?_).mpr hm_le_N'\n        exact hNpos'\n      calc\n        (m : \u211d) / (6 * (N : \u211d)) = ((m : \u211d) / (N : \u211d)) * (1/6) := by ring\n        _ \u2264 1 * (1/6) := by nlinarith\n        _ = 1/6 := by ring\n    set z := (2*(t : \u2124) - 1 : \u2124) with hz_def\n    have hz_real : (z : \u211d) = 2*(t : \u211d) - 1 := by\n      simp [hz_def]\n    have h_mul : (m : \u211d) * xN N = 2*(t : \u211d) - ((m : \u211d) / (6*(N : \u211d))) := by\n      calc\n        (m : \u211d) * xN N = ((2 : \u211d)*(m : \u211d))/3 - ((m : \u211d) / (6*(N : \u211d))) := by\n          simp [xN]\n          ring\n        _ = 2*(t : \u211d) - ((m : \u211d) / (6*(N : \u211d))) := by\n          rw [hm_eq]\n          ring\n    have h_lower : (z : \u211d) \u2264 (m : \u211d) * xN N := by\n      rw [h_mul, hz_real]\n      nlinarith\n    have h_upper : (m : \u211d) * xN N < (z : \u211d) + 1 := by\n      rw [h_mul, hz_real]\n      nlinarith\n    exact calc\n      Int.floor ((m : \u211d) * xN N) = (z : \u2124) := by\n        apply Int.floor_eq_iff.mpr\n        exact \u27e8h_lower, h_upper\u27e9\n      _ = (2*(t : \u2124) - 1) := rfl\n  have h1_case (hmod : m % 3 = 1) : Int.floor ((m : \u211d) * xN N) = (2 * ((m/3 : \u2115) : \u2124)) := by\n    set t := m/3 with ht_def\n    have hm_eq_nat : m = 3*t + 1 := by\n      have := Nat.div_add_mod m 3\n      rw [hmod] at this\n      omega\n    have hm_eq : (m : \u211d) = 3*(t : \u211d) + 1 := by exact_mod_cast hm_eq_nat\n    have hNpos_nat : 0 < N := by omega\n    have hNpos' : (0 : \u211d) < N := by exact_mod_cast hNpos_nat\n    have hmpos_nat : 0 < m := Nat.pos_of_ne_zero hm_pos\n    have hmpos' : (0 : \u211d) < m := by exact_mod_cast hmpos_nat\n    have hm_le_N' : (m : \u211d) \u2264 (N : \u211d) := by exact_mod_cast hm_le_N\n    have h\u03b4_pos : 0 < (m : \u211d) / (6 * (N : \u211d)) := by\n      refine _root_.div_pos hmpos' ?_\n      nlinarith\n    have h\u03b4_le_6th : (m : \u211d) / (6 * (N : \u211d)) \u2264 1/6 := by\n      have h : (m : \u211d) / (N : \u211d) \u2264 1 := by\n        refine (div_le_one ?_).mpr hm_le_N'\n        exact hNpos'\n      calc\n        (m : \u211d) / (6 * (N : \u211d)) = ((m : \u211d) / (N : \u211d)) * (1/6) := by ring\n        _ \u2264 1 * (1/6) := by nlinarith\n        _ = 1/6 := by ring\n    set z := (2*(t : \u2124) : \u2124) with hz_def\n    have hz_real : (z : \u211d) = 2*(t : \u211d) := by\n      simp [hz_def]\n    have h_mul : (m : \u211d) * xN N = 2*(t : \u211d) + (2/3 : \u211d) - ((m : \u211d) / (6*(N : \u211d))) := by\n      calc\n        (m : \u211d) * xN N = ((2 : \u211d)*(m : \u211d))/3 - ((m : \u211d) / (6*(N : \u211d))) := by\n          simp [xN]\n          ring\n        _ = 2*(t : \u211d) + (2/3 : \u211d) - ((m : \u211d) / (6*(N : \u211d))) := by\n          rw [hm_eq]\n          ring\n    have h_lower : (z : \u211d) \u2264 (m : \u211d) * xN N := by\n      rw [h_mul, hz_real]\n      nlinarith\n    have h_upper : (m : \u211d) * xN N < (z : \u211d) + 1 := by\n      rw [h_mul, hz_real]\n      nlinarith\n    exact calc\n      Int.floor ((m : \u211d) * xN N) = (z : \u2124) := by\n        apply Int.floor_eq_iff.mpr\n        exact \u27e8h_lower, h_upper\u27e9\n      _ = (2*(t : \u2124) : \u2124) := rfl\n  have h2_case (hmod : m % 3 = 2) : Int.floor ((m : \u211d) * xN N) = (2 * ((m/3 : \u2115) : \u2124) + 1) := by\n    set t := m/3 with ht_def\n    have hm_eq_nat : m = 3*t + 2 := by\n      have := Nat.div_add_mod m 3\n      rw [hmod] at this\n      omega\n    have hm_eq : (m : \u211d) = 3*(t : \u211d) + 2 := by exact_mod_cast hm_eq_nat\n    have hNpos_nat : 0 < N := by omega\n    have hNpos' : (0 : \u211d) < N := by exact_mod_cast hNpos_nat\n    have hmpos_nat : 0 < m := Nat.pos_of_ne_zero hm_pos\n    have hmpos' : (0 : \u211d) < m := by exact_mod_cast hmpos_nat\n    have hm_le_N' : (m : \u211d) \u2264 (N : \u211d) := by exact_mod_cast hm_le_N\n    have h\u03b4_pos : 0 < (m : \u211d) / (6 * (N : \u211d)) := by\n      refine _root_.div_pos hmpos' ?_\n      nlinarith\n    have h\u03b4_le_6th : (m : \u211d) / (6 * (N : \u211d)) \u2264 1/6 := by\n      have h : (m : \u211d) / (N : \u211d) \u2264 1 := by\n        refine (div_le_one ?_).mpr hm_le_N'\n        exact hNpos'\n      calc\n        (m : \u211d) / (6 * (N : \u211d)) = ((m : \u211d) / (N : \u211d)) * (1/6) := by ring\n        _ \u2264 1 * (1/6) := by nlinarith\n        _ = 1/6 := by ring\n    set z := (2*(t : \u2124) + 1 : \u2124) with hz_def\n    have hz_real : (z : \u211d) = 2*(t : \u211d) + 1 := by\n      simp [hz_def]\n    have h_mul : (m : \u211d) * xN N = 2*(t : \u211d) + (4/3 : \u211d) - ((m : \u211d) / (6*(N : \u211d))) := by\n      calc\n        (m : \u211d) * xN N = ((2 : \u211d)*(m : \u211d))/3 - ((m : \u211d) / (6*(N : \u211d))) := by\n          simp [xN]\n          ring\n        _ = 2*(t : \u211d) + (4/3 : \u211d) - ((m : \u211d) / (6*(N : \u211d))) := by\n          rw [hm_eq]\n          ring\n    have h_lower : (z : \u211d) \u2264 (m : \u211d) * xN N := by\n      rw [h_mul, hz_real]\n      nlinarith\n    have h_upper : (m : \u211d) * xN N < (z : \u211d) + 1 := by\n      rw [h_mul, hz_real]\n      nlinarith\n    exact calc\n      Int.floor ((m : \u211d) * xN N) = (z : \u2124) := by\n        apply Int.floor_eq_iff.mpr\n        exact \u27e8h_lower, h_upper\u27e9\n      _ = (2*(t : \u2124) + 1 : \u2124) := rfl\n  have hparity_eq : Even ((Int.floor ((m : \u211d) * xN N) : \u2124)) \u2194 m % 3 = 1 := by\n    have h_cases : m % 3 = 0 \u2228 m % 3 = 1 \u2228 m % 3 = 2 := by\n      have hm3_lt_3 : m % 3 < 3 := Nat.mod_lt m (by norm_num : 0 < 3)\n      omega\n    rcases h_cases with (h0 | h1 | h2)\n    \u00b7 -- m % 3 = 0\n      have h_floor : Int.floor ((m : \u211d) * xN N) = (2 * ((m/3 : \u2115) : \u2124) - 1) := h0_case h0\n      have h_odd : \u00ac Even ((2 * ((m/3 : \u2115) : \u2124) - 1 : \u2124)) := by\n        intro h_even\n        rcases h_even with \u27e8k, hk\u27e9\n        omega\n      have h_not_mod1 : m % 3 \u2260 1 := by\n        rw [h0]\n        omega\n      constructor\n      \u00b7 intro h_even\n        rw [h_floor] at h_even\n        exact absurd h_even h_odd\n      \u00b7 intro h_mod1\n        exact (h_not_mod1 h_mod1).elim\n    \u00b7 -- m % 3 = 1\n      have h_floor : Int.floor ((m : \u211d) * xN N) = (2 * ((m/3 : \u2115) : \u2124)) := h1_case h1\n      have h_even : Even ((2 * ((m/3 : \u2115) : \u2124) : \u2124)) := by\n        refine \u27e8(m/3 : \u2115), ?_\u27e9\n        ring\n      constructor\n      \u00b7 intro _\n        exact h1\n      \u00b7 intro _\n        rw [h_floor]\n        exact h_even\n    \u00b7 -- m % 3 = 2\n      have h_floor : Int.floor ((m : \u211d) * xN N) = (2 * ((m/3 : \u2115) : \u2124) + 1) := h2_case h2\n      have h_odd : \u00ac Even ((2 * ((m/3 : \u2115) : \u2124) + 1 : \u2124)) := by\n        intro h_even\n        rcases h_even with \u27e8k, hk\u27e9\n        omega\n      have h_not_mod1 : m % 3 \u2260 1 := by\n        rw [h2]\n        omega\n      constructor\n      \u00b7 intro h_even\n        rw [h_floor] at h_even\n        exact absurd h_even h_odd\n      \u00b7 intro h_mod1\n        exact (h_not_mod1 h_mod1).elim\n  have h_pow_eq : ((-1 : \u211d) ^ (Int.floor ((m : \u211d) * xN N)).toNat) = if Even ((Int.floor ((m : \u211d) * xN N)).toNat : \u2115) then (1 : \u211d) else (-1 : \u211d) := by\n    rw [neg_one_pow_eq_ite]\n  have h_even_nat_iff_even_int : Even ((Int.floor ((m : \u211d) * xN N)).toNat : \u2115) \u2194 Even ((Int.floor ((m : \u211d) * xN N) : \u2124)) := by\n    set a := Int.floor ((m : \u211d) * xN N) with ha_def\n    have ha_nonneg : 0 \u2264 a := hfloor_nonneg_int\n    have h_eq : (a.toNat : \u2124) = a := Int.toNat_of_nonneg ha_nonneg\n    constructor\n    \u00b7 intro h_even_nat\n      have h_even_int : Even ((a.toNat : \u2115) : \u2124) := by exact_mod_cast h_even_nat\n      rw [h_eq] at h_even_int\n      exact h_even_int\n    \u00b7 intro h_even_int\n      rw [\u2190 h_eq] at h_even_int\n      exact_mod_cast h_even_int\n  rw [h_pow_eq]\n  have h_parity_choice : Even ((Int.floor ((m : \u211d) * xN N)).toNat : \u2115) \u2194 m % 3 = 1 := by\n    rw [h_even_nat_iff_even_int, hparity_eq]\n  have h_d : d m = if m % 3 = 1 then (1 : \u211d) else (-1 : \u211d) := rfl\n  rw [h_d]\n  by_cases hm_mod : m % 3 = 1\n  \u00b7 have h_even : Even ((Int.floor ((m : \u211d) * xN N)).toNat : \u2115) := (h_parity_choice.mpr hm_mod)\n    rw [if_pos hm_mod, if_pos h_even]\n  \u00b7 have h_not_even : \u00ac Even ((Int.floor ((m : \u211d) * xN N)).toNat : \u2115) := by\n      rw [h_parity_choice]\n      exact hm_mod\n    rw [if_neg hm_mod, if_neg h_not_even]"
+    },
+    {
+      "id": "f_def",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "f(x) = \u03a3_{n\u2208 S(x)} 1/2^n",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $f(x) = \\sum_{n\\in S(x)} 1/2^n$ -/)]\nnoncomputable def f_def (x : \u211d) : \u211d := \u2211' n : S_def x, 1 / 2 ^ (n : \u2124)"
+    },
+    {
+      "id": "f_def_eq_half_plus_g",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For every x\u2208[0,1), f(x) = (1+g(x))/2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- For every $x\\in[0,1)$, $f(x) = (1+g(x))/2$. -/)\n  (proof := /-- By definition of `f_def` and `g`, we have $f(x)=\\sum_{n=1}^\\infty \\frac{1+(-1)^{\\lfloor nx\\rfloor}}{2\\cdot 2^n} = \\frac12 + \\frac12\\sum_{n=1}^\\infty \\frac{(-1)^{\\lfloor nx\\rfloor}}{2^n} = \\frac{1+g(x)}2$. -/)]\nlemma f_def_eq_half_plus_g (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) : f_def x = (1 + g x) / 2 := by\n  have summable_c : Summable c := by\n    have h_summable : Summable (fun n : \u2115 => ((1/2 : \u211d) ^ n)) :=\n      summable_geometric_of_lt_one (by norm_num : 0 \u2264 (1/2 : \u211d)) (by norm_num : (1/2 : \u211d) < 1)\n    have h_eq : c = (fun n : \u2115 => ((1/2 : \u211d) ^ (n+1))) := by\n      ext n\n      have h2 : (2 : \u211d) \u2260 0 := by norm_num\n      dsimp [c]\n      field_simp [h2, pow_succ]\n      have h : 2 ^ (n+1 : \u2115) * ((1/2 : \u211d) ^ (n+1 : \u2115)) = 1 := by\n        calc\n          2 ^ (n+1 : \u2115) * ((1/2 : \u211d) ^ (n+1 : \u2115)) = ((2 : \u211d) * (1/2 : \u211d)) ^ (n+1 : \u2115) := by rw [mul_pow]\n          _ = (1 : \u211d) ^ (n+1 : \u2115) := by ring\n          _ = 1 := by simp\n      rw [h]\n    rw [h_eq]\n    have : (fun n : \u2115 => ((1/2 : \u211d) ^ (n+1))) = (fun n : \u2115 => (1/2 : \u211d) * ((1/2 : \u211d) ^ n)) := by\n      ext n; simp [pow_succ, mul_comm]\n    rw [this]\n    exact h_summable.mul_left (1/2 : \u211d)\n  have c_nonneg (n : \u2115) : 0 \u2264 c n := by\n    dsimp [c]\n    positivity\n  have summable_sign_mul_c (x : \u211d) : Summable (fun n : \u2115 => sign_val x n * c n) := by\n    apply Summable.of_norm\n    have h_eq : (fun n : \u2115 => \u2016sign_val x n * c n\u2016) = c := by\n      ext n\n      calc\n        \u2016sign_val x n * c n\u2016 = |sign_val x n * c n| := by rw [Real.norm_eq_abs]\n        _ = |sign_val x n| * |c n| := by rw [abs_mul]\n        _ = 1 * |c n| := by\n          have hsign : |sign_val x n| = 1 := by\n            dsimp [sign_val]\n            simp\n          rw [hsign]\n        _ = |c n| := by simp\n        _ = c n := abs_of_nonneg (c_nonneg n)\n    rw [h_eq]\n    exact summable_c\n  calc\n    f_def x = \u2211' n : \u2115, indicator_E x n * c n := indicator_E_mul_c x\n    _ = \u2211' n : \u2115, ((1 + sign_val x n) / 2) * c n := by\n      apply tsum_congr\n      intro n\n      have h_eq : indicator_E x n = (1 + sign_val x n) / 2 := by\n        have h := two_mul_indicator_E_sub_sign_eq_one x hx0 n\n        linarith\n      rw [h_eq]\n    _ = (1/2 : \u211d) * \u2211' n : \u2115, (1 + sign_val x n) * c n := by\n      have h_factor : (fun n : \u2115 => ((1 + sign_val x n) / 2) * c n) = (fun n : \u2115 => (1/2 : \u211d) * ((1 + sign_val x n) * c n)) := by\n        ext n; ring\n      rw [h_factor, tsum_mul_left]\n    _ = (1/2 : \u211d) * (\u2211' n : \u2115, (c n + sign_val x n * c n)) := by\n      have h_sum : (fun n : \u2115 => (1 + sign_val x n) * c n) = (fun n : \u2115 => c n + sign_val x n * c n) := by\n        ext n; ring\n      rw [h_sum]\n    _ = (1/2 : \u211d) * ((\u2211' n : \u2115, c n) + (\u2211' n : \u2115, sign_val x n * c n)) := by\n      rw [(summable_c).tsum_add (summable_sign_mul_c x)]\n    _ = (1/2 : \u211d) * (1 + g x) := by\n      rw [tsum_c_eq_one, sign_mul_c x]\n    _ = (1 + g x) / 2 := by ring"
+    },
+    {
+      "id": "f_def_eq_one_sub_sum_b_val",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "f(x) = 1 - \u03a3_{n=0}^\u221e b(x,n)/2^{n+1}",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- $f(x) = 1 - \\sum_{n=0}^\\infty b(x,n)/2^{n+1}$ -/) (proof := /-- Using `indicator_E_eq_one_sub_b_val`, `indicator_E_mul_c`, `tsum_c_eq_one`. -/)]\nlemma f_def_eq_one_sub_sum_b_val (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) : f_def x = 1 - (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) := by\n  have hsc : Summable c := by\n    by_contra! hns\n    have hzero : \u2211' n : \u2115, c n = 0 := tsum_eq_zero_of_not_summable hns\n    rw [tsum_c_eq_one] at hzero\n    linarith\n  have hb_nonneg : \u2200 n : \u2115, 0 \u2264 b_val x n := by\n    intro n\n    unfold b_val\n    split <;> norm_num\n  have hc_nonneg : \u2200 n : \u2115, 0 \u2264 c n := by\n    intro n\n    unfold c\n    positivity\n  have hsum_bc : Summable (fun n : \u2115 => b_val x n * c n) :=\n    Summable.of_nonneg_of_le (fun n => mul_nonneg (hb_nonneg n) (hc_nonneg n))\n      (fun n => by\n        have hb_le_one : b_val x n \u2264 1 := by\n          unfold b_val; split <;> norm_num\n        calc\n          b_val x n * c n \u2264 1 * c n := mul_le_mul_of_nonneg_right hb_le_one (hc_nonneg n)\n          _ = c n := by simp\n      ) hsc\n  have h_tsum_sub : \u2211' n : \u2115, (c n - b_val x n * c n) = (\u2211' n : \u2115, c n) - (\u2211' n : \u2115, b_val x n * c n) := by\n    have hsub_hasSum : HasSum (fun n : \u2115 => c n - b_val x n * c n) ((\u2211' n : \u2115, c n) - (\u2211' n : \u2115, b_val x n * c n)) :=\n      hsc.hasSum.sub hsum_bc.hasSum\n    exact hsub_hasSum.tsum_eq\n  calc\n    f_def x = \u2211' n : \u2115, indicator_E x n * c n := by\n      rw [indicator_E_mul_c x]\n    _ = \u2211' n : \u2115, ((1 - b_val x n) * c n) := by\n      refine tsum_congr ?_\n      intro n\n      rw [indicator_E_eq_one_sub_b_val]\n    _ = \u2211' n : \u2115, (c n - b_val x n * c n) := by\n      refine tsum_congr ?_\n      intro n\n      ring\n    _ = (\u2211' n : \u2115, c n) - (\u2211' n : \u2115, b_val x n * c n) := by\n      rw [h_tsum_sub]\n    _ = 1 - (\u2211' n : \u2115, b_val x n * c n) := by rw [tsum_c_eq_one]\n    _ = 1 - (\u2211' n : \u2115, (b_val x n / ((2 : \u211d)^(n.succ : \u2115)))) := by\n      refine congrArg (fun t => 1 - t) ?_\n      refine tsum_congr ?_\n      intro n\n      unfold c\n      ring"
+    },
+    {
+      "id": "f_def_lower_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For every x\u2208[0,1), f(x) \u2265 4/7.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For every $x\\in[0,1)$, $f(x) \\ge 4/7$. -/)\n  (proof := /-- By `f_def_eq_half_plus_g`, `g_to_S_identity`, `sum_b_le_sum_p`, `tsum_p_series_pos`. -/)]\nlemma f_def_lower_bound (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) : f_def x \u2265 (4/7 : \u211d) := by\n  have hsum_b_le : (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) \u2264 (\u2211' n : \u2115, p_val n / ((2 : \u211d)^(n.succ : \u2115))) :=\n    sum_b_le_sum_p x hx0 hx1\n  have htsum_p_eq : (\u2211' n : \u2115, p_val n / ((2 : \u211d)^(n.succ : \u2115))) = (3/7 : \u211d) := tsum_p_series_pos\n  have hsum_b_le_three_sevenths : (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) \u2264 (3/7 : \u211d) := by\n    linarith\n  have hg_ge_one_seventh : g x \u2265 (1/7 : \u211d) := by\n    have hg_eq : g x = 1 - 2 * (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) := g_to_S_identity x hx0 hx1\n    rw [hg_eq]\n    have hS_le : (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) \u2264 (3/7 : \u211d) := hsum_b_le_three_sevenths\n    linarith\n  have hf_eq : f_def x = (1 + g x) / 2 := f_def_eq_half_plus_g x hx0 hx1\n  rw [hf_eq]\n  have hg_ge_one_seventh' : g x \u2265 (1/7 : \u211d) := hg_ge_one_seventh\n  nlinarith"
+    },
+    {
+      "id": "floor_add_two_x_eq_floor_add_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "lemma",
+      "statement": "If x \u2208 [1/2,1), then \u230a y + 2x\u230b = \u230a y\u230b + 1 for any real y.",
+      "is_main": false,
+      "col": 0,
+      "level": 9,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem floor_add_two_x_eq_floor_add_one_negation : \u00ac (\u2200 (y x : \u211d) (hx_ge_half : 1/2 \u2264 x) (hx_lt_one : x < 1), Int.floor (y + 2*x) = Int.floor y + 1) := by\n  intro h\n  have hx_ge_half : (1/2 : \u211d) \u2264 (99/100 : \u211d) := by norm_num\n  have hx_lt_one : (99/100 : \u211d) < 1 := by norm_num\n  have h_eq := h (99/100 : \u211d) (99/100 : \u211d) hx_ge_half hx_lt_one\n  have floor_sum : Int.floor ((99/100 : \u211d) + 2*(99/100 : \u211d)) = (2 : \u2124) := by norm_num\n  have floor_y : Int.floor (99/100 : \u211d) = (0 : \u2124) := by norm_num\n  rw [floor_sum, floor_y] at h_eq\n  norm_num at h_eq"
+    },
+    {
+      "id": "g",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "g(x) = \u03a3_{n=1}^\u221e frac{(-1)^{\u230a n x\u230b}}{2^n}.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- $g(x) = \\sum_{n=1}^\\infty \\frac{(-1)^{\\lfloor n x\\rfloor}}{2^n}$. -/)]\nnoncomputable def g (x : \u211d) : \u211d :=\n  \u2211' n : \u2115, ((-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat) / ((2 : \u211d) ^ (n.succ))"
+    },
+    {
+      "id": "g_to_S_identity",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "g(x) = 1 - 2\u03a3_{n=0}^\u221e b(x,n)/2^{n+1}",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- $g(x) = 1 - 2\\sum_{n=0}^\\infty b(x,n)/2^{n+1}$ -/) (proof := /-- Using `f_def_eq_half_plus_g`, `f_def_eq_one_sub_sum_b_val`. -/)]\nlemma g_to_S_identity (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) : g x = 1 - 2 * (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) := by\n  have hf1 := f_def_eq_half_plus_g x hx0 hx1\n  have hf2 := f_def_eq_one_sub_sum_b_val x hx0 hx1\n  have hsum : (1 + g x) / 2 = 1 - (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) := by\n    calc\n      (1 + g x) / 2 = f_def x := by symm; exact hf1\n      _ = 1 - (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) := hf2\n  linarith"
+    },
+    {
+      "id": "indicator_E",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "mathbf{1}_{{\u230a (n+1)x\u230b text{ is even}}}",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $\\mathbf{1}_{\\{\\lfloor (n+1)x\\rfloor \\text{ is even}\\}}$ -/)]\nnoncomputable def indicator_E (x : \u211d) (n : \u2115) : \u211d := if Even (Int.floor (((n.succ : \u2115) : \u211d) * x)) then 1 else 0"
+    },
+    {
+      "id": "indicator_E_eq_one_sub_b_val",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "mathbf{1}_{{\u230a (n+1)x\u230b text{ is even}}} = 1 - b(x,n)",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $\\mathbf{1}_{\\{\\lfloor (n+1)x\\rfloor \\text{ is even}\\}} = 1 - b(x,n)$ -/) (proof := /-- By definition. -/)]\nlemma indicator_E_eq_one_sub_b_val (x : \u211d) (n : \u2115) : indicator_E x n = 1 - b_val x n := by\n  unfold indicator_E b_val\n  have h_eq : ((n.succ : \u2115) : \u211d) = (n : \u211d) + 1 := by simp\n  by_cases h : Even (Int.floor (((n.succ : \u2115) : \u211d) * x))\n  \u00b7 have h' : Even (Int.floor (((n : \u211d) + 1) * x)) := by\n      simpa [h_eq] using h\n    simp [h']\n  \u00b7 have h' : \u00ac Even (Int.floor (((n : \u211d) + 1) * x)) := by\n      simpa [h_eq] using h\n    simp [h']"
+    },
+    {
+      "id": "indicator_E_mul_c",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "f(x) = \u03a3_{n=0}^\u221e mathbf{1}_{{\u230a (n+1)x\u230b text{ is even}}} \u00b7 c_n",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $f(x) = \\sum_{n=0}^\\infty \\mathbf{1}_{\\{\\lfloor (n+1)x\\rfloor \\text{ is even}\\}} \\cdot c_n$ -/) (proof := /-- Reindex and use definitions. -/)]\nlemma indicator_E_mul_c (x : \u211d) : f_def x = \u2211' n : \u2115, indicator_E x n * c n := by\n  calc\n    f_def x = \u2211' (z : \u2124), ((S_def x).indicator (fun (z' : \u2124) => (1 / (2 : \u211d) ^ (z' : \u2124))) z) := by\n      rw [f_def, tsum_subtype (s := S_def x) (f := fun (z : \u2124) => (1 / (2 : \u211d) ^ (z : \u2124)))]\n    _ = \u2211' (z : \u2124), (if (z > 0 \u2227 Even (Int.floor (z * x))) then (1 / (2 : \u211d) ^ (z : \u2124)) else 0) := by\n      refine tsum_congr (fun z => ?_)\n      simp [S_def, Set.mem_setOf_eq, Set.indicator]\n    _ = \u2211' (z : \u2124), (if (z > 0) then (if Even (Int.floor (z * x)) then (1 / (2 : \u211d) ^ (z : \u2124)) else 0) else 0) := by\n      refine tsum_congr (fun z => ?_)\n      simpa using ite_and (z > 0) (Even (Int.floor (z * x))) (1 / (2 : \u211d) ^ (z : \u2124)) (0 : \u211d)\n    _ = \u2211' n : \u2115, (if Even (Int.floor (((n.succ : \u2115) : \u211d) * x)) then (1 / (2 : \u211d) ^ ((n.succ : \u2124) : \u2124)) else 0) := by\n      simpa using tsum_pos_eq_tsum_nat (fun (z : \u2124) => (if Even (Int.floor (z * x)) then (1 / (2 : \u211d) ^ (z : \u2124)) else 0))\n    _ = \u2211' n : \u2115, (if Even (Int.floor (((n.succ : \u2115) : \u211d) * x)) then (1 / ((2 : \u211d) ^ (n.succ : \u2115))) else 0) := by\n      refine tsum_congr (fun n => ?_)\n      have hpow : (2 : \u211d) ^ ((n : \u2124) + 1) = (2 : \u211d) ^ (n.succ : \u2115) := by\n        calc\n          (2 : \u211d) ^ ((n : \u2124) + 1) = (2 : \u211d) ^ ((n.succ : \u2124) : \u2124) := by simp\n          _ = ((2 : \u211d) ^ (n.succ : \u2115)) := by simpa using (zpow_natCast (2 : \u211d) (n.succ))\n      simpa [show ((n.succ : \u2124) : \u2124) = (n : \u2124) + 1 by simp, hpow]\n    _ = \u2211' n : \u2115, ((if Even (Int.floor (((n.succ : \u2115) : \u211d) * x)) then (1 : \u211d) else 0) * (1 / ((2 : \u211d) ^ (n.succ : \u2115)))) := by\n      refine tsum_congr (fun n => ?_)\n      split_ifs <;> simp\n    _ = \u2211' n : \u2115, indicator_E x n * c n := by\n      simp [indicator_E, c]"
+    },
+    {
+      "id": "indicator_sum_eq_tsum_3k_plus_1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "\u03a3_{n: n\\",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $\\sum_{n: n\\%3=0} 1/2^{n+1} = \\sum_{k} 1/2^{3k+1}$ -/) (proof := /-- Reindex. -/)]\nlemma indicator_sum_eq_tsum_3k_plus_1 : (\u2211' n : \u2115, (if n % 3 = 0 then 1 / ((2 : \u211d) ^ (n.succ : \u2115)) else 0)) = (\u2211' k : \u2115, 1 / ((2 : \u211d) ^ (3*k+1 : \u2115))) := by\n  let s : Set \u2115 := {n | n % 3 = 0}\n  have hsum1 : (\u2211' n : \u2115, (if n % 3 = 0 then 1 / ((2 : \u211d) ^ (n.succ : \u2115)) else 0)) = (\u2211' (x : s), 1 / ((2 : \u211d) ^ (x.val.succ : \u2115))) := by\n    calc\n      (\u2211' n : \u2115, (if n % 3 = 0 then 1 / ((2 : \u211d) ^ (n.succ : \u2115)) else 0))\n          = (\u2211' n : \u2115, (s.indicator (\u03bb n : \u2115 => 1 / ((2 : \u211d) ^ (n.succ : \u2115)))) n) := by\n        refine tsum_congr (\u03bb n => ?_)\n        simp [s, Set.indicator]\n      _ = (\u2211' (x : s), 1 / ((2 : \u211d) ^ (x.val.succ : \u2115))) := by\n        rw [\u2190 tsum_subtype]\n  let g : \u2115 \u2192 \u2115 := \u03bb k => 3*k\n  have hg_inj : Function.Injective g := by\n    intro x y h\n    apply (Nat.mul_right_inj (by norm_num : (3 : \u2115) \u2260 0)).mp\n    exact h\n  have hg_injOn : Set.InjOn g (Set.univ : Set \u2115) := Set.injOn_of_injective hg_inj\n  have h_set_eq : Set.image g Set.univ = s := by\n    ext n\n    constructor\n    \u00b7 intro hn\n      rcases hn with \u27e8k, hk, rfl\u27e9\n      dsimp [g]\n      simp [s]\n    \u00b7 intro hn\n      have hdiv : (3 : \u2115) \u2223 n := Nat.dvd_of_mod_eq_zero hn\n      rcases exists_eq_mul_right_of_dvd hdiv with \u27e8k, h\u27e9\n      refine \u27e8k, trivial, ?_\u27e9\n      calc\n        g k = 3*k := rfl\n        _ = n := h.symm\n  calc\n    (\u2211' n : \u2115, (if n % 3 = 0 then 1 / ((2 : \u211d) ^ (n.succ : \u2115)) else 0))\n        = (\u2211' (x : s), 1 / ((2 : \u211d) ^ (x.val.succ : \u2115))) := hsum1\n    _ = (\u2211' (x : (Set.image g Set.univ : Set \u2115)), 1 / ((2 : \u211d) ^ (x.val.succ : \u2115))) := by\n      rw [h_set_eq]\n    _ = (\u2211' (x : (Set.univ : Set \u2115)), 1 / ((2 : \u211d) ^ ((g x).succ : \u2115))) := by\n      rw [tsum_image (\u03bb n : \u2115 => 1 / ((2 : \u211d) ^ (n.succ : \u2115))) hg_injOn]\n    _ = (\u2211' (k : \u2115), 1 / ((2 : \u211d) ^ ((g k).succ : \u2115))) := by\n      rw [tsum_univ (f := \u03bb x : \u2115 => 1 / ((2 : \u211d) ^ ((g x).succ : \u2115)))]\n    _ = (\u2211' k : \u2115, 1 / ((2 : \u211d) ^ ((3*k).succ : \u2115))) := rfl\n    _ = (\u2211' k : \u2115, 1 / ((2 : \u211d) ^ (3*k+1 : \u2115))) := by\n      refine tsum_congr (\u03bb k => ?_)\n      congr 1"
+    },
+    {
+      "id": "lookback",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If varepsilon_m = -1 and m\u2261 0pmod3, then there exists k<m such that varepsilon_k=1, c3(k)=0, and T_m \u2265 T_k + 1/2^{k+1} - \u03a3_{i=k+1}^{m-1} c3(i)/2^{i+1}.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- If $\\varepsilon_m = -1$ and $m\\equiv 0\\pmod3$, then there exists $k<m$ such that $\\varepsilon_k=1$, $c3(k)=0$, and $T_m \\ge T_k + 1/2^{k+1} - \\sum_{i=k+1}^{m-1} c3(i)/2^{i+1}$. -/) (proof := /-- Choose the last index before $m$ where $\\varepsilon$ was $1$ and $c3=0$. -/)]\nlemma lookback (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) (m : \u2115) (hm0 : m % 3 = 0) (hm_sign : sign_val x m = -1) : \n  \u2203 (k : \u2115), (k < m) \u2227 (sign_val x k = 1) \u2227 (c3 k = 0) \u2227 \n    (Finset.sum (Finset.range m) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)))) \u2265 \n    (Finset.sum (Finset.range k) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)))) + (1 / ((2 : \u211d)^(k.succ : \u2115))) - \n    (Finset.sum (Finset.range (m - k - 1)) (\u03bb i => c3 (k+1+i) / ((2 : \u211d)^((k+1+i).succ : \u2115)))) := by\n  rcases exists_k x hx0 hx1 m hm0 hm_sign with \u27e8k, hk_lt, hk_sign, hk_c3\u27e9\n  refine \u27e8k, hk_lt, hk_sign, hk_c3, ?_\u27e9\n  exact termwise_ineq x k m hk_lt hk_sign hk_c3"
+    },
+    {
+      "id": "lower_bound_le_4_7_f_def",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If l is a lower bound for f on [0,1) (i.e., f(x)\u2265 l for all x\u2208[0,1)), then l\u2264 4/7.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If $l$ is a lower bound for $f$ on $[0,1)$ (i.e., $f(x)\\ge l$ for all $x\\in[0,1)$), then $l\\le 4/7$. -/)\n  (proof := /-- Suppose $l > 4/7$. Let $\\varepsilon = (l - 4/7)/2 > 0$. By `exists_x_f_def_close_to_4_7`, there exists $x\\in[0,1)$ with $f(x) < 4/7 + \\varepsilon = (l + 4/7)/2 < l$, contradicting that $l$ is a lower bound. Hence $l\\le 4/7$. -/)]\nlemma lower_bound_le_4_7_f_def (l : \u211d) (hl : \u2200 x \u2208 Set.Ico (0 : \u211d) 1, f_def x \u2265 l) : l \u2264 (4/7 : \u211d) := by\n  by_contra! h\n  -- h: l > 4/7\n  set \u03b5 := l - (4/7 : \u211d) with h\u03b5_def\n  have h\u03b5pos : \u03b5 > 0 := by\n    linarith\n  rcases exists_x_f_def_close_to_4_7 \u03b5 h\u03b5pos with \u27e8x, hx, hfx\u27e9\n  -- hx: x \u2208 Set.Ico 0 1\n  -- hfx: f_def x < 4/7 + \u03b5\n  have : f_def x < l := by\n    calc\n      f_def x < (4/7 : \u211d) + \u03b5 := hfx\n      _ = (4/7 : \u211d) + (l - (4/7 : \u211d)) := by rfl\n      _ = l := by ring\n  have hge : f_def x \u2265 l := hl x hx\n  linarith"
+    },
+    {
+      "id": "norm_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For N\u2265 1, g(x_N) < frac{1}{7} + frac{2}{2^N}.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- For $N\\ge 1$, $g(x_N) < \\frac{1}{7} + \\frac{2}{2^N}$. -/) (proof := /-- Combine `tail_bound`, `explicit_x_parity`, `signed_binary_1_7`, `tail_strict_bound`. -/)]\nlemma norm_bound (N : \u2115) (hNpos : N \u2265 1) : g (xN N) < (1/7 : \u211d) + 2 / ((2 : \u211d)^N) := by\n  have h_abs_d : \u2200 k : \u2115, |d k| = 1 := by\n    intro k\n    unfold d\n    split <;> norm_num\n  have h_bound : \u2200 k : \u2115, |d (k.succ) / ((2 : \u211d)^(k.succ : \u2115))| \u2264 ((1/2 : \u211d)^(k.succ : \u2115)) := by\n    intro k\n    have h_eq : |d (k.succ) / ((2 : \u211d)^(k.succ : \u2115))| = ((1/2 : \u211d)^(k.succ : \u2115)) := by\n      calc\n        |d (k.succ) / ((2 : \u211d)^(k.succ : \u2115))| = |d (k.succ)| / |((2 : \u211d)^(k.succ : \u2115))| := by rw [abs_div]\n        _ = 1 / ((2 : \u211d)^(k.succ : \u2115)) := by\n          rw [h_abs_d (k.succ), abs_of_pos (by positivity : 0 < ((2 : \u211d)^(k.succ : \u2115)))]\n        _ = ((1/2 : \u211d)^(k.succ : \u2115)) := by simp\n    exact le_of_eq h_eq\n  have h_summable_geom : Summable (\u03bb k : \u2115 => ((1/2 : \u211d)^(k.succ : \u2115))) := by\n    have h : Summable (\u03bb n : \u2115 => ((1/2 : \u211d)^(n : \u2115))) :=\n      summable_geometric_of_norm_lt_one (by norm_num : \u2016(1/2 : \u211d)\u2016 < 1)\n    have h' : Summable (\u03bb n : \u2115 => ((1/2 : \u211d) * ((1/2 : \u211d) ^ (n : \u2115)))) :=\n      Summable.mul_left ((1/2 : \u211d)) h\n    simpa [pow_succ, mul_comm] using h'\n  have h_summable_norm : Summable (\u03bb k : \u2115 => |d (k.succ) / ((2 : \u211d)^(k.succ : \u2115))|) := by\n    apply Summable.of_nonneg_of_le (fun k => abs_nonneg _) (fun k => h_bound k) h_summable_geom\n  have h_summable_f : Summable (\u03bb k : \u2115 => d (k.succ) / ((2 : \u211d)^(k.succ : \u2115))) :=\n    Summable.of_norm h_summable_norm\n  have h_split : (\u2211 i \u2208 Finset.range N, (d (i.succ) / ((2 : \u211d)^(i.succ : \u2115)))) + (\u2211' i : \u2115, d ((i + N).succ) / ((2 : \u211d)^((i + N).succ : \u2115))) = (\u2211' i : \u2115, d (i.succ) / ((2 : \u211d)^(i.succ : \u2115))) :=\n    Summable.sum_add_tsum_nat_add N h_summable_f\n  have h_total_eq_1_7 : (\u2211' i : \u2115, d (i.succ) / ((2 : \u211d)^(i.succ : \u2115))) = (1/7 : \u211d) := signed_binary_1_7\n  have h_tail_strict' : (\u2211' i : \u2115, d ((i + N).succ) / ((2 : \u211d)^((i + N).succ : \u2115))) > -((1/2 : \u211d)^N) := by\n    simpa [add_comm, add_left_comm, add_assoc] using tail_strict_bound N\n  have h_T_add_tail_eq_1_7 : (\u2211 i \u2208 Finset.range N, (d (i.succ) / ((2 : \u211d)^(i.succ : \u2115)))) + (\u2211' i : \u2115, d ((i + N).succ) / ((2 : \u211d)^((i + N).succ : \u2115))) = (1/7 : \u211d) := by\n    rw [h_split, h_total_eq_1_7]\n  have h_T_lt : (\u2211 i \u2208 Finset.range N, (d (i.succ) / ((2 : \u211d)^(i.succ : \u2115)))) < (1/7 : \u211d) + ((1/2 : \u211d)^N) := by\n    linarith\n  have h_tail_bound : |g (xN N) - Finset.sum (Finset.range N) (\u03bb k => ((-1 : \u211d) ^ (Int.floor (((k.succ : \u2115) : \u211d) * xN N)).toNat) / ((2 : \u211d) ^ (k.succ : \u2115)))| \u2264 ((1/2 : \u211d)^N) := tail_bound (xN N) N\n  have h_abs := abs_le.mp h_tail_bound\n  have h_g_le_S_plus_half : g (xN N) \u2264 (Finset.sum (Finset.range N) (\u03bb k => ((-1 : \u211d) ^ (Int.floor (((k.succ : \u2115) : \u211d) * xN N)).toNat) / ((2 : \u211d) ^ (k.succ : \u2115)))) + ((1/2 : \u211d)^N) := by\n    linarith\n  have h_S_eq : (Finset.sum (Finset.range N) (\u03bb k => ((-1 : \u211d) ^ (Int.floor (((k.succ : \u2115) : \u211d) * xN N)).toNat) / ((2 : \u211d) ^ (k.succ : \u2115)))) = (\u2211 i \u2208 Finset.range N, (d (i.succ) / ((2 : \u211d)^(i.succ : \u2115)))) := by\n    apply Finset.sum_congr rfl\n    intro k hk\n    rw [Finset.mem_range] at hk\n    have hk_lt_N : k < N := hk\n    rw [explicit_x_parity N hNpos k hk_lt_N]\n  have h_g_le_T_plus_half : g (xN N) \u2264 (\u2211 i \u2208 Finset.range N, (d (i.succ) / ((2 : \u211d)^(i.succ : \u2115)))) + ((1/2 : \u211d)^N) := by\n    linarith\n  have h_two_mul : (2 : \u211d) * ((1/2 : \u211d)^(N : \u2115)) = (2 : \u211d) / ((2 : \u211d)^(N : \u2115)) := by\n    field_simp\n    simp\n  have h_g_lt : g (xN N) < (1/7 : \u211d) + ((1/2 : \u211d)^N) + ((1/2 : \u211d)^N) := by\n    linarith\n  have h_goal : (1/7 : \u211d) + ((1/2 : \u211d)^N) + ((1/2 : \u211d)^N) = (1/7 : \u211d) + 2 / ((2 : \u211d)^N) := by\n    calc\n      (1/7 : \u211d) + ((1/2 : \u211d)^N) + ((1/2 : \u211d)^N) = (1/7 : \u211d) + (2 : \u211d) * ((1/2 : \u211d)^(N : \u2115)) := by ring\n      _ = (1/7 : \u211d) + (2 : \u211d) / ((2 : \u211d)^(N : \u2115)) := by rw [h_two_mul]\n      _ = (1/7 : \u211d) + 2 / ((2 : \u211d)^N) := rfl\n  rw [h_goal] at h_g_lt\n  exact h_g_lt"
+    },
+    {
+      "id": "p_val",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "p(n)=0 if n+1\u2261 1pmod 3, else 1",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- $p(n)=0$ if $n+1\\equiv 1\\pmod 3$, else $1$ -/)]\nnoncomputable def p_val (n : \u2115) : \u211d := if (n.succ % 3 = 1) then (0 : \u211d) else 1"
+    },
+    {
+      "id": "p_val_eq_one_sub_c3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "p(n) = 1 - c3(n)",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $p(n) = 1 - c3(n)$ -/) (proof := /-- By case analysis on $n\\bmod 3$. -/)]\nlemma p_val_eq_one_sub_c3 (n : \u2115) : p_val n = 1 - c3 n := by\n  unfold p_val c3\n  by_cases h0 : n % 3 = 0\n  \u00b7 rw [if_pos h0]\n    have hsucc : n.succ % 3 = 1 := by\n      calc\n        n.succ % 3 = (n % 3).succ % 3 := by simpa using Nat.succ_mod_succ_eq n 2\n        _ = (0).succ % 3 := by rw [h0]\n        _ = 1 % 3 := rfl\n        _ = 1 := by norm_num\n    rw [if_pos hsucc]\n    norm_num\n  \u00b7 have hc3 : (if n % 3 = 0 then (1 : \u211d) else (0 : \u211d)) = (0 : \u211d) := by\n      rw [if_neg h0]\n    rw [hc3]\n    -- goal: (if n.succ % 3 = 1 then (0 : \u211d) else (1 : \u211d)) = 1 - (0 : \u211d)\n    -- which simplifies to (if n.succ % 3 = 1 then 0 else 1) = 1\n    -- Now case split on n%3 = 1 or 2\n    by_cases h1 : n % 3 = 1\n    \u00b7 have hsucc : n.succ % 3 = 2 := by\n        calc\n          n.succ % 3 = ((n % 3) + 1) % 3 := by\n            simpa [Nat.succ_eq_add_one, add_comm] using Nat.succ_mod_succ_eq n 2\n          _ = (1 + 1) % 3 := by rw [h1]\n          _ = 2 % 3 := by norm_num\n          _ = 2 := by norm_num\n      have hsucc_not1 : n.succ % 3 \u2260 1 := by\n        rw [hsucc]\n        norm_num\n      rw [if_neg hsucc_not1]\n      norm_num\n    \u00b7 by_cases h2 : n % 3 = 2\n      \u00b7 have hsucc : n.succ % 3 = 0 := by\n          calc\n            n.succ % 3 = ((n % 3) + 1) % 3 := by\n              simpa [Nat.succ_eq_add_one, add_comm] using Nat.succ_mod_succ_eq n 2\n            _ = (2 + 1) % 3 := by rw [h2]\n            _ = 3 % 3 := by norm_num\n            _ = 0 := by norm_num\n        have hsucc_not1 : n.succ % 3 \u2260 1 := by\n          rw [hsucc]\n          norm_num\n        rw [if_neg hsucc_not1]\n        norm_num\n      \u00b7 exfalso\n        have hlt : n % 3 < 3 := Nat.mod_lt n (by decide : 0 < 3)\n        have : n % 3 \u2264 2 := by omega\n        have : n % 3 = 0 \u2228 n % 3 = 1 \u2228 n % 3 = 2 := by omega\n        rcases this with (h | h | h)\n        \u00b7 exact h0 h\n        \u00b7 exact h1 h\n        \u00b7 exact h2 h"
+    },
+    {
+      "id": "p_val_minus_b_val_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "(p(n) - b(x,n))/2^{n+1} = ((1_{mathrm{sign\\_val}(x,n)=1} - c3(n))/2^{n+1} for 0\u2264 x",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $(p(n) - b(x,n))/2^{n+1} = ((1_{\\mathrm{sign\\_val}(x,n)=1} - c3(n))/2^{n+1}$ for $0\\le x$ -/) (proof := /-- Using `p_val_eq_one_sub_c3` and `b_val_eq_one_sub_sign_val_div_two`. -/)]\nlemma p_val_minus_b_val_eq (x : \u211d) (n : \u2115) (hx : 0 \u2264 x) : ((p_val n : \u211d) - b_val x n) / ((2 : \u211d)^(n.succ : \u2115)) = ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)) := by\n  have h_nonneg_prod : 0 \u2264 ((n.succ : \u2115) : \u211d) * x := mul_nonneg (by positivity) hx\n  have h_nonneg_floor : 0 \u2264 (Int.floor (((n.succ : \u2115) : \u211d) * x)) := Int.floor_nonneg.mpr h_nonneg_prod\n  have h_eq_one_minus_b_val : 1 - b_val x n = (if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) := by\n    by_cases h_even_int : Even ((Int.floor (((n.succ : \u2115) : \u211d) * x)) : \u2124)\n    \u00b7 -- case even floor\n      have h_b_val : b_val x n = 0 := by\n        unfold b_val\n        apply if_pos\n        exact h_even_int\n      have h_sign_val : sign_val x n = 1 := by\n        unfold sign_val\n        rw [neg_one_pow_eq_ite]\n        rw [if_pos ?_]\n        -- need to provide h_even_nat\n        have h_even_nat : Even ((Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat) := by\n          have h_eq : ((Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat : \u2124) = (Int.floor (((n.succ : \u2115) : \u211d) * x)) := by\n            simpa using (Int.toNat_of_nonneg h_nonneg_floor)\n          have h_even_int' : Even ((Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat : \u2124) := by\n            rw [h_eq]\n            exact h_even_int\n          exact (Int.even_coe_nat _).mp h_even_int'\n        exact h_even_nat\n      simp [h_b_val, h_sign_val]\n    \u00b7 -- case odd floor\n      have h_b_val : b_val x n = 1 := by\n        unfold b_val\n        apply if_neg\n        exact h_even_int\n      have h_sign_val : sign_val x n = -1 := by\n        unfold sign_val\n        rw [neg_one_pow_eq_ite]\n        rw [if_neg ?_]\n        -- need to provide h_not_even_nat\n        have h_not_even_nat : \u00ac Even ((Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat) := by\n          intro h\n          apply h_even_int\n          have h_even_int' : Even ((Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat : \u2124) := (Int.even_coe_nat _).mpr h\n          have h_eq : ((Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat : \u2124) = (Int.floor (((n.succ : \u2115) : \u211d) * x)) := by\n            simpa using (Int.toNat_of_nonneg h_nonneg_floor)\n          rw [h_eq] at h_even_int'\n          exact h_even_int'\n        exact h_not_even_nat\n      simp [h_b_val, h_sign_val]; norm_num\n  have h_p_val : (p_val n : \u211d) = 1 - c3 n := p_val_eq_one_sub_c3 n\n  calc\n    ((p_val n : \u211d) - b_val x n) / ((2 : \u211d)^(n.succ : \u2115)) = ((1 - c3 n) - b_val x n) / ((2 : \u211d)^(n.succ : \u2115)) := by\n      simp [h_p_val]\n    _ = ((1 - b_val x n) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)) := by ring\n    _ = ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)) := by\n      simp [h_eq_one_minus_b_val]"
+    },
+    {
+      "id": "parity_chain",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If x\u2265 1/2, mathrm{sign\\_val}(x,3t)=1, mathrm{sign\\_val}(x,3t+1)=-1, mathrm{sign\\_val}(x,3t+2)=-1, then mathrm{sign\\_val}(x,3t+3)=1.",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- If $x\\ge 1/2$, $\\mathrm{sign\\_val}(x,3t)=1$, $\\mathrm{sign\\_val}(x,3t+1)=-1$, $\\mathrm{sign\\_val}(x,3t+2)=-1$, then $\\mathrm{sign\\_val}(x,3t+3)=1$. -/) (proof := /-- Use floor arithmetic. -/)]\nlemma parity_chain (x : \u211d) (hx_ge_half : 1/2 \u2264 x) (hx_lt_one : x < 1) (t : \u2115)\n    (h0 : sign_val x (3*t) = 1) (h1 : sign_val x (3*t+1) = -1) (h2 : sign_val x (3*t+2) = -1) :\n    sign_val x (3*t+3) = 1 := by\n  have h_neg_one_ne_one : (-1 : \u211d) \u2260 1 := by norm_num\n  -- helper lemma\n  have toNat_add_one_of_nonneg {a : \u2124} (ha : 0 \u2264 a) : (a + 1).toNat = a.toNat + 1 := by\n    have ha' : (a.toNat : \u2124) = a := Int.toNat_of_nonneg ha\n    have ha1_nonneg : 0 \u2264 a + 1 := by linarith\n    have ha1' : ((a + 1).toNat : \u2124) = a + 1 := Int.toNat_of_nonneg ha1_nonneg\n    apply (Nat.cast_inj (R := \u2124)).mp\n    calc\n      ((a + 1).toNat : \u2124) = a + 1 := ha1'\n      _ = (a.toNat : \u2124) + 1 := by rw [ha']\n      _ = (a.toNat + 1 : \u2115).cast := by simp\n  -- get parity of floors\n  have h0_even : Even (Int.floor ((((3*t : \u2115).succ : \u2115) : \u211d) * x)).toNat := by\n    unfold sign_val at h0\n    rw [neg_one_pow_eq_one_iff_even h_neg_one_ne_one] at h0\n    exact h0\n  have h1_odd : Odd (Int.floor ((((3*t+1 : \u2115).succ : \u2115) : \u211d) * x)).toNat := by\n    unfold sign_val at h1\n    rw [neg_one_pow_eq_neg_one_iff_odd h_neg_one_ne_one] at h1\n    exact h1\n  have h2_odd : Odd (Int.floor ((((3*t+2 : \u2115).succ : \u2115) : \u211d) * x)).toNat := by\n    unfold sign_val at h2\n    rw [neg_one_pow_eq_neg_one_iff_odd h_neg_one_ne_one] at h2\n    exact h2\n  -- compute relevant floors\n  set a := Int.floor (((3*t+2 : \u2115) : \u211d) * x) with ha\n  set b := Int.floor (((3*t+4 : \u2115) : \u211d) * x) with hb\n  have ha_nonneg : 0 \u2264 a := by\n    rw [Int.floor_nonneg]\n    positivity\n  have hb_eq_a_add_one : b = a + 1 := by\n    calc\n      b = Int.floor (((3*t+4 : \u2115) : \u211d) * x) := rfl\n      _ = Int.floor ((((3*t+2 : \u2115) : \u211d) * x) + 2*x) := by\n        push_cast\n        ring\n      _ = Int.floor (((3*t+2 : \u2115) : \u211d) * x) + 1 :=\n        floor_add_two_x_eq_floor_add_one (((3*t+2 : \u2115) : \u211d) * x) x hx_ge_half hx_lt_one\n      _ = a + 1 := by rw [ha]\n  -- Now we need to compute sign_val x (3*t+3) = (-1)^(b.toNat)\n  unfold sign_val\n  have h_exp : (Int.floor ((((3*t+3 : \u2115).succ : \u2115) : \u211d) * x)).toNat = b.toNat := by\n    have hsucc : ((3*t+3 : \u2115).succ : \u2115) = (3*t+4 : \u2115) := by omega\n    calc\n      (Int.floor ((((3*t+3 : \u2115).succ : \u2115) : \u211d) * x)).toNat = (Int.floor (((3*t+4 : \u2115) : \u211d) * x)).toNat := by\n        rw [hsucc]\n      _ = b.toNat := by rw [hb]\n  rw [h_exp]\n  have ha_toNat_odd : Odd a.toNat := by\n    -- h1_odd is about floor of ((3*t+1).succ : \u2115) * x, which is (3*t+2)*x\n    have : ((3*t+1 : \u2115).succ : \u2115) = (3*t+2 : \u2115) := by omega\n    simpa [this] using h1_odd\n  have hb_toNat_even : Even b.toNat := by\n    rw [hb_eq_a_add_one]\n    -- need to show (a+1).toNat is even\n    rw [toNat_add_one_of_nonneg ha_nonneg]\n    -- Now we need Even (a.toNat + 1)\n    rw [Nat.even_add_one]\n    -- need to show \u00ac Even a.toNat\n    rw [Nat.not_even_iff_odd]\n    exact ha_toNat_odd\n  rw [neg_one_pow_eq_one_iff_even h_neg_one_ne_one]\n  exact hb_toNat_even"
+    },
+    {
+      "id": "putnam_2015_a4",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The greatest L such that f(x)\u2265 L for all x\u2208[0,1) is 4/7.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The greatest $L$ such that $f(x)\\ge L$ for all $x\\in[0,1)$ is $4/7$. -/)\n  (proof := /-- By `f_def_lower_bound`, $4/7$ is a lower bound for $f_{def}$. Using `hS` and `hf`, $f = f_{def}$, so $4/7$ is a lower bound for $f$, hence $p(4/7)$. By `lower_bound_le_4_7_f_def` and `hS`+`hf`, any lower bound $l$ for $f$ satisfies $l\\le 4/7$. Therefore, by `hp`, $4/7$ is the greatest element of $p$. -/)]\ntheorem putnam_2015_a4\n(S : \u211d \u2192 Set \u2124)\n(f : \u211d \u2192 \u211d)\n(p : \u211d \u2192 Prop)\n(hS : S = fun (x : \u211d) \u21a6 {n : \u2124 | n > 0 \u2227 Even \u230an * x\u230b})\n(hf : f = fun (x : \u211d) \u21a6 \u2211' n : S x, 1 / 2 ^ (n : \u2124))\n(hp : \u2200 l, p l \u2194 \u2200 x \u2208 Set.Ico 0 1, f x \u2265 l)\n: IsGreatest p ((4 / 7) : \u211d ) := by\n  have hf_eq_fun : f = f_def := by\n    ext x\n    calc\n      f x = (fun (x : \u211d) => \u2211' n : S x, 1 / 2 ^ (n : \u2124)) x := by rw [hf]\n      _ = \u2211' n : S x, 1 / 2 ^ (n : \u2124) := rfl\n      _ = \u2211' n : S_def x, 1 / 2 ^ (n : \u2124) := by\n        have hset : S x = S_def x := by\n          ext n; simp [hS, S_def]\n        rw [hset]\n      _ = f_def x := rfl\n  constructor\n  \u00b7 -- show 4/7 \u2208 p\n    -- use hp to convert to lower bound condition\n    have h_lower_bound : \u2200 x \u2208 Set.Ico (0 : \u211d) 1, f x \u2265 (4/7 : \u211d) := by\n      intro x hx\n      have hx0 : 0 \u2264 x := hx.1\n      have hx1 : x < 1 := hx.2\n      have hbound_f_def : f_def x \u2265 (4/7 : \u211d) := f_def_lower_bound x hx0 hx1\n      -- rewrite f x as f_def x using hf_eq_fun\n      have hfx_eq : f x = f_def x := congrArg (fun g => g x) hf_eq_fun\n      rw [hfx_eq]\n      exact hbound_f_def\n    -- now by hp, we get p(4/7)\n    exact ((hp (4/7 : \u211d)).mpr h_lower_bound)\n  \u00b7 -- show \u2200 l, l \u2208 p \u2192 l \u2264 4/7\n    intro l hl\n    -- hl: l \u2208 p, i.e., p l\n    have hl_lower_bound : \u2200 x \u2208 Set.Ico (0 : \u211d) 1, f x \u2265 l := (hp l).mp hl\n    have h_lower_bound_f_def : \u2200 x \u2208 Set.Ico (0 : \u211d) 1, f_def x \u2265 l := by\n      intro x hx\n      have hfx_ge_l : f x \u2265 l := hl_lower_bound x hx\n      have hfx_eq : f x = f_def x := congrArg (fun g => g x) hf_eq_fun\n      rw [hfx_eq] at hfx_ge_l\n      exact hfx_ge_l\n    exact lower_bound_le_4_7_f_def l h_lower_bound_f_def"
+    },
+    {
+      "id": "sign_mul_c",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "g(x) = \u03a3_{n=0}^\u221e mathrm{sign\\_val}(x,n) \u00b7 c_n",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $g(x) = \\sum_{n=0}^\\infty \\mathrm{sign\\_val}(x,n) \\cdot c_n$ -/) (proof := /-- By definition of `g`, `sign_val`, `c`. -/)]\nlemma sign_mul_c (x : \u211d) : g x = \u2211' n : \u2115, sign_val x n * c n := by\n  calc\n    g x = \u2211' n : \u2115, ((-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat) / ((2 : \u211d) ^ (n.succ)) := rfl\n    _ = \u2211' n : \u2115, sign_val x n * c n := by\n      refine tsum_congr ?_\n      intro n\n      dsimp [sign_val, c]\n      ring"
+    },
+    {
+      "id": "sign_val",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "(-1)^{\u230a (n+1)x\u230b}",
+      "is_main": false,
+      "col": 0,
+      "level": 9,
+      "lean": "@[blueprint (statement := /-- $(-1)^{\\lfloor (n+1)x\\rfloor}$ -/)]\nnoncomputable def sign_val (x : \u211d) (n : \u2115) : \u211d := (-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat"
+    },
+    {
+      "id": "sign_val_of_cond",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For x\u2208[0,1) and m\u22610pmod3, if every n<m with nnot\u22610pmod3 has mathrm{sign\\_val}(x,n)=-1, then mathrm{sign\\_val}(x,m)=1.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- For $x\\in[0,1)$ and $m\\equiv0\\pmod3$, if every $n<m$ with $n\\not\\equiv0\\pmod3$ has $\\mathrm{sign\\_val}(x,n)=-1$, then $\\mathrm{sign\\_val}(x,m)=1$. -/) (proof := /-- Induction using `parity_chain` and `sign_val_one_neg_imp_x_ge_half`. -/)]\nlemma sign_val_of_cond (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) (m : \u2115) (hm0 : m % 3 = 0)\n    (hcond : \u2200 n < m, n % 3 \u2260 0 \u2192 sign_val x n = -1) : sign_val x m = 1 := by\n  by_cases hm0' : m = 0\n  \u00b7 subst hm0'\n    have hfloor : (Int.floor x : \u2124) = 0 := by\n      rw [Int.floor_eq_zero_iff]\n      exact \u27e8hx0, hx1\u27e9\n    simp [sign_val, hfloor]\n  \u00b7 have hm_pos : m \u2260 0 := hm0'\n    have hm_pos' : 0 < m := Nat.pos_of_ne_zero hm_pos\n    have hdvd : 3 \u2223 m := Nat.dvd_of_mod_eq_zero hm0\n    have h3le : 3 \u2264 m := Nat.le_of_dvd hm_pos' hdvd\n    have h1_lt_m : 1 < m := by omega\n    have hsign1 : sign_val x 1 = -1 := hcond 1 (by omega) (by decide)\n    have hx_ge_half : 1/2 \u2264 x := sign_val_one_neg_imp_x_ge_half x hx0 hx1 hsign1\n    rcases hdvd with \u27e8k, hm\u27e9\n    -- hm : m = 3 * k\n    have h_all : \u2200 t : \u2115, t \u2264 k \u2192 sign_val x (3*t) = 1 := by\n      intro t\n      induction' t with t ih\n      \u00b7 intro ht\n        have hfloor0 : (Int.floor x : \u2124) = 0 := by\n          rw [Int.floor_eq_zero_iff]\n          exact \u27e8hx0, hx1\u27e9\n        simp [sign_val, hfloor0]\n      \u00b7 intro ht\n        have htle : t.succ \u2264 k := ht\n        have hsign3t : sign_val x (3*t) = 1 := ih (by omega)\n        have hsign3t1 : sign_val x (3*t + 1) = -1 := hcond (3*t + 1) (by omega) (by omega)\n        have hsign3t2 : sign_val x (3*t + 2) = -1 := hcond (3*t + 2) (by omega) (by omega)\n        have h_next : sign_val x (3*t + 3) = 1 := parity_chain x hx_ge_half hx1 t hsign3t hsign3t1 hsign3t2\n        simpa [show (3 : \u2115)*(t.succ) = 3*t + 3 by omega] using h_next\n    have hk : k \u2264 k := le_refl k\n    have h_target : sign_val x (3*k) = 1 := h_all k hk\n    simpa [hm] using h_target"
+    },
+    {
+      "id": "sign_val_one_neg_imp_x_ge_half",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If mathrm{sign\\_val}(x,1) = -1, then x \u2265 1/2.",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- If $\\mathrm{sign\\_val}(x,1) = -1$, then $x \\ge 1/2$. -/) (proof := /-- Use definition of `sign_val` and floor inequality. -/)]\nlemma sign_val_one_neg_imp_x_ge_half (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) (h : sign_val x 1 = -1) : 1/2 \u2264 x := by\n  dsimp [sign_val] at h\n  have h' : ((-1 : \u211d) ^ (Int.floor (2*x)).toNat) = -1 := by\n    simpa using h\n  by_cases hx_lt_half : x < 1/2\n  \u00b7 -- then we get a contradiction\n    have h2x_lt_one : 2*x < 1 := by nlinarith\n    have hfloor0 : Int.floor (2*x) = (0 : \u2124) := by\n      have h0 : (0 : \u211d) \u2264 2*x := by nlinarith\n      have h1 : 2*x < (1 : \u211d) := h2x_lt_one\n      refine (Int.floor_eq_iff (a := 2*x) (z := (0 : \u2124))).mpr \u27e8by simpa using h0, by simpa using h1\u27e9\n    have hsign_val_one : ((-1 : \u211d) ^ (Int.floor (2*x)).toNat) = 1 := by\n      calc\n        ((-1 : \u211d) ^ (Int.floor (2*x)).toNat) = ((-1 : \u211d) ^ ((0 : \u2124).toNat)) := by rw [hfloor0]\n        _ = ((-1 : \u211d) ^ (0 : \u2115)) := by simp\n        _ = 1 := by norm_num\n    rw [hsign_val_one] at h'\n    norm_num at h'\n  \u00b7 -- then \u00ac (x < 1/2) implies 1/2 \u2264 x\n    nlinarith"
+    },
+    {
+      "id": "signed_binary_1_7",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "\u03a3_{k=1}^\u221e d_k/2^k = 1/7",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $\\sum_{k=1}^\\infty d_k/2^k = 1/7$ -/) (proof := /-- Geometric series computation using period 3. -/)]\nlemma signed_binary_1_7 : (\u2211' k : \u2115, d (k.succ) / ((2 : \u211d)^(k.succ : \u2115))) = (1/7 : \u211d) := by\n  let f : \u2115 \u2192 \u211d := \u03bb n => d (n.succ) / ((2 : \u211d)^(n.succ : \u2115))\n  have hsummable_f : Summable f := by\n    have hbound : \u2200 n, \u2016f n\u2016 \u2264 ((1/2 : \u211d) ^ (n.succ : \u2115)) := by\n      intro n\n      have h_eq : \u2016f n\u2016 = ((1/2 : \u211d) ^ (n.succ : \u2115)) := by\n        dsimp [f, d]\n        have hdval : |d (n.succ)| = 1 := by\n          dsimp [d]; split <;> norm_num\n        calc\n          |d (n.succ) / ((2 : \u211d)^(n.succ : \u2115))| = |d (n.succ)| / |((2 : \u211d)^(n.succ : \u2115))| := by rw [abs_div]\n          _ = 1 / ((2 : \u211d)^(n.succ : \u2115)) := by simp [hdval]\n          _ = ((1/2 : \u211d) ^ (n.succ : \u2115)) := by simp\n      exact h_eq.le\n    have hsumm_geom : Summable (fun (n : \u2115) => ((1/2 : \u211d) ^ (n.succ : \u2115))) := by\n      have h := summable_geometric_of_norm_lt_one (by norm_num : \u2016(1/2 : \u211d)\u2016 < 1)\n      simpa [pow_succ, mul_comm] using (h.mul_left (1/2 : \u211d))\n    exact Summable.of_norm_bounded hsumm_geom hbound\n  have f_add_three (n : \u2115) : f (n+3) = (1/8 : \u211d) * f n := by\n    dsimp [f, d]\n    have hd : d ((n+3).succ) = d (n.succ) := by\n      dsimp [d]\n      have hmod : ((n+3).succ) % 3 = (n.succ) % 3 := by omega\n      simp [hmod]\n    have hpow : ((2 : \u211d)^((n+3).succ : \u2115)) = (8 : \u211d) * ((2 : \u211d)^(n.succ : \u2115)) := by\n      calc\n        ((2 : \u211d)^((n+3).succ : \u2115)) = ((2 : \u211d)^((n.succ : \u2115) + 3 : \u2115)) := by\n          simp [add_comm, add_left_comm, add_assoc]\n        _ = ((2 : \u211d)^(n.succ : \u2115)) * ((2 : \u211d)^(3 : \u2115)) := by rw [pow_add]\n        _ = ((2 : \u211d)^(n.succ : \u2115)) * (8 : \u211d) := by norm_num\n        _ = (8 : \u211d) * ((2 : \u211d)^(n.succ : \u2115)) := by ring\n    calc\n      d ((n+3).succ) / ((2 : \u211d)^((n+3).succ : \u2115)) = d (n.succ) / ((8 : \u211d) * ((2 : \u211d)^(n.succ : \u2115))) := by rw [hd, hpow]\n      _ = (1/8 : \u211d) * (d (n.succ) / ((2 : \u211d)^(n.succ : \u2115))) := by ring\n      _ = (1/8 : \u211d) * f n := rfl\n  have hsum_f : \u2211' n, f n = (8/7 : \u211d) * (f 0 + f 1 + f 2) := by\n    set S := \u2211' n, f n\n    have hsum_f_hasSum : HasSum f S := hsummable_f.hasSum\n    have hsum_range3 : (\u2211 i \u2208 Finset.range 3, f i) = f 0 + f 1 + f 2 := by\n      simp [Finset.sum_range_succ]\n    have hshift_hasSum : HasSum (\u03bb n => f (n+3)) (S - (f 0 + f 1 + f 2)) := by\n      apply ((hasSum_nat_add_iff 3).mpr ?_)\n      have : (S - (f 0 + f 1 + f 2)) + (\u2211 i \u2208 Finset.range 3, f i) = S := by\n        calc\n          (S - (f 0 + f 1 + f 2)) + (\u2211 i \u2208 Finset.range 3, f i) = (S - (f 0 + f 1 + f 2)) + (f 0 + f 1 + f 2) := by\n            simp [Finset.sum_range_succ]\n          _ = S := by ring\n      rw [this]\n      exact hsum_f_hasSum\n    have htsum_shift_eq1 : \u2211' n, f (n+3) = S - (f 0 + f 1 + f 2) := hshift_hasSum.tsum_eq\n    have htsum_shift_eq2 : \u2211' n, f (n+3) = (1/8 : \u211d) * S := by\n      calc\n        \u2211' n, f (n+3) = \u2211' n, ((1/8 : \u211d) * f n) := by\n          refine tsum_congr (\u03bb n => ?_)\n          rw [f_add_three n]\n        _ = (1/8 : \u211d) * \u2211' n, f n := by rw [tsum_mul_left]\n        _ = (1/8 : \u211d) * S := rfl\n    have h_eq : S - (f 0 + f 1 + f 2) = (1/8 : \u211d) * S := by\n      rw [\u2190 htsum_shift_eq1, htsum_shift_eq2]\n    have hS : S = (8/7 : \u211d) * (f 0 + f 1 + f 2) := by\n      linarith\n    exact hS\n  have hsum_first_three : f 0 + f 1 + f 2 = (1/8 : \u211d) := by\n    unfold f d\n    norm_num\n  calc\n    (\u2211' k : \u2115, d (k.succ) / ((2 : \u211d)^(k.succ : \u2115))) = (\u2211' n, f n) := rfl\n    _ = (8/7 : \u211d) * (f 0 + f 1 + f 2) := hsum_f\n    _ = (8/7 : \u211d) * (1/8 : \u211d) := by rw [hsum_first_three]\n    _ = (1/7 : \u211d) := by ring"
+    },
+    {
+      "id": "sum_b_le_sum_p",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "\u03a3_{n=0}^\u221e b(x,n)/2^{n+1} \u2264 \u03a3_{n=0}^\u221e p(n)/2^{n+1}",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- $\\sum_{n=0}^\\infty b(x,n)/2^{n+1} \\le \\sum_{n=0}^\\infty p(n)/2^{n+1}$ -/) (proof := /-- By `sum_p_b_nonneg` and `Real.tsum_le_of_sum_range_le`. -/)]\nlemma sum_b_le_sum_p (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) : (\u2211' n : \u2115, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) \u2264 (\u2211' n : \u2115, p_val n / ((2 : \u211d)^(n.succ : \u2115))) := by\n  have hp_nonneg : \u2200 n, 0 \u2264 p_val n := by\n    intro n\n    unfold p_val\n    split <;> norm_num\n  have hb_nonneg : \u2200 n, 0 \u2264 b_val x n := by\n    intro n\n    unfold b_val\n    split <;> norm_num\n  have hsum_c : Summable c := by\n    have hsum_geo : Summable (\u03bb n : \u2115 => ((1/2 : \u211d) ^ (n : \u2115))) :=\n      summable_geometric_of_lt_one (by norm_num : 0 \u2264 (1/2 : \u211d)) (by norm_num : (1/2 : \u211d) < 1)\n    have h_eq : c = (\u03bb n : \u2115 => (1/2 : \u211d) * ((1/2 : \u211d) ^ (n : \u2115))) := by\n      ext n\n      dsimp [c]\n      calc\n        1 / ((2 : \u211d) ^ (n.succ : \u2115)) = ((1/2 : \u211d) ^ (n.succ : \u2115)) := by\n          symm\n          calc\n            ((1/2 : \u211d) ^ (n.succ : \u2115)) = ((1/2 : \u211d) ^ (n.succ : \u2115)) * 1 := by ring\n            _ = ((1/2 : \u211d) ^ (n.succ : \u2115)) * ((2 : \u211d) ^ (n.succ : \u2115) / ((2 : \u211d) ^ (n.succ : \u2115))) := by field_simp\n            _ = ((1/2 : \u211d) ^ (n.succ : \u2115) * (2 : \u211d) ^ (n.succ : \u2115)) / ((2 : \u211d) ^ (n.succ : \u2115)) := by ring\n            _ = (((1/2 : \u211d) * (2 : \u211d)) ^ (n.succ : \u2115)) / ((2 : \u211d) ^ (n.succ : \u2115)) := by rw [mul_pow]\n            _ = (1 ^ (n.succ : \u2115)) / ((2 : \u211d) ^ (n.succ : \u2115)) := by norm_num\n            _ = 1 / ((2 : \u211d) ^ (n.succ : \u2115)) := by simp\n        _ = (1/2 : \u211d) * ((1/2 : \u211d) ^ (n : \u2115)) := by\n          simp [pow_succ, mul_comm]\n    rw [h_eq]\n    exact hsum_geo.mul_left (1/2 : \u211d)\n  have hpos_denom (n : \u2115) : 0 < ((2 : \u211d)^(n.succ : \u2115)) := by positivity\n  have hsum_A : Summable (\u03bb n => p_val n / ((2 : \u211d)^(n.succ : \u2115))) := by\n    apply Summable.of_nonneg_of_le (\u03bb n => by\n      have : 0 \u2264 p_val n := hp_nonneg n\n      positivity) (\u03bb n => ?_) hsum_c\n    dsimp [c]\n    have h : p_val n \u2264 1 := by\n      unfold p_val; split <;> norm_num\n    calc\n      p_val n / ((2 : \u211d)^(n.succ : \u2115)) \u2264 1 / ((2 : \u211d)^(n.succ : \u2115)) :=\n        (div_le_div_iff_of_pos_right (hpos_denom n)).mpr h\n      _ = c n := rfl\n  have hsum_B : Summable (\u03bb n => b_val x n / ((2 : \u211d)^(n.succ : \u2115))) := by\n    apply Summable.of_nonneg_of_le (\u03bb n => by\n      have : 0 \u2264 b_val x n := hb_nonneg n\n      positivity) (\u03bb n => ?_) hsum_c\n    dsimp [c]\n    have h : b_val x n \u2264 1 := by\n      unfold b_val; split <;> norm_num\n    calc\n      b_val x n / ((2 : \u211d)^(n.succ : \u2115)) \u2264 1 / ((2 : \u211d)^(n.succ : \u2115)) :=\n        (div_le_div_iff_of_pos_right (hpos_denom n)).mpr h\n      _ = c n := rfl\n  set d := \u03bb n => ((p_val n - b_val x n) / ((2 : \u211d)^(n.succ : \u2115))) with hd\n  have hsum_d' : Summable (\u03bb n => (p_val n / ((2 : \u211d)^(n.succ : \u2115))) - (b_val x n / ((2 : \u211d)^(n.succ : \u2115)))) :=\n    Summable.sub hsum_A hsum_B\n  have hsum_d : Summable d :=\n    hsum_d'.congr (\u03bb n => by\n      dsimp [d]\n      ring)\n  have h_nonneg : \u2200 N, 0 \u2264 Finset.sum (Finset.range N) d :=\n    \u03bb N => sum_p_b_nonneg x hx0 hx1 N\n  have h_nonneg' : \u2200\u1da0 (N : \u2115) in Filter.atTop, 0 \u2264 Finset.sum (Finset.range N) d :=\n    Filter.Eventually.of_forall h_nonneg\n  have h0_le_tsum_d : 0 \u2264 \u2211' n, d n :=\n    ge_of_tendsto hsum_d.hasSum.tendsto_sum_nat h_nonneg'\n  have htsum_d : \u2211' n, d n = (\u2211' n, p_val n / ((2 : \u211d)^(n.succ : \u2115))) - (\u2211' n, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) := by\n    calc\n      \u2211' n, d n = \u2211' n, ((p_val n / ((2 : \u211d)^(n.succ : \u2115))) - (b_val x n / ((2 : \u211d)^(n.succ : \u2115)))) := by\n        refine tsum_congr (\u03bb n => ?_)\n        dsimp [d]\n        ring\n      _ = (\u2211' n, p_val n / ((2 : \u211d)^(n.succ : \u2115))) - (\u2211' n, b_val x n / ((2 : \u211d)^(n.succ : \u2115))) :=\n        (hsum_A.hasSum.sub hsum_B.hasSum).tsum_eq\n  rw [htsum_d] at h0_le_tsum_d\n  linarith"
+    },
+    {
+      "id": "sum_p_b_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For x\u2208[0,1) and any N, \u03a3_{n=0}^{N-1} frac{p(n)-b(x,n)}{2^{n+1}} \u2265 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- For $x\\in[0,1)$ and any $N$, $\\sum_{n=0}^{N-1} \\frac{p(n)-b(x,n)}{2^{n+1}} \\ge 0$. -/) (proof := /-- Using `p_val_minus_b_val_eq` and `T_nonneg`. -/)]\nlemma sum_p_b_nonneg (x : \u211d) (hx0 : 0 \u2264 x) (hx1 : x < 1) (N : \u2115) : 0 \u2264 Finset.sum (Finset.range N) (\u03bb n => ((p_val n : \u211d) - b_val x n) / ((2 : \u211d)^(n.succ : \u2115))) := by\n  have h_eq : \u2200 n, ((p_val n : \u211d) - b_val x n) / ((2 : \u211d)^(n.succ : \u2115)) = ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)) := by\n    intro n\n    exact p_val_minus_b_val_eq x n hx0\n  calc\n    0 \u2264 Finset.sum (Finset.range N) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) := T_nonneg x hx0 hx1 N\n    _ = Finset.sum (Finset.range N) (\u03bb n => ((p_val n : \u211d) - b_val x n) / ((2 : \u211d)^(n.succ : \u2115))) := by\n      refine Finset.sum_congr rfl (\u03bb n hn => ?_)\n      rw [h_eq n]"
+    },
+    {
+      "id": "tail_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any x\u2208\u211d and N\u2208\u2115, |g(x) - S_N(x)| \u2264 (1/2)^N, where S_N(x) is the partial sum up to N of the series defining g.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- For any $x\\in\\mathbb{R}$ and $N\\in\\mathbb{N}$, $|g(x) - S_N(x)| \\le (1/2)^N$, where $S_N(x)$ is the partial sum up to $N$ of the series defining $g$. -/) (proof := /-- Geometric tail bound. -/)]\nlemma tail_bound (x : \u211d) (N : \u2115) : |g x - Finset.sum (Finset.range N) (\u03bb k => ((-1 : \u211d) ^ (Int.floor (((k.succ : \u2115) : \u211d) * x)).toNat) / ((2 : \u211d) ^ (k.succ : \u2115)))| \u2264 ((1/2 : \u211d)^N) := by\n  let a : \u2115 \u2192 \u211d := fun n => ((-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat) / ((2 : \u211d) ^ (n.succ : \u2115))\n  have ha_norm_eq : \u2200 n, \u2016a n\u2016 = ((1 : \u211d)/2) * (((1 : \u211d)/2) ^ n) := by\n    intro n\n    have h1 : |((-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat)| = 1 := by\n      calc\n        |((-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat)| = |(-1 : \u211d)| ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat := abs_pow _ _\n        _ = 1 := by simp\n    have h2 : |((2 : \u211d) ^ (n.succ : \u2115))| = (2 : \u211d) ^ (n.succ : \u2115) := by simp\n    calc\n      \u2016a n\u2016 = |a n| := by rw [Real.norm_eq_abs]\n      _ = |((-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat) / ((2 : \u211d) ^ (n.succ : \u2115))| := rfl\n      _ = |((-1 : \u211d) ^ (Int.floor (((n.succ : \u2115) : \u211d) * x)).toNat)| / |((2 : \u211d) ^ (n.succ : \u2115))| := by rw [abs_div]\n      _ = 1 / ((2 : \u211d) ^ (n.succ : \u2115)) := by rw [h1, h2]\n      _ = ((1 : \u211d)/2) * (((1 : \u211d)/2) ^ n) := by\n        have h : ((2 : \u211d) ^ (n.succ : \u2115)) = (2 : \u211d) * ((2 : \u211d) ^ n) := by\n          simp [pow_succ, mul_comm]\n        rw [h]\n        field_simp\n        have hcalc : ((1 : \u211d)/2) ^ n * (2 : \u211d) ^ n = 1 := by\n          calc\n            ((1 : \u211d)/2) ^ n * (2 : \u211d) ^ n = (((1 : \u211d)/2) * (2 : \u211d)) ^ n := by rw [mul_pow]\n            _ = 1 ^ n := by norm_num\n            _ = 1 := by simp\n        nlinarith\n  have ha_bound : \u2200 n, \u2016a n\u2016 \u2264 ((1 : \u211d)/2) * (((1 : \u211d)/2) ^ n) := by\n    intro n\n    exact le_of_eq (ha_norm_eq n)\n  have hr : ((1 : \u211d)/2) < 1 := by norm_num\n  have h_summable_a : Summable a := by\n    have h_summable_abs : Summable (fun n : \u2115 => |a n|) := by\n      refine Summable.of_nonneg_of_le (f := fun n : \u2115 => ((1 : \u211d)/2) * (((1 : \u211d)/2) ^ n)) (fun n => abs_nonneg (a n)) (fun n => ?_) ?_\n      \u00b7 have htemp : |a n| \u2264 ((1 : \u211d)/2) * (((1 : \u211d)/2) ^ n) := by\n          rw [\u2190 Real.norm_eq_abs]\n          exact ha_bound n\n        exact htemp\n      \u00b7 have : Summable (fun n : \u2115 => ((1 : \u211d)/2) ^ n) :=\n          summable_geometric_of_lt_one (by norm_num) (by norm_num)\n        exact (Summable.mul_left ((1 : \u211d)/2)) this\n    exact Summable.of_norm h_summable_abs\n  have ha_hasSum : HasSum a (g x) := by\n    unfold g a\n    exact h_summable_a.hasSum\n  have h_bound := norm_sub_le_of_geometric_bound_of_hasSum hr ha_bound ha_hasSum N\n  have h_simplify : ((1 : \u211d)/2) * (((1 : \u211d)/2) ^ N) / (1 - ((1 : \u211d)/2)) = ((1 : \u211d)/2) ^ N := by\n    ring\n  have h_norm : \u2016\u2211 k \u2208 Finset.range N, a k - g x\u2016 = |(Finset.sum (Finset.range N) a) - g x| := by\n    simp [Real.norm_eq_abs]\n  have h_abs_symm : |(Finset.sum (Finset.range N) a) - g x| = |g x - (Finset.sum (Finset.range N) a)| := by\n    calc\n      |(Finset.sum (Finset.range N) a) - g x| = |-((Finset.sum (Finset.range N) a) - g x)| := by rw [abs_neg]\n      _ = |g x - (Finset.sum (Finset.range N) a)| := by rw [neg_sub]\n  have h_bound' : |(Finset.sum (Finset.range N) a) - g x| \u2264 ((1 : \u211d)/2) ^ N := by\n    linarith\n  have h_goal_eq : (Finset.sum (Finset.range N) (fun k => ((-1 : \u211d) ^ (Int.floor (((k.succ : \u2115) : \u211d) * x)).toNat) / ((2 : \u211d) ^ (k.succ : \u2115)))) = Finset.sum (Finset.range N) a := by\n    simp [a]\n  rw [h_goal_eq]\n  rw [\u2190 h_abs_symm]\n  exact h_bound'"
+    },
+    {
+      "id": "tail_strict_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "\u03a3_{k=N+1}^\u221e d_k/2^k > -1/2^N",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $\\sum_{k=N+1}^\\infty d_k/2^k > -1/2^N$ -/) (proof := /-- Using a positive term among $d_k$ for $k>N$. -/)]\nlemma tail_strict_bound (N : \u2115) : (\u2211' k : \u2115, d (k + N.succ) / ((2 : \u211d)^(k + N.succ : \u2115))) > -((1/2 : \u211d)^N) := by\n  set a := \u03bb k : \u2115 => d (k + N.succ) / ((2 : \u211d)^(k + N.succ : \u2115))\n  set b := \u03bb k : \u2115 => -1 / ((2 : \u211d)^(k + N.succ : \u2115))\n  have d_cases (n : \u2115) : d n = 1 \u2228 d n = -1 := by\n    unfold d\n    by_cases h : n % 3 = 1\n    \u00b7 left; simp [h]\n    \u00b7 right; simp [h]\n  have h_nonneg : \u2200 k, 0 \u2264 a k - b k := by\n    intro k\n    dsimp [a, b]\n    have hdpos : 0 \u2264 d (k + N.succ) + 1 := by\n      rcases d_cases (k + N.succ) with hd | hd\n      \u00b7 rw [hd]; norm_num\n      \u00b7 rw [hd]; norm_num\n    have den_pos : 0 < ((2 : \u211d)^(k + N.succ : \u2115)) := pow_pos (by norm_num : (0 : \u211d) < 2) _\n    have : d (k + N.succ) / ((2 : \u211d)^(k + N.succ : \u2115)) - (-1 / ((2 : \u211d)^(k + N.succ : \u2115))) = (d (k + N.succ) + 1) / ((2 : \u211d)^(k + N.succ : \u2115)) := by\n      ring\n    rw [this]\n    exact div_nonneg hdpos (by positivity)\n  have h_strict : \u2203 k, a k - b k > 0 := by\n    rcases exists_d_pos N with \u27e8m, hm, hd\u27e9\n    have hm_succ_le : N.succ \u2264 m.succ := Nat.succ_le_succ hm\n    set k := m.succ - N.succ with hk_def\n    have hk_add : k + N.succ = m.succ := by\n      rw [hk_def, Nat.sub_add_cancel hm_succ_le]\n    use k\n    dsimp [a, b]\n    have hdpos' : d (k + N.succ) + 1 > 0 := by\n      rw [hk_add, hd]\n      norm_num\n    have den_pos : 0 < ((2 : \u211d)^(k + N.succ : \u2115)) := pow_pos (by norm_num : (0 : \u211d) < 2) _\n    have : d (k + N.succ) / ((2 : \u211d)^(k + N.succ : \u2115)) - (-1 / ((2 : \u211d)^(k + N.succ : \u2115))) = (d (k + N.succ) + 1) / ((2 : \u211d)^(k + N.succ : \u2115)) := by\n      ring\n    rw [this]\n    exact div_pos hdpos' den_pos\n  have h_summable_b : Summable b := by\n    have hsum : Summable (\u03bb k : \u2115 => 1 / ((2 : \u211d)^(k + N.succ : \u2115))) := by\n      have h : (\u03bb k : \u2115 => 1 / ((2 : \u211d)^(k + N.succ : \u2115))) = (\u03bb k : \u2115 => ((1/2 : \u211d)^(N.succ : \u2115)) * ((1/2 : \u211d)^k)) := by\n        ext k; simp [pow_add, mul_comm, mul_left_comm, mul_assoc, div_eq_mul_inv]\n      rw [h]\n      exact (summable_geometric_two.mul_left ((1/2 : \u211d)^(N.succ : \u2115)))\n    have : b = \u03bb k => (-1 : \u211d) * (1 / ((2 : \u211d)^(k + N.succ : \u2115))) := by\n      ext k; dsimp [b]; ring\n    rw [this]\n    exact hsum.mul_left (-1)\n  have h_summable_g : Summable (\u03bb k => a k - b k) := by\n    have h_nonneg' : \u2200 k, 0 \u2264 a k - b k := h_nonneg\n    have h_bound : \u2200 k, a k - b k \u2264 2 / ((2 : \u211d)^(k + N.succ : \u2115)) := by\n      intro k\n      dsimp [a, b]\n      have hd_le : d (k + N.succ) + 1 \u2264 2 := by\n        rcases d_cases (k + N.succ) with hd | hd\n        \u00b7 rw [hd]; norm_num\n        \u00b7 rw [hd]; norm_num\n      have den_pos : 0 < ((2 : \u211d)^(k + N.succ : \u2115)) := pow_pos (by norm_num : (0 : \u211d) < 2) _\n      have : d (k + N.succ) / ((2 : \u211d)^(k + N.succ : \u2115)) - (-1 / ((2 : \u211d)^(k + N.succ : \u2115))) = (d (k + N.succ) + 1) / ((2 : \u211d)^(k + N.succ : \u2115)) := by\n        ring\n      rw [this]\n      exact (div_le_div_iff_of_pos_right den_pos).mpr hd_le\n    have h_summable_bound : Summable (\u03bb k : \u2115 => 2 / ((2 : \u211d)^(k + N.succ : \u2115))) := by\n      have : (\u03bb k : \u2115 => 2 / ((2 : \u211d)^(k + N.succ : \u2115))) = (\u03bb k : \u2115 => 2 * (1 / ((2 : \u211d)^(k + N.succ : \u2115)))) := by\n        ext k; ring\n      rw [this]\n      have hsum : Summable (\u03bb k : \u2115 => 1 / ((2 : \u211d)^(k + N.succ : \u2115))) := by\n        have h : (\u03bb k : \u2115 => 1 / ((2 : \u211d)^(k + N.succ : \u2115))) = (\u03bb k : \u2115 => ((1/2 : \u211d)^(N.succ : \u2115)) * ((1/2 : \u211d)^k)) := by\n          ext k; simp [pow_add, mul_comm, mul_left_comm, mul_assoc, div_eq_mul_inv]\n        rw [h]\n        exact (summable_geometric_two.mul_left ((1/2 : \u211d)^(N.succ : \u2115)))\n      exact hsum.mul_left 2\n    exact Summable.of_nonneg_of_le h_nonneg' h_bound h_summable_bound\n  have h_summable_a : Summable a := by\n    have : a = (\u03bb k => a k - b k) + b := by\n      ext k; dsimp; ring\n    rw [this]\n    exact h_summable_g.add h_summable_b\n  have hsum_diff_pos : 0 < \u2211' k, (a k - b k) := by\n    have hzero : \u2200 n : \u2115, (0 : \u211d) \u2264 (0 : \u2115 \u2192 \u211d) n := \u03bb n => le_refl _\n    have hle : \u2200 n : \u2115, (0 : \u2115 \u2192 \u211d) n \u2264 (\u03bb k => a k - b k) n := \u03bb n => h_nonneg n\n    rcases h_strict with \u27e8i, hi\u27e9\n    have hstrict : (0 : \u2115 \u2192 \u211d) i < (\u03bb k => a k - b k) i := hi\n    have hsumm : Summable (\u03bb k => a k - b k) := h_summable_g\n    have := Summable.tsum_lt_tsum_of_nonneg hzero hle hstrict hsumm\n    simpa using this\n  have tsum_one_div_two_pow_add : (\u2211' k : \u2115, 1 / ((2 : \u211d)^(k + N.succ : \u2115))) = ((1/2 : \u211d)^N) := by\n    calc\n      (\u2211' k : \u2115, 1 / ((2 : \u211d)^(k + N.succ : \u2115))) = (\u2211' k : \u2115, ((1/2 : \u211d)^(k + N.succ : \u2115))) := by\n        refine tsum_congr (\u03bb k => ?_)\n        simp\n      _ = (\u2211' k : \u2115, ((1/2 : \u211d)^(N.succ : \u2115) * ((1/2 : \u211d)^(k : \u2115)))) := by\n        refine tsum_congr (\u03bb k => ?_)\n        simp [pow_add, mul_comm, mul_left_comm, mul_assoc]\n      _ = ((1/2 : \u211d)^(N.succ : \u2115)) * (\u2211' k : \u2115, ((1/2 : \u211d)^(k : \u2115))) := by\n        rw [tsum_mul_left]\n      _ = ((1/2 : \u211d)^(N.succ : \u2115)) * 2 := by rw [tsum_geometric_two]\n      _ = ((1/2 : \u211d)^N) := by\n        simp [pow_succ, mul_comm, mul_left_comm, mul_assoc]\n  calc\n    (\u2211' k : \u2115, d (k + N.succ) / ((2 : \u211d)^(k + N.succ : \u2115))) = \u2211' k, a k := rfl\n    _ = \u2211' k, (a k - b k + b k) := by\n      refine tsum_congr (\u03bb k => ?_)\n      ring\n    _ = (\u2211' k, (a k - b k)) + (\u2211' k, b k) := by\n      have hsum_add : HasSum (\u03bb k => (a k - b k) + b k) ((\u2211' k, (a k - b k)) + (\u2211' k, b k)) :=\n        (h_summable_g.hasSum.add h_summable_b.hasSum)\n      have h_tsum_add : \u2211' k, ((a k - b k) + b k) = (\u2211' k, (a k - b k)) + (\u2211' k, b k) :=\n        hsum_add.tsum_eq\n      rw [h_tsum_add]\n    _ > 0 + (\u2211' k, b k) := by\n      linarith\n    _ = \u2211' k, b k := by simp\n    _ = -((1/2 : \u211d)^N) := by\n      calc\n        (\u2211' k : \u2115, b k) = (\u2211' k : \u2115, -1 / ((2 : \u211d)^(k + N.succ : \u2115))) := rfl\n        _ = (\u2211' k : \u2115, (-1 : \u211d) * (1 / ((2 : \u211d)^(k + N.succ : \u2115)))) := by\n          refine tsum_congr (\u03bb k => ?_)\n          ring\n        _ = (-1 : \u211d) * (\u2211' k : \u2115, 1 / ((2 : \u211d)^(k + N.succ : \u2115))) := by rw [tsum_mul_left]\n        _ = -(\u2211' k : \u2115, 1 / ((2 : \u211d)^(k + N.succ : \u2115))) := by ring\n        _ = -((1/2 : \u211d)^N) := by rw [tsum_one_div_two_pow_add]"
+    },
+    {
+      "id": "termwise_ineq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For 0\u2264 k<m, if mathrm{sign\\_val}(x,k)=1 and c3(k)=0, then ...",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For $0\\le k<m$, if $\\mathrm{sign\\_val}(x,k)=1$ and $c3(k)=0$, then ...\n    -/) (proof := /-- Termwise inequality. -/)]\nlemma termwise_ineq (x : \u211d) (k m : \u2115) (hk : k < m) (hs : sign_val x k = 1) (hc : c3 k = 0) :\n    (Finset.sum (Finset.range m) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)))) \u2265 \n    (Finset.sum (Finset.range k) (\u03bb n => ((if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)) - c3 n) / ((2 : \u211d)^(n.succ : \u2115)))) + (1 / ((2 : \u211d)^(k.succ : \u2115))) - \n    (Finset.sum (Finset.range (m - k - 1)) (\u03bb i => c3 (k+1+i) / ((2 : \u211d)^((k+1+i).succ : \u2115)))) := by\n  let E (n : \u2115) : \u211d := if sign_val x n = 1 then (1 : \u211d) else (0 : \u211d)\n  have hEk : E k = 1 := by\n    dsimp [E]\n    simp [hs]\n  have hc3k : c3 k = 0 := hc\n  have hm_eq' : k + (m - k) = m := by omega\n  have hsum_split : (\u2211 n \u2208 Finset.range m, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) =\n    (\u2211 n \u2208 Finset.range k, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) +\n    (\u2211 n \u2208 Finset.range (m - k), (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) := by\n    have hrange_eq : (Finset.range (k + (m - k)) : Finset \u2115) = (Finset.range m : Finset \u2115) := by rw [hm_eq']\n    calc\n      (\u2211 n \u2208 Finset.range m, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) = \n        (\u2211 n \u2208 Finset.range (k + (m - k)), (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) := by rw [hrange_eq]\n      _ = (\u2211 n \u2208 Finset.range k, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) + \n          (\u2211 n \u2208 Finset.range (m - k), (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) := by rw [Finset.sum_range_add]\n  have hS2_split : (\u2211 n \u2208 Finset.range (m - k), (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) =\n    ((E k - c3 k) / ((2 : \u211d)^(k.succ : \u2115))) + (\u2211 n \u2208 Finset.range (m - k - 1), (E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) := by\n    have hmk_eq4 : 1 + (m - k - 1) = m - k := by omega\n    calc\n      (\u2211 n \u2208 Finset.range (m - k), (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) = \n        (\u2211 n \u2208 Finset.range (1 + (m - k - 1)), (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) := by rw [hmk_eq4]\n      _ = (\u2211 n \u2208 Finset.range 1, (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) + \n          (\u2211 n \u2208 Finset.range (m - k - 1), (E (k + (1 + n)) - c3 (k + (1 + n))) / ((2 : \u211d)^((k + (1 + n)).succ : \u2115))) := by rw [Finset.sum_range_add]\n      _ = ((E (k + 0) - c3 (k + 0)) / ((2 : \u211d)^((k + 0).succ : \u2115))) + \n          (\u2211 n \u2208 Finset.range (m - k - 1), (E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) := by\n        simp [add_comm, add_left_comm, add_assoc]\n      _ = ((E k - c3 k) / ((2 : \u211d)^(k.succ : \u2115))) + \n          (\u2211 n \u2208 Finset.range (m - k - 1), (E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) := by simp\n  have hS2'_plus_S3_nonneg : 0 \u2264 (\u2211 n \u2208 Finset.range (m - k - 1), (E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) + \n    (\u2211 i \u2208 Finset.range (m - k - 1), c3 (k+1 + i) / ((2 : \u211d)^((k+1 + i).succ : \u2115))) := by\n    have hsum : (\u2211 n \u2208 Finset.range (m - k - 1), ((E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115)) + c3 (k+1 + n) / ((2 : \u211d)^((k+1 + n).succ : \u2115)))) = \n      (\u2211 n \u2208 Finset.range (m - k - 1), E (k+1 + n) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) := by\n      refine Finset.sum_congr rfl (\u03bb n hn => ?_)\n      field_simp [show ((2 : \u211d)^((k+1 + n).succ : \u2115)) \u2260 0 from by positivity]\n      ring\n    have hnonneg : 0 \u2264 (\u2211 n \u2208 Finset.range (m - k - 1), E (k+1 + n) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) := by\n      refine Finset.sum_nonneg (\u03bb n hn => ?_)\n      have hE_nonneg : 0 \u2264 E (k+1 + n) := by\n        dsimp [E]\n        split\n        \u00b7 norm_num\n        \u00b7 norm_num\n      positivity\n    have h_combine : (\u2211 n \u2208 Finset.range (m - k - 1), (E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) + \n      (\u2211 i \u2208 Finset.range (m - k - 1), c3 (k+1 + i) / ((2 : \u211d)^((k+1 + i).succ : \u2115))) = \n      (\u2211 n \u2208 Finset.range (m - k - 1), ((E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115)) + c3 (k+1 + n) / ((2 : \u211d)^((k+1 + n).succ : \u2115)))) := by\n      rw [Finset.sum_add_distrib]\n    rw [h_combine, hsum]\n    exact hnonneg\n  have hS2_ge : (\u2211 n \u2208 Finset.range (m - k), (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) \u2265\n    (1 / ((2 : \u211d)^(k.succ : \u2115))) - (\u2211 i \u2208 Finset.range (m - k - 1), c3 (k+1 + i) / ((2 : \u211d)^((k+1 + i).succ : \u2115))) := by\n    rw [hS2_split]\n    have hEk_c3k : (E k - c3 k) / ((2 : \u211d)^(k.succ : \u2115)) = 1 / ((2 : \u211d)^(k.succ : \u2115)) := by\n      simp [hEk, hc3k]\n    rw [hEk_c3k]\n    have hineq : (1 / ((2 : \u211d)^(k.succ : \u2115))) + (\u2211 n \u2208 Finset.range (m - k - 1), (E (k+1 + n) - c3 (k+1 + n)) / ((2 : \u211d)^((k+1 + n).succ : \u2115))) \u2265\n      (1 / ((2 : \u211d)^(k.succ : \u2115))) - (\u2211 i \u2208 Finset.range (m - k - 1), c3 (k+1 + i) / ((2 : \u211d)^((k+1 + i).succ : \u2115))) := by\n      linarith [hS2'_plus_S3_nonneg]\n    exact hineq\n  have hLHS_ge : (\u2211 n \u2208 Finset.range m, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) \u2265\n    (\u2211 n \u2208 Finset.range k, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) + (1 / ((2 : \u211d)^(k.succ : \u2115))) - \n    (\u2211 i \u2208 Finset.range (m - k - 1), c3 (k+1 + i) / ((2 : \u211d)^((k+1 + i).succ : \u2115))) := by\n    rw [hsum_split]\n    have hsum_add : (\u2211 n \u2208 Finset.range k, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) + \n      (\u2211 n \u2208 Finset.range (m - k), (E (k + n) - c3 (k + n)) / ((2 : \u211d)^((k + n).succ : \u2115))) \u2265\n      (\u2211 n \u2208 Finset.range k, (E n - c3 n) / ((2 : \u211d)^(n.succ : \u2115))) + ((1 / ((2 : \u211d)^(k.succ : \u2115))) - \n      (\u2211 i \u2208 Finset.range (m - k - 1), c3 (k+1 + i) / ((2 : \u211d)^((k+1 + i).succ : \u2115)))) := by\n      linarith\n    linarith\n  simpa [E] using hLHS_ge"
+    },
+    {
+      "id": "tsum_3k_plus_1_eq_4_7",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "\u03a3_{k} 1/2^{3k+1} = 4/7",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $\\sum_{k} 1/2^{3k+1} = 4/7$ -/) (proof := /-- Geometric series. -/)]\nlemma tsum_3k_plus_1_eq_4_7 : (\u2211' k : \u2115, 1 / ((2 : \u211d) ^ (3*k+1 : \u2115))) = (4/7 : \u211d) := by\n  have term_eq (k : \u2115) : 1 / ((2 : \u211d) ^ (3*k+1 : \u2115)) = ((1 : \u211d)/2) * (((1 : \u211d)/8) ^ k) := by\n    calc\n      1 / ((2 : \u211d) ^ (3*k+1 : \u2115)) = 1 / (2 * ((2 : \u211d) ^ (3 : \u2115)) ^ k) := by\n        have h : (2 : \u211d) ^ (3*k+1 : \u2115) = 2 * ((2 : \u211d) ^ (3 : \u2115)) ^ k := by\n          calc\n            (2 : \u211d) ^ (3*k+1 : \u2115) = (2 : \u211d) ^ ((3*k : \u2115) + 1) := by ring\n            _ = ((2 : \u211d) ^ (3*k : \u2115)) * ((2 : \u211d) ^ (1 : \u2115)) := by rw [pow_add]\n            _ = ((2 : \u211d) ^ (3*k : \u2115)) * 2 := by simp\n            _ = (((2 : \u211d) ^ (3 : \u2115)) ^ k) * 2 := by rw [pow_mul]\n            _ = 2 * ((2 : \u211d) ^ (3 : \u2115)) ^ k := by ring\n        rw [h]\n      _ = (1/(2 : \u211d)) * (1 / (((2 : \u211d) ^ (3 : \u2115)) ^ k)) := by ring\n      _ = ((1 : \u211d)/2) * (1 / (8 ^ k)) := by\n        norm_num\n      _ = ((1 : \u211d)/2) * ((1/8) ^ k) := by\n        simp [div_pow]\n      _ = ((1 : \u211d)/2) * (((1 : \u211d)/8) ^ k) := by norm_num\n  calc\n    (\u2211' k : \u2115, 1 / ((2 : \u211d) ^ (3*k+1 : \u2115))) = (\u2211' k : \u2115, ((1 : \u211d)/2) * (((1 : \u211d)/8) ^ k)) := by\n      refine tsum_congr ?_\n      intro k\n      rw [term_eq k]\n    _ = ((1 : \u211d)/2) * (\u2211' k : \u2115, (((1 : \u211d)/8) ^ k)) := by rw [tsum_mul_left]\n    _ = ((1 : \u211d)/2) * ((1 - ((1 : \u211d)/8))\u207b\u00b9) := by\n      rw [tsum_geometric_of_lt_one (by norm_num : 0 \u2264 ((1 : \u211d)/8)) (by norm_num : ((1 : \u211d)/8) < 1)]\n    _ = (4/7 : \u211d) := by ring"
+    },
+    {
+      "id": "tsum_c_eq_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "\u03a3_{n=0}^\u221e c_n = 1",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- $\\sum_{n=0}^\\infty c_n = 1$ -/) (proof := /-- Use geometric series. -/)]\nlemma tsum_c_eq_one : \u2211' n : \u2115, c n = 1 := by\n  calc\n    \u2211' n : \u2115, c n = \u2211' n : \u2115, ((1 : \u211d) / 2) * (((1 : \u211d) / 2) ^ n) := by\n      refine tsum_congr ?_\n      intro n\n      dsimp [c]\n      field_simp\n      simp [pow_succ, mul_comm, mul_left_comm, mul_assoc]\n    _ = ((1 : \u211d) / 2) * (\u2211' n : \u2115, ((1 : \u211d) / 2) ^ n) := by rw [tsum_mul_left]\n    _ = ((1 : \u211d) / 2) * (2 : \u211d) := by rw [tsum_geometric_two]\n    _ = 1 := by ring"
+    },
+    {
+      "id": "tsum_one_div_two_pow_succ",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "1/2^{n+1} summed over all n is 1",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- $1/2^{n+1}$ summed over all $n$ is $1$ -/) (proof := /-- Use `tsum_c_eq_one`. -/)]\nlemma tsum_one_div_two_pow_succ : (\u2211' n : \u2115, 1 / ((2 : \u211d) ^ (n.succ : \u2115))) = (1 : \u211d) := by\n  calc\n    (\u2211' n : \u2115, 1 / ((2 : \u211d) ^ (n.succ : \u2115))) = (\u2211' n : \u2115, ((1 : \u211d) / 2) ^ (n.succ : \u2115)) := by\n      refine tsum_congr ?_\n      intro n\n      simp\n    _ = ((1 : \u211d) / 2) * (\u2211' n : \u2115, ((1 : \u211d) / 2) ^ n) := by\n      calc\n        (\u2211' n : \u2115, ((1 : \u211d) / 2) ^ (n.succ : \u2115)) = (\u2211' n : \u2115, ((1 : \u211d) / 2) * ((1 : \u211d) / 2) ^ n) := by\n          refine tsum_congr ?_\n          intro n\n          simp [pow_succ, mul_comm, mul_left_comm, mul_assoc]\n        _ = ((1 : \u211d) / 2) * (\u2211' n : \u2115, ((1 : \u211d) / 2) ^ n) := by rw [tsum_mul_left]\n    _ = ((1 : \u211d) / 2) * (2 : \u211d) := by rw [tsum_geometric_two]\n    _ = (1 : \u211d) := by ring"
+    },
+    {
+      "id": "tsum_p_series_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "\u03a3_{n=0}^\u221e p(n)/2^{n+1} = 3/7",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- $\\sum_{n=0}^\\infty p(n)/2^{n+1} = 3/7$ -/) (proof := /-- Decompose using `p_val_eq_one_minus_indicator`, `tsum_one_div_two_pow_succ`, `indicator_sum_eq_tsum_3k_plus_1`, `tsum_3k_plus_1_eq_4_7`. -/)]\nlemma tsum_p_series_pos : (\u2211' n : \u2115, p_val n / ((2 : \u211d)^(n.succ : \u2115))) = (3/7 : \u211d) := by\n  let a : \u2115 \u2192 \u211d := \u03bb n => 1 / ((2 : \u211d)^(n.succ : \u2115))\n  let b : \u2115 \u2192 \u211d := \u03bb n => (if n % 3 = 0 then (1 : \u211d) else 0) / ((2 : \u211d)^(n.succ : \u2115))\n  have hpos_denom : \u2200 (n : \u2115), 0 < ((2 : \u211d)^(n.succ : \u2115)) := by\n    intro n\n    apply pow_pos\n    norm_num\n  have ha_nonneg : \u2200 (n : \u2115), 0 \u2264 a n := by\n    intro n\n    dsimp [a]\n    refine div_nonneg (by norm_num) (hpos_denom n).le\n  have h_nonneg_b : \u2200 (n : \u2115), 0 \u2264 b n := by\n    intro n\n    dsimp [b]\n    refine div_nonneg ?_ (hpos_denom n).le\n    split <;> norm_num\n  have h_le_b_a : \u2200 (n : \u2115), b n \u2264 a n := by\n    intro n\n    dsimp [b, a]\n    by_cases h : n % 3 = 0\n    \u00b7 simp [h]\n    \u00b7 simp [h]\n  have hsum_a : Summable a := by\n    have hgeom : Summable (\u03bb n : \u2115 => ((1/2 : \u211d) ^ (n : \u2115))) :=\n      summable_geometric_of_lt_one (by norm_num : (0 : \u211d) \u2264 (1/2 : \u211d)) (by norm_num : (1/2 : \u211d) < (1 : \u211d))\n    have : a = \u03bb n : \u2115 => (1/2 : \u211d) * ((1/2 : \u211d) ^ (n : \u2115)) := by\n      ext n\n      simp [a, pow_succ, div_eq_mul_inv, mul_comm, mul_left_comm, mul_assoc]\n    rw [this]\n    exact Summable.mul_left (1/2 : \u211d) hgeom\n  have hsum_b : Summable b :=\n    Summable.of_nonneg_of_le h_nonneg_b h_le_b_a hsum_a\n  have htsum_a : tsum a = (1 : \u211d) := by\n    dsimp [a]\n    exact tsum_one_div_two_pow_succ\n  have htsum_b : tsum b = (4/7 : \u211d) := by\n    calc\n      tsum b = (\u2211' n : \u2115, (if n % 3 = 0 then 1 / ((2 : \u211d) ^ (n.succ : \u2115)) else 0)) := by\n        refine tsum_congr (\u03bb n => ?_)\n        dsimp [b]\n        split <;> simp\n      _ = (\u2211' k : \u2115, 1 / ((2 : \u211d) ^ (3*k+1 : \u2115))) := indicator_sum_eq_tsum_3k_plus_1\n      _ = (4/7 : \u211d) := tsum_3k_plus_1_eq_4_7\n\n  have hsum_sub : HasSum (a - b) ((1 : \u211d) - (4/7 : \u211d)) := by\n    simpa [htsum_a, htsum_b] using HasSum.sub (hsum_a.hasSum) (hsum_b.hasSum)\n  have htsum_sub : tsum (a - b) = (1 : \u211d) - (4/7 : \u211d) := by\n    simpa using hsum_sub.tsum_eq\n  have h_eq : \u2200 n : \u2115, p_val n / ((2 : \u211d)^(n.succ : \u2115)) = (a - b) n := by\n    intro n\n    dsimp [a, b]\n    by_cases h : n % 3 = 0\n    \u00b7 have hp : p_val n = 0 := by\n        dsimp [p_val]\n        have hmod : n.succ % 3 = 1 := by omega\n        simp [hmod]\n      simp [hp, h, sub_self]\n    \u00b7 have hp : p_val n = 1 := by\n        dsimp [p_val]\n        have hmod : n.succ % 3 \u2260 1 := by omega\n        simp [hmod]\n      simp [hp, h, sub_zero]\n  have h_tsum_eq : (\u2211' n : \u2115, p_val n / ((2 : \u211d)^(n.succ : \u2115))) = tsum (a - b) := by\n    refine tsum_congr h_eq\n  rw [h_tsum_eq]\n  rw [htsum_sub]\n  norm_num"
+    },
+    {
+      "id": "tsum_pos_eq_tsum_nat",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any f:\u2124\u2192\u211d, \u03a3_{z>0} f(z) = \u03a3_{n=0}^\u221e f(\u03c6(n)), where \u03c6(n)=n+1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- For any $f:\\mathbb{Z}\\to\\mathbb{R}$, $\\sum_{z>0} f(z) = \\sum_{n=0}^\\infty f(\\phi(n))$, where $\\phi(n)=n+1$. -/) (proof := /-- Reindex using $\\phi$ and `tsum_image`. -/)]\nlemma tsum_pos_eq_tsum_nat (f : \u2124 \u2192 \u211d) : (\u2211' (z : \u2124), if h : z > 0 then f z else 0) = \u2211' n : \u2115, f ((n.succ : \u2124)) := by\n  -- define the bijection \u2115 \u2243 {z : \u2124 // z > 0}\n  let e : \u2115 \u2192 {z : \u2124 // z > 0} := fun n => \u27e8(n.succ : \u2124), by\n    have h : (0 : \u2124) < (n.succ : \u2124) := by exact_mod_cast (Nat.succ_pos n)\n    exact h\u27e9\n  let inv : {z : \u2124 // z > 0} \u2192 \u2115 := fun z => (z.val - 1).toNat\n  have left_inv : \u2200 n : \u2115, inv (e n) = n := by\n    intro n\n    dsimp [e, inv]\n    simp\n  have right_inv : \u2200 z : {z : \u2124 // z > 0}, e (inv z) = z := by\n    intro z\n    ext\n    dsimp [e, inv]\n    have hpos' : 0 \u2264 z.val - 1 := by\n      have hzpos : z.val > 0 := z.property\n      have : 1 \u2264 z.val := by omega\n      omega\n    have h := Int.toNat_of_nonneg hpos'\n    calc\n      ((z.val - 1).toNat.succ : \u2124) = (((z.val - 1).toNat : \u2124) + 1) := by simp\n      _ = ((z.val - 1) + 1) := by rw [h]\n      _ = z.val := by ring\n  let e_equiv : \u2115 \u2243 {z : \u2124 // z > 0} :=\n    { toFun := e\n      invFun := inv\n      left_inv := left_inv\n      right_inv := right_inv }\n  calc\n    (\u2211' (z : \u2124), if h : z > 0 then f z else 0) = (\u2211' (x : {z : \u2124 // z > 0}), f (x.val)) := by\n      calc\n        (\u2211' (z : \u2124), if h : z > 0 then f z else 0) = (\u2211' (z : \u2124), ({z : \u2124 | z > 0} : Set \u2124).indicator f z) := by\n          refine tsum_congr ?_\n          intro z\n          by_cases hz : z > 0\n          \u00b7 simp [hz, Set.indicator]\n          \u00b7 simp [hz, Set.indicator]\n        _ = (\u2211' (x : {z : \u2124 // z > 0}), f (x.val)) := by\n          simpa using (tsum_subtype (s := {z : \u2124 | z > 0}) (f := f)).symm\n    _ = \u2211' n : \u2115, f ((e_equiv n).val) := by\n      rw [Equiv.tsum_eq e_equiv (fun (x : {z : \u2124 // z > 0}) => f (x.val))]\n    _ = \u2211' n : \u2115, f ((n.succ : \u2124)) := by\n      refine tsum_congr (fun n => ?_)\n      dsimp [e_equiv, e]"
+    },
+    {
+      "id": "two_mul_indicator_E_sub_sign_eq_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If x\u2265 0, then 2\u00b7mathbf{1}_{{\u230a (n+1)x\u230b text{ is even}}} - (-1)^{\u230a (n+1)x\u230b} = 1",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- If $x\\ge 0$, then $2\\cdot\\mathbf{1}_{\\{\\lfloor (n+1)x\\rfloor \\text{ is even}\\}} - (-1)^{\\lfloor (n+1)x\\rfloor} = 1$ -/) (proof := /-- Case analysis on parity of $\\lfloor (n+1)x\\rfloor$; nonnegativity ensures `Int.toNat` is faithful. -/)]\nlemma two_mul_indicator_E_sub_sign_eq_one (x : \u211d) (hx0 : 0 \u2264 x) (n : \u2115) : 2 * indicator_E x n - sign_val x n = 1 := by\n  have Even_toNat {a : \u2124} (h : Even a) (ha_nonneg : 0 \u2264 a) : Even (a.toNat) := by\n    have ha_natAbs_eq_toNat : a.natAbs = a.toNat := by\n      apply (Nat.cast_inj (R := \u2124)).mp\n      calc\n        (a.natAbs : \u2124) = a := Int.natAbs_of_nonneg ha_nonneg\n        _ = (a.toNat : \u2124) := (Int.toNat_of_nonneg ha_nonneg).symm\n    rw [\u2190 ha_natAbs_eq_toNat]\n    exact (Int.natAbs_even.mpr h)\n  have Odd_toNat {a : \u2124} (h : Odd a) (ha_nonneg : 0 \u2264 a) : Odd (a.toNat) := by\n    have ha_natAbs_eq_toNat : a.natAbs = a.toNat := by\n      apply (Nat.cast_inj (R := \u2124)).mp\n      calc\n        (a.natAbs : \u2124) = a := Int.natAbs_of_nonneg ha_nonneg\n        _ = (a.toNat : \u2124) := (Int.toNat_of_nonneg ha_nonneg).symm\n    rw [\u2190 ha_natAbs_eq_toNat]\n    exact (Int.natAbs_odd.mpr h)\n  set a := Int.floor (((n.succ : \u2115) : \u211d) * x) with ha\n  have ha_nonneg : 0 \u2264 a := by\n    rw [ha, Int.floor_nonneg]\n    nlinarith\n  by_cases hEven : Even a\n  \u00b7 -- case even\n    have hind : indicator_E x n = 1 := by\n      unfold indicator_E\n      split\n      \u00b7 rfl\n      \u00b7 exact absurd hEven \u2039_\u203a\n    have hsign : sign_val x n = 1 := by\n      unfold sign_val\n      rw [\u2190 ha]\n      have hEven_toNat : Even (a.toNat) := Even_toNat hEven ha_nonneg\n      rw [Even.neg_one_pow hEven_toNat]\n    calc\n      2 * indicator_E x n - sign_val x n = 2 * 1 - 1 := by rw [hind, hsign]\n      _ = 1 := by ring\n  \u00b7 -- case odd\n    have hOdd : Odd a := by\n      rcases Int.even_or_odd a with (h | h)\n      \u00b7 exact absurd h hEven\n      \u00b7 exact h\n    have hind : indicator_E x n = 0 := by\n      unfold indicator_E\n      split\n      \u00b7 exact absurd \u2039_\u203a hEven\n      \u00b7 rfl\n    have hsign : sign_val x n = -1 := by\n      unfold sign_val\n      rw [\u2190 ha]\n      have hOdd_toNat : Odd (a.toNat) := Odd_toNat hOdd ha_nonneg\n      rw [Odd.neg_one_pow hOdd_toNat]\n    calc\n      2 * indicator_E x n - sign_val x n = 2 * 0 - (-1) := by rw [hind, hsign]\n      _ = 1 := by ring"
+    },
+    {
+      "id": "xN",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "x_N = frac{2}{3} - frac{1}{6N}",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- $x_N = \\frac{2}{3} - \\frac{1}{6N}$ -/)]\nnoncomputable def xN (N : \u2115) : \u211d := (2/3 : \u211d) - (1/(6*(N : \u211d)))"
+    },
+    {
+      "id": "xN_in_Ico",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For N\u2265 1, x_N\u2208[0,1).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- For $N\\ge 1$, $x_N\\in[0,1)$. -/) (proof := /-- Simple bounds. -/)]\nlemma xN_in_Ico (N : \u2115) (hNpos : N \u2265 1) : xN N \u2208 Set.Ico (0 : \u211d) 1 := by\n  dsimp [Set.Ico, Set.mem_setOf_eq]\n  constructor\n  \u00b7 -- 0 \u2264 xN N\n    dsimp [xN]\n    have hNpos' : (N : \u211d) \u2265 1 := by exact_mod_cast hNpos\n    have hNpos_pos : (N : \u211d) > 0 := by linarith\n    have h_denom_pos : 6*(N : \u211d) > 0 := by nlinarith\n    have h_one_div_le : 1/(6*(N : \u211d)) \u2264 1/6 := by\n      apply (one_div_le_one_div h_denom_pos (by norm_num : (0 : \u211d) < 6)).mpr ?_\n      nlinarith\n    have : 2/3 - 1/6 = 1/2 := by norm_num\n    nlinarith\n  \u00b7 -- xN N < 1\n    dsimp [xN]\n    have hNpos' : (N : \u211d) \u2265 1 := by exact_mod_cast hNpos\n    have hpos' : 2/3 - 1/(6*(N : \u211d)) < 1 := by\n      have hNpos_pos : (N : \u211d) > 0 := by linarith\n      have h_denom_pos : 6*(N : \u211d) > 0 := by nlinarith\n      have h_one_div_nonneg : 0 \u2264 1/(6*(N : \u211d)) := by positivity\n      nlinarith\n    exact hpos'"
+    }
+  ],
+  "edges": [
+    {
+      "source": "sign_val",
+      "target": "T_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c3",
+      "target": "T_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lookback",
+      "target": "T_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "exists_d_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "exists_k",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c3",
+      "target": "exists_k",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val_of_cond",
+      "target": "exists_k",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def_eq_half_plus_g",
+      "target": "exists_x_f_def_close_to_4_7",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_x_g_close_to_one_seventh",
+      "target": "exists_x_f_def_close_to_4_7",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g",
+      "target": "exists_x_g_close_to_one_seventh",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "xN",
+      "target": "exists_x_g_close_to_one_seventh",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "norm_bound",
+      "target": "exists_x_g_close_to_one_seventh",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "xN_in_Ico",
+      "target": "exists_x_g_close_to_one_seventh",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "xN",
+      "target": "explicit_x_parity",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "explicit_x_parity",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_E",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_c_eq_one",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_E_mul_c",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_mul_c",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "two_mul_indicator_E_sub_sign_eq_one",
+      "target": "f_def_eq_half_plus_g",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_E_eq_one_sub_b_val",
+      "target": "f_def_eq_one_sub_sum_b_val",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_E_mul_c",
+      "target": "f_def_eq_one_sub_sum_b_val",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_c_eq_one",
+      "target": "f_def_eq_one_sub_sum_b_val",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_val",
+      "target": "f_def_eq_one_sub_sum_b_val",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "f_def_eq_one_sub_sum_b_val",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def_eq_half_plus_g",
+      "target": "f_def_lower_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g_to_S_identity",
+      "target": "f_def_lower_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_b_le_sum_p",
+      "target": "f_def_lower_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_p_series_pos",
+      "target": "f_def_lower_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def_eq_half_plus_g",
+      "target": "g_to_S_identity",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def_eq_one_sub_sum_b_val",
+      "target": "g_to_S_identity",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_val",
+      "target": "g_to_S_identity",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_E",
+      "target": "indicator_E_eq_one_sub_b_val",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_val",
+      "target": "indicator_E_eq_one_sub_b_val",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_def",
+      "target": "indicator_E_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def",
+      "target": "indicator_E_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "indicator_E_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_E",
+      "target": "indicator_E_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_pos_eq_tsum_nat",
+      "target": "indicator_E_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_k",
+      "target": "lookback",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "termwise_ineq",
+      "target": "lookback",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def",
+      "target": "lower_bound_le_4_7_f_def",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_x_f_def_close_to_4_7",
+      "target": "lower_bound_le_4_7_f_def",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g",
+      "target": "norm_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "xN",
+      "target": "norm_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tail_bound",
+      "target": "norm_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "explicit_x_parity",
+      "target": "norm_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "signed_binary_1_7",
+      "target": "norm_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tail_strict_bound",
+      "target": "norm_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "norm_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "p_val",
+      "target": "p_val_eq_one_sub_c3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c3",
+      "target": "p_val_eq_one_sub_c3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "p_val",
+      "target": "p_val_minus_b_val_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_val",
+      "target": "p_val_minus_b_val_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "p_val_minus_b_val_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c3",
+      "target": "p_val_minus_b_val_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "p_val_eq_one_sub_c3",
+      "target": "p_val_minus_b_val_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "parity_chain",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "floor_add_two_x_eq_floor_add_one",
+      "target": "parity_chain",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_def_lower_bound",
+      "target": "putnam_2015_a4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "lower_bound_le_4_7_f_def",
+      "target": "putnam_2015_a4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g",
+      "target": "sign_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "sign_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "sign_mul_c",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "sign_val_of_cond",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c3",
+      "target": "sign_val_of_cond",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "parity_chain",
+      "target": "sign_val_of_cond",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val_one_neg_imp_x_ge_half",
+      "target": "sign_val_of_cond",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "sign_val_one_neg_imp_x_ge_half",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "signed_binary_1_7",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_val",
+      "target": "sum_b_le_sum_p",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "p_val",
+      "target": "sum_b_le_sum_p",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_p_b_nonneg",
+      "target": "sum_b_le_sum_p",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_p_series_pos",
+      "target": "sum_b_le_sum_p",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_c_eq_one",
+      "target": "sum_b_le_sum_p",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "sum_b_le_sum_p",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_val",
+      "target": "sum_p_b_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "p_val",
+      "target": "sum_p_b_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "p_val_minus_b_val_eq",
+      "target": "sum_p_b_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "T_nonneg",
+      "target": "sum_p_b_nonneg",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "g",
+      "target": "tail_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "tail_strict_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_d_pos",
+      "target": "tail_strict_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "termwise_ineq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c3",
+      "target": "termwise_ineq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "tsum_c_eq_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "c",
+      "target": "tsum_one_div_two_pow_succ",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_c_eq_one",
+      "target": "tsum_one_div_two_pow_succ",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_one_div_two_pow_succ",
+      "target": "tsum_p_series_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_sum_eq_tsum_3k_plus_1",
+      "target": "tsum_p_series_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "tsum_3k_plus_1_eq_4_7",
+      "target": "tsum_p_series_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "indicator_E",
+      "target": "two_mul_indicator_E_sub_sign_eq_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sign_val",
+      "target": "two_mul_indicator_E_sub_sign_eq_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "xN",
+      "target": "xN_in_Ico",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

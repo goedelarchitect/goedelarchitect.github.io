@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 A4. 457 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item current">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item current">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "S_contains_3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.79,
+      "proof_length": 10,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "theorem",
+      "statement": "3 \u2208 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- $3 \\in S$. -/)\n  (proof := /-- Using the orthogonal sequence and the commutation condition for reflections. -/)]\nlemma S_contains_3 : (3 : \u2115) \u2208 S := by\n  sorry_using [S]"
+    },
+    {
+      "id": "S_lower_bound",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.8,
+      "proof_length": 16,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any k \u2208 S, we have 3 \u2264 k.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For any $k \\in S$, we have $3 \\le k$. -/)\n  (proof := /-- If $k < 3$, then `not_S_of_lt_3` would give $k \\notin S$, contradicting the hypothesis. Hence $3 \\le k$. -/)]\nlemma S_lower_bound (k : \u2115) (hk : k \u2208 S) : 3 \u2264 k := by\n  by_contra! h\n  -- h: k < 3\n  have h_not_S : k \u2209 S := not_S_of_lt_3 k h\n  exact h_not_S hk"
+    },
+    {
+      "id": "centralizer_comm_of_non_scalar_2x2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Let B be a 2 \u00d7 2 real matrix that is not a scalar multiple of the identity. Then any two matrices A and C that both commute with B also commute with each other.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- Let $B$ be a $2 \\times 2$ real matrix that is not a scalar multiple of the identity. Then any two matrices $A$ and $C$ that both commute with $B$ also commute with each other. -/)\n  (proof := /-- Immediate from `commute_of_both_commute`. -/)]\nlemma centralizer_comm_of_non_scalar_2x2 (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) : \u2200 (A C : Matrix (Fin 2) (Fin 2) \u211d), A * B = B * A \u2192 C * B = B * C \u2192 A * C = C * A := by\n  intro A C hA hC\n  exact commute_of_both_commute B h A C hA hC"
+    },
+    {
+      "id": "centralizer_span",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 14.12,
+      "proof_length": 26,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then any matrix A that commutes with B is a linear combination of I and B.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint\n  (statement := /-- If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then any matrix A that commutes with B is a linear combination of I and B. -/)\n  (proof := /-- Using the linearly independent pair (v, B\u00b7v) to express A\u00b7v as \u03b1 v + \u03b2 (B\u00b7v) and then deducing A = \u03b1 I + \u03b2 B. -/)]\nlemma centralizer_span (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) (A : Matrix (Fin 2) (Fin 2) \u211d) (hA : A * B = B * A) : \u2203 (\u03b1 \u03b2 : \u211d), A = \u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B := by\n  obtain \u27e8v, hv\u27e9 := exists_independent_vector B h\n  have hdim : Module.finrank \u211d (Fin 2 \u2192 \u211d) = 2 := by\n    simpa using finrank_fun \u211d\n  have h_span_range : Submodule.span \u211d (Set.range ![v, B.mulVec v]) = \u22a4 :=\n    hv.span_eq_top_of_card_eq_finrank (by\n      simp [hdim])\n  have h_range_pair : Set.range (![v, B.mulVec v] : Fin 2 \u2192 (Fin 2 \u2192 \u211d)) = {v, B.mulVec v} := by\n    ext x; simp [or_comm]\n  have h_span_set : Submodule.span \u211d ({v, B.mulVec v} : Set (Fin 2 \u2192 \u211d)) = \u22a4 := by\n    simpa [h_range_pair] using h_span_range\n  have h_mem : A.mulVec v \u2208 Submodule.span \u211d ({v, B.mulVec v} : Set (Fin 2 \u2192 \u211d)) := by\n    rw [h_span_set]\n    exact Submodule.mem_top\n  rcases (Submodule.mem_span_pair.mp h_mem) with \u27e8\u03b1, \u03b2, h_eq\u27e9\n  -- h_eq: \u03b1 \u2022 v + \u03b2 \u2022 (B.mulVec v) = A.mulVec v\n  set C := A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) with hC\n  have h_comm_sum : (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * B = B * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by\n    calc\n      (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * B = \u03b1 \u2022 1 * B + \u03b2 \u2022 B * B := by rw [add_mul]\n      _ = \u03b1 \u2022 (1 * B) + \u03b2 \u2022 (B * B) := by simp [smul_mul_assoc, mul_smul_comm]\n      _ = \u03b1 \u2022 (B * 1) + \u03b2 \u2022 (B * B) := by simp\n      _ = B * (\u03b1 \u2022 1) + B * (\u03b2 \u2022 B) := by simp [mul_smul_comm, smul_mul_assoc]\n      _ = B * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by rw [mul_add]\n  have hC_comm : C * B = B * C := by\n    calc\n      C * B = (A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)) * B := rfl\n      _ = A * B - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * B := by rw [sub_mul]\n      _ = B * A - B * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by rw [hA, h_comm_sum]\n      _ = B * (A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)) := by rw [mul_sub]\n      _ = B * C := rfl\n  have hCv : C.mulVec v = 0 := by\n    calc\n      C.mulVec v = (A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)).mulVec v := rfl\n      _ = A.mulVec v - ((\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B)).mulVec v := by\n        rw [Matrix.sub_mulVec]\n      _ = A.mulVec v - ((\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)).mulVec v + (\u03b2 \u2022 B).mulVec v) := by\n        rw [Matrix.add_mulVec]\n      _ = (A.mulVec v - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)).mulVec v) - (\u03b2 \u2022 B).mulVec v := by\n        rw [sub_add_eq_sub_sub]\n      _ = A.mulVec v - (\u03b1 \u2022 ((1 : Matrix (Fin 2) (Fin 2) \u211d).mulVec v)) - (\u03b2 \u2022 (B.mulVec v)) := by\n        simp [Matrix.smul_mulVec]\n      _ = A.mulVec v - (\u03b1 \u2022 v) - (\u03b2 \u2022 (B.mulVec v)) := by simp\n      _ = A.mulVec v - (\u03b1 \u2022 v + \u03b2 \u2022 (B.mulVec v)) := by ring\n      _ = 0 := by\n        rw [\u2190 h_eq, sub_self]\n  have hCBv : C.mulVec (B.mulVec v) = 0 := by\n    calc\n      C.mulVec (B.mulVec v) = (C * B).mulVec v := by\n        rw [Matrix.mulVec_mulVec]\n      _ = (B * C).mulVec v := by rw [hC_comm]\n      _ = B.mulVec (C.mulVec v) := by rw [Matrix.mulVec_mulVec]\n      _ = B.mulVec 0 := by rw [hCv]\n      _ = 0 := by simp\n  have hC_all : \u2200 w : (Fin 2 \u2192 \u211d), C.mulVec w = 0 := by\n    intro w\n    have h_mem_span : w \u2208 Submodule.span \u211d ({v, B.mulVec v} : Set (Fin 2 \u2192 \u211d)) := by\n      rw [h_span_set]\n      exact Submodule.mem_top\n    rcases (Submodule.mem_span_pair.mp h_mem_span) with \u27e8a, b, h_w\u27e9\n    -- h_w: a \u2022 v + b \u2022 (B.mulVec v) = w\n    calc\n      C.mulVec w = C.mulVec (a \u2022 v + b \u2022 (B.mulVec v)) := by rw [h_w]\n      _ = a \u2022 C.mulVec v + b \u2022 C.mulVec (B.mulVec v) := by\n        simp [Matrix.mulVec_add, Matrix.mulVec_smul]\n      _ = a \u2022 0 + b \u2022 0 := by simp [hCv, hCBv]\n      _ = 0 := by simp\n  have hC_zero : C = 0 := by\n    ext i j\n    have h' := hC_all (fun k => if k = j then 1 else 0)\n    have h'i := congr_fun h' i\n    have htemp : (C.mulVec (fun k => if k = j then 1 else 0)) i = 0 := by\n      simpa using h'i\n    have hsum : (\u2211 k : Fin 2, C i k * (if k = j then (1 : \u211d) else 0)) = 0 := by\n      exact htemp\n    have hCij : C i j = 0 := by\n      simpa using hsum\n    exact hCij\n  have hA_eq : A = \u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B := by\n    apply sub_eq_zero.mp\n    calc\n      A - (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) = C := rfl\n      _ = 0 := hC_zero\n  exact \u27e8\u03b1, \u03b2, hA_eq\u27e9"
+    },
+    {
+      "id": "commute_of_both_commute",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a 2\u00d72 real matrix B is not a scalar multiple of the identity, and A, C both commute with B, then A and C commute.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint\n  (statement := /-- If a 2\u00d72 real matrix B is not a scalar multiple of the identity, and A, C both commute with B, then A and C commute. -/)\n  (proof := /-- Write A = \u03b1I + \u03b2B and C = \u03b1'I + \u03b2'B using centralizer_span, then expand the product. -/)]\nlemma commute_of_both_commute (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) (A C : Matrix (Fin 2) (Fin 2) \u211d) (hA : A * B = B * A) (hC : C * B = B * C) : A * C = C * A := by\n  rcases centralizer_span B h A hA with \u27e8\u03b1, \u03b2, hA_eq\u27e9\n  rcases centralizer_span B h C hC with \u27e8\u03b3, \u03b4, hC_eq\u27e9\n  have expand_linear_comb (\u03b1 \u03b2 \u03b3 \u03b4 : \u211d) (B : Matrix (Fin 2) (Fin 2) \u211d) : (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * (\u03b3 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b4 \u2022 B) = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n    calc\n      (\u03b1 \u2022 1 + \u03b2 \u2022 B) * (\u03b3 \u2022 1 + \u03b4 \u2022 B) = ((\u03b1 \u2022 1) * (\u03b3 \u2022 1) + (\u03b2 \u2022 B) * (\u03b3 \u2022 1)) + ((\u03b1 \u2022 1) * (\u03b4 \u2022 B) + (\u03b2 \u2022 B) * (\u03b4 \u2022 B)) := by\n        rw [mul_add, add_mul, add_mul]\n      _ = (\u03b1*\u03b3) \u2022 (1 * 1) + (\u03b2*\u03b3) \u2022 (B * 1) + (\u03b1*\u03b4) \u2022 (1 * B) + (\u03b2*\u03b4) \u2022 (B * B) := by\n        simp [Matrix.smul_mul, Matrix.mul_smul, smul_smul, mul_comm, add_comm, add_left_comm, add_assoc]\n      _ = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + (\u03b2*\u03b3) \u2022 B + (\u03b1*\u03b4) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n        simp\n      _ = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n        simp [add_smul, add_comm, add_left_comm, add_assoc]\n  have h_expandA : A * C = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := by\n    calc\n      A * C = (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) * (\u03b3 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b4 \u2022 B) := by rw [hA_eq, hC_eq]\n      _ = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := expand_linear_comb \u03b1 \u03b2 \u03b3 \u03b4 B\n  have h_expandC : C * A = (\u03b3*\u03b1) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b3*\u03b2)+(\u03b4*\u03b1)) \u2022 B + (\u03b4*\u03b2) \u2022 (B * B) := by\n    calc\n      C * A = (\u03b3 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b4 \u2022 B) * (\u03b1 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + \u03b2 \u2022 B) := by rw [hC_eq, hA_eq]\n      _ = (\u03b3*\u03b1) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b3*\u03b2)+(\u03b4*\u03b1)) \u2022 B + (\u03b4*\u03b2) \u2022 (B * B) := expand_linear_comb \u03b3 \u03b4 \u03b1 \u03b2 B\n  calc\n    A * C = (\u03b1*\u03b3) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b1*\u03b4)+(\u03b2*\u03b3)) \u2022 B + (\u03b2*\u03b4) \u2022 (B * B) := h_expandA\n    _ = (\u03b3*\u03b1) \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) + ((\u03b3*\u03b2)+(\u03b4*\u03b1)) \u2022 B + (\u03b4*\u03b2) \u2022 (B * B) := by\n      ring\n    _ = C * A := by\n      symm\n      exact h_expandC"
+    },
+    {
+      "id": "exists_independent_vector",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.6,
+      "proof_length": 9,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then there exists a vector v such that v and B\u00b7v are linearly independent over \u211d.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint\n  (statement := /-- If a 2\u00d72 real matrix B is not a scalar multiple of the identity, then there exists a vector v such that v and B\u00b7v are linearly independent over \u211d. -/)\n  (proof := /-- Case analysis on the standard basis vectors e1, e2. -/)]\nlemma exists_independent_vector (B : Matrix (Fin 2) (Fin 2) \u211d) (h : \u00ac\u2203 (c : \u211d), B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) : \u2203 v : (Fin 2 \u2192 \u211d), LinearIndependent \u211d ![v, B.mulVec v] := by\n  by_contra h2\n  -- h2 : \u00ac \u2203 v, LinearIndependent \u211d ![v, B.mulVec v]\n  have h_forall_not_ind : \u2200 v : Fin 2 \u2192 \u211d, \u00ac LinearIndependent \u211d ![v, B.mulVec v] := by\n    intro v\n    intro h_ind\n    apply h2\n    exact \u27e8v, h_ind\u27e9\n  have exists_smul_eq : \u2200 v : Fin 2 \u2192 \u211d, \u2203 (r : \u211d), B.mulVec v = r \u2022 v := by\n    intro v\n    have h_not_ind : \u00ac LinearIndependent \u211d ![v, B.mulVec v] := h_forall_not_ind v\n    by_cases hv : v = 0\n    \u00b7 subst hv; refine \u27e80, ?_\u27e9; simp\n    \u00b7 have h_dep' : \u00ac (\u2200 (s t : \u211d), s \u2022 v + t \u2022 (B.mulVec v) = 0 \u2192 s = 0 \u2227 t = 0) := by\n        rwa [LinearIndependent.pair_iff] at h_not_ind\n      have h_exists : \u2203 (s t : \u211d), s \u2022 v + t \u2022 (B.mulVec v) = 0 \u2227 (s = 0 \u2192 t \u2260 0) := by\n        push_neg at h_dep'\n        exact h_dep'\n      rcases h_exists with \u27e8s, t, h_eq, h_cond\u27e9\n      have ht0 : t \u2260 0 := by\n        by_contra ht0\n        have hs0 : s = 0 := by\n          have : s \u2022 v = 0 := by\n            simpa [ht0] using h_eq\n          rcases eq_zero_or_eq_zero_of_smul_eq_zero this with (hs | hv')\n          \u00b7 exact hs\n          \u00b7 exact (hv hv').elim\n        exact (h_cond hs0) ht0\n      have h_eq' : t \u2022 (B.mulVec v) = (-s) \u2022 v := by\n        calc\n          t \u2022 (B.mulVec v) = (s \u2022 v + t \u2022 (B.mulVec v)) - s \u2022 v := by abel\n          _ = 0 - s \u2022 v := by rw [h_eq]\n          _ = -(s \u2022 v) := by simp\n          _ = (-s) \u2022 v := by simp\n      refine \u27e8-s / t, ?_\u27e9\n      calc\n        B.mulVec v = (1 : \u211d) \u2022 (B.mulVec v) := by simp\n        _ = ((t\u207b\u00b9 * t) \u2022 (B.mulVec v)) := by\n          field_simp [ht0]\n        _ = t\u207b\u00b9 \u2022 (t \u2022 (B.mulVec v)) := by simp [smul_smul]\n        _ = t\u207b\u00b9 \u2022 ((-s) \u2022 v) := by rw [h_eq']\n        _ = (t\u207b\u00b9 * (-s)) \u2022 v := by simp [smul_smul]\n        _ = (-s / t) \u2022 v := by ring\n  let e0 : Fin 2 \u2192 \u211d := ![1, 0]\n  let e1 : Fin 2 \u2192 \u211d := ![0, 1]\n  rcases exists_smul_eq e0 with \u27e8r0, h0\u27e9\n  rcases exists_smul_eq e1 with \u27e8r1, h1\u27e9\n  rcases exists_smul_eq (e0 + e1) with \u27e8r2, h2\u27e9\n  have h_comb : (r0 \u2022 e0 + r1 \u2022 e1) = r2 \u2022 (e0 + e1) := by\n    calc\n      r0 \u2022 e0 + r1 \u2022 e1 = B.mulVec e0 + B.mulVec e1 := by simp [h0, h1]\n      _ = B.mulVec (e0 + e1) := by rw [Matrix.mulVec_add]\n      _ = r2 \u2022 (e0 + e1) := h2\n  have hr0_eq_r2 : r0 = r2 := by\n    calc\n      r0 = (r0 \u2022 e0 + r1 \u2022 e1) 0 := by simp [e0, e1]\n      _ = (r2 \u2022 (e0 + e1)) 0 := by rw [h_comb]\n      _ = r2 := by simp [e0, e1]\n  have hr1_eq_r2 : r1 = r2 := by\n    calc\n      r1 = (r0 \u2022 e0 + r1 \u2022 e1) 1 := by simp [e0, e1]\n      _ = (r2 \u2022 (e0 + e1)) 1 := by rw [h_comb]\n      _ = r2 := by simp [e0, e1]\n  have hr0_eq_r1 : r0 = r1 := by\n    calc\n      r0 = r2 := hr0_eq_r2\n      _ = r1 := hr1_eq_r2.symm\n  set c := r0 with hc\n  have h0' : B.mulVec e0 = c \u2022 e0 := by simpa [hc] using h0\n  have h1' : B.mulVec e1 = c \u2022 e1 := by\n    calc\n      B.mulVec e1 = r1 \u2022 e1 := h1\n      _ = c \u2022 e1 := by rw [\u2190 hr0_eq_r1, hc]\n  have hB_scalar : \u2200 v : Fin 2 \u2192 \u211d, B.mulVec v = c \u2022 v := by\n    intro v\n    have h_eq_v : v = (v 0) \u2022 e0 + (v 1) \u2022 e1 := by\n      ext i; fin_cases i <;> simp [e0, e1]\n    calc\n      B.mulVec v = B.mulVec ((v 0) \u2022 e0 + (v 1) \u2022 e1) := by\n        apply congrArg (fun w => B.mulVec w) h_eq_v\n      _ = (v 0) \u2022 B.mulVec e0 + (v 1) \u2022 B.mulVec e1 := by\n        simp [Matrix.mulVec_add, Matrix.mulVec_smul]\n      _ = (v 0) \u2022 (c \u2022 e0) + (v 1) \u2022 (c \u2022 e1) := by simp [h0', h1']\n      _ = c \u2022 ((v 0) \u2022 e0 + (v 1) \u2022 e1) := by\n        simp [smul_smul, mul_comm, add_comm, add_left_comm, add_assoc]\n      _ = c \u2022 v := by\n        apply (congrArg (fun w => c \u2022 w) h_eq_v).symm\n  have hB_eq_cI : B = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := by\n    apply Matrix.mulVec_injective\n    funext v\n    calc\n      B.mulVec v = c \u2022 v := hB_scalar v\n      _ = (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)).mulVec v := by\n        simp [Matrix.smul_mulVec]\n  exact h \u27e8c, hB_eq_cI\u27e9"
+    },
+    {
+      "id": "not_S_of_lt_3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.37,
+      "proof_length": 20,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any natural number k < 3, k \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any natural number $k < 3$, $k \\notin S$. -/)\n  (proof := /-- Since $k<3$, we have $k=0$, $k=1$ or $k=2$. In each case the conclusion follows from `not_S_zero`, `not_S_one` or `not_S_two` respectively. -/)]\nlemma not_S_of_lt_3 (k : \u2115) (hk : k < 3) : k \u2209 S := by\n  have hk2 : k \u2264 2 := Nat.le_of_lt_succ hk\n  have : k = 0 \u2228 k = 1 \u2228 k = 2 := by\n    omega\n  rcases this with (rfl|rfl|rfl)\n  \u00b7 exact not_S_zero\n  \u00b7 exact not_S_one\n  \u00b7 exact not_S_two"
+    },
+    {
+      "id": "not_S_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.74,
+      "proof_length": 53,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "1 \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $1 \\notin S$. -/)\n  (proof := /-- Suppose $1 \\in S$. Then there exists a family $A$ of $1 \\times 1$ real matrices (which are just scalars) satisfying the condition. Multiplication of $1 \\times 1$ matrices is commutative, so all $A_i$ pairwise commute. In particular $A_0$ and $A_2$ commute, but the condition requires that they do not commute because $2-0=2 \\notin \\{0,1,2024\\}$, a contradiction. -/)]\nlemma not_S_one : (1 : \u2115) \u2209 S := by\n  intro h\n  rcases h with \u27e8A, h\u27e9\n  have h02 : (0 : Fin 2025) \u2264 (2 : Fin 2025) := by decide\n  have hcomm : A (0 : Fin 2025) * A (2 : Fin 2025) = A (2 : Fin 2025) * A (0 : Fin 2025) := by\n    have hcomm_1x1 : \u2200 (A B : Matrix (Fin 1) (Fin 1) \u211d), A * B = B * A := by\n      intro A B\n      ext i j\n      fin_cases i <;> fin_cases j\n      simp [Matrix.mul_apply, mul_comm]\n    exact hcomm_1x1 (A (0 : Fin 2025)) (A (2 : Fin 2025))\n  have hmem : ((2 : Fin 2025).val - (0 : Fin 2025).val) \u2208 ({0, 1, 2024} : Set \u2115) :=\n    ((h (0 : Fin 2025) (2 : Fin 2025) h02).mp hcomm)\n  have sub_eq : ((2 : Fin 2025).val - (0 : Fin 2025).val) = 2 := by\n    decide\n  have not_mem : (2 : \u2115) \u2209 ({0, 1, 2024} : Set \u2115) := by decide\n  rw [sub_eq] at hmem\n  exact not_mem hmem"
+    },
+    {
+      "id": "not_S_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 20.3,
+      "proof_length": 105,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "2 \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $2 \\notin S$. -/)\n  (proof := /-- Suppose $2 \\in S$, so there exists $A \\colon \\operatorname{Fin} 2025 \\to \\operatorname{Mat}_{2\\times 2}(\\mathbb{R})$ with the stated property. Consider the three indices $0,1,2$. Because $1-0 = 1 \\in \\{0,1,2024\\}$, we have $A_0 A_1 = A_1 A_0$. Similarly $2-1 = 1 \\in \\{0,1,2024\\}$, so $A_1 A_2 = A_2 A_1$. If $A_1$ is not a scalar matrix, then by `centralizer_comm_of_non_scalar_2x2` the matrices $A_0$ and $A_2$ would commute. However $2-0=2 \\notin \\{0,1,2024\\}$, so the condition forces $A_0 A_2 \\neq A_2 A_0$, a contradiction. Hence $A_1$ must be a scalar matrix. Repeating the same argument with any consecutive triple shows that every $A_i$ is scalar. Consequently all $A_i$ commute, contradicting $A_0 A_2 \\neq A_2 A_0$. Therefore $2 \\notin S$. -/)]\nlemma not_S_two : (2 : \u2115) \u2209 S := by\n  intro hS\n  rcases hS with \u27e8A, hA\u27e9\n  have exists_adjacent (i : Fin 2025) : \u2203 (j k : Fin 2025), \n    (A j * A i = A i * A j) \u2227 (A k * A i = A i * A k) \u2227 \u00ac (A j * A k = A k * A j) := by\n    by_cases hi0 : i.val = 0\n    \u00b7 have hi0' : i = (0 : Fin 2025) := by\n        apply Fin.ext; exact hi0\n      subst hi0'\n      refine \u27e8(1 : Fin 2025), (2024 : Fin 2025), ?_, ?_, ?_\u27e9\n      \u00b7 -- A 1 * A 0 = A 0 * A 1\n        have hpos : (0 : Fin 2025) \u2264 (1 : Fin 2025) := by omega\n        have hmem : (1 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n        exact ((hA (0 : Fin 2025) (1 : Fin 2025) hpos).mpr hmem).symm\n      \u00b7 -- A 2024 * A 0 = A 0 * A 2024\n        have hpos : (0 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n        have hmem : (2024 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n        exact ((hA (0 : Fin 2025) (2024 : Fin 2025) hpos).mpr hmem).symm\n      \u00b7 -- \u00ac (A 1 * A 2024 = A 2024 * A 1)\n        intro h_eq\n        have hpos : (1 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n        have hmem' : (2024 : Fin 2025).val - (1 : Fin 2025).val \u2208 ({0,1,2024} : Set \u2115) :=\n          ((hA (1 : Fin 2025) (2024 : Fin 2025) hpos).mp h_eq)\n        have hdiff : (2024 : Fin 2025).val - (1 : Fin 2025).val = 2023 := by omega\n        rw [hdiff] at hmem'\n        have : (2023 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n        exact this hmem'\n    \u00b7 by_cases hi2024 : i.val = 2024\n      \u00b7 have hi2024' : i = (2024 : Fin 2025) := by\n          apply Fin.ext; exact hi2024\n        subst hi2024'\n        refine \u27e8(2023 : Fin 2025), (0 : Fin 2025), ?_, ?_, ?_\u27e9\n        \u00b7 -- A 2023 * A 2024 = A 2024 * A 2023\n          have hpos : (2023 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n          have hmem : (1 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n          exact ((hA (2023 : Fin 2025) (2024 : Fin 2025) hpos).mpr hmem)\n        \u00b7 -- A 0 * A 2024 = A 2024 * A 0\n          have hpos : (0 : Fin 2025) \u2264 (2024 : Fin 2025) := by omega\n          have hmem : (2024 : \u2115) \u2208 ({0,1,2024} : Set \u2115) := by simp\n          exact ((hA (0 : Fin 2025) (2024 : Fin 2025) hpos).mpr hmem)\n        \u00b7 -- \u00ac (A 2023 * A 0 = A 0 * A 2023)\n          intro h_eq\n          have hpos : (0 : Fin 2025) \u2264 (2023 : Fin 2025) := by omega\n          have hmem' : (2023 : Fin 2025).val - (0 : Fin 2025).val \u2208 ({0,1,2024} : Set \u2115) :=\n            ((hA (0 : Fin 2025) (2023 : Fin 2025) hpos).mp h_eq.symm)\n          have hdiff : (2023 : Fin 2025).val - (0 : Fin 2025).val = 2023 := by omega\n          rw [hdiff] at hmem'\n          have : (2023 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n          exact this hmem'\n      \u00b7 -- generic case: i.val between 1 and 2023\n        let j : Fin 2025 := \u27e8i.val - 1, by\n          have : i.val - 1 < 2025 := by omega\n          exact this\u27e9\n        let k : Fin 2025 := \u27e8i.val + 1, by\n          have : i.val + 1 < 2025 := by omega\n          exact this\u27e9\n        refine \u27e8j, k, ?_, ?_, ?_\u27e9\n        \u00b7 -- A j * A i = A i * A j\n          have hpos : j \u2264 i := by\n            rw [Fin.le_iff_val_le_val]\n            dsimp [j]\n            omega\n          have : i.val - j.val \u2208 ({0,1,2024} : Set \u2115) := by\n            simp [j]\n            omega\n          exact ((hA j i hpos).mpr this)\n        \u00b7 -- A k * A i = A i * A k\n          have hpos : i \u2264 k := by\n            rw [Fin.le_iff_val_le_val]\n            dsimp [k]\n            omega\n          have : k.val - i.val \u2208 ({0,1,2024} : Set \u2115) := by\n            simp [k]\n          exact ((hA i k hpos).mpr this).symm\n        \u00b7 -- \u00ac (A j * A k = A k * A j)\n          intro h_eq\n          -- choose ordering. Since j.val < k.val (difference 2), we have j \u2264 k.\n          have hpos : j \u2264 k := by\n            rw [Fin.le_iff_val_le_val]\n            dsimp [j, k]\n            omega\n          have hmem' : k.val - j.val \u2208 ({0,1,2024} : Set \u2115) :=\n            ((hA j k hpos).mp h_eq)\n          have hdiff : k.val - j.val = 2 := by\n            dsimp [j, k]\n            omega\n          rw [hdiff] at hmem'\n          have : (2 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n          exact this hmem'\n  -- Now we have exists_adjacent.\n  have h_all_scalar (i : Fin 2025) : \u2203 (c : \u211d), A i = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := by\n    by_contra! h_not_scalar\n    -- h_not_scalar : \u2200 c, A i \u2260 c \u2022 1\n    have h_not_ex : \u00ac \u2203 (c : \u211d), A i = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := by\n      intro h\n      rcases h with \u27e8c, hc\u27e9\n      exact h_not_scalar c hc\n    rcases exists_adjacent i with \u27e8j, k, h_comm_ij, h_comm_ik, h_notcomm_jk\u27e9\n    have h_comm_jk : A j * A k = A k * A j :=\n      centralizer_comm_of_non_scalar_2x2 (A i) h_not_ex (A j) (A k) h_comm_ij h_comm_ik\n    exact h_notcomm_jk h_comm_jk\n  -- Now we have that each A i is a scalar multiple of identity.\n  -- Show a contradiction by choosing two indices that are not adjacent.\n  -- Pick i=0, j=2.\n  have h0_scalar : \u2203 (c : \u211d), A (0 : Fin 2025) = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := h_all_scalar 0\n  have h2_scalar : \u2203 (c : \u211d), A (2 : Fin 2025) = c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d) := h_all_scalar 2\n  rcases h0_scalar with \u27e8c0, h0_eq\u27e9\n  rcases h2_scalar with \u27e8c2, h2_eq\u27e9\n  -- Then A 0 and A 2 commute because they are scalar multiples of identity (by scalar_commutes).\n  have h_comm : A (0 : Fin 2025) * A (2 : Fin 2025) = A (2 : Fin 2025) * A (0 : Fin 2025) := by\n    calc\n      A (0 : Fin 2025) * A (2 : Fin 2025) = (c0 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by rw [h0_eq, h2_eq]\n      _ = (c0 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := rfl\n      _ = (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * (c0 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by\n        rw [scalar_commutes c0 (c2 \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d))]\n      _ = A (2 : Fin 2025) * A (0 : Fin 2025) := by rw [h0_eq, h2_eq]\n  -- But the condition hA says that A 0 and A 2 do NOT commute because 2-0 = 2 \u2209 {0,1,2024}.\n  have hpos : (0 : Fin 2025) \u2264 (2 : Fin 2025) := by omega\n  have hdiff : (2 : Fin 2025).val - (0 : Fin 2025).val = 2 := by omega\n  have h_notmem : (2 : \u2115) \u2209 ({0,1,2024} : Set \u2115) := by decide\n  have h_notcomm : \u00ac (A (0 : Fin 2025) * A (2 : Fin 2025) = A (2 : Fin 2025) * A (0 : Fin 2025)) := by\n    intro h_eq\n    have hmem' : (2 : Fin 2025).val - (0 : Fin 2025).val \u2208 ({0,1,2024} : Set \u2115) :=\n      ((hA (0 : Fin 2025) (2 : Fin 2025) hpos).mp h_eq)\n    rw [hdiff] at hmem'\n    exact h_notmem hmem'\n  exact h_notcomm h_comm"
+    },
+    {
+      "id": "not_S_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 16.98,
+      "proof_length": 56,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "0 \u2209 S.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- $0 \\notin S$. -/)\n  (proof := /-- Suppose $0 \\in S$. Then there exists a family $A$ of $0 \\times 0$ matrices satisfying the condition. The only $0 \\times 0$ matrix is the unique matrix, so all $A_i$ are equal. In particular $A_0 = A_2$, hence $A_0 A_2 = A_2 A_0$. But the condition for $i=0,j=2$ requires $A_0 A_2 \\neq A_2 A_0$ because $2-0=2 \\notin \\{0,1,2024\\}$, a contradiction. -/)]\nlemma not_S_zero : (0 : \u2115) \u2209 S := by\n  intro h\n  rcases h with \u27e8A, hA\u27e9\n  have h0 : (0 : Fin 2025) \u2264 (2 : Fin 2025) := by decide\n  have hdiff : ((2 : Fin 2025).val - (0 : Fin 2025).val) \u2209 ({0, 1, 2024} : Set \u2115) := by\n    decide\n  have hA0 : A 0 = (0 : Matrix (Fin 0) (Fin 0) \u211d) := Subsingleton.elim _ _\n  have hA2 : A 2 = (0 : Matrix (Fin 0) (Fin 0) \u211d) := Subsingleton.elim _ _\n  have hcomm : (A 0) * (A 2) = (A 2) * (A 0) := by\n    simp [hA0, hA2]\n  have hiff := hA 0 2 h0\n  -- hiff : (A 0 * A 2 = A 2 * A 0 \u2194 (2:Fin 2025).val - (0:Fin 2025).val \u2208 ({0, 1, 2024} : Set \u2115))\n  have hmem := hiff.mp hcomm\n  exact hdiff hmem"
+    },
+    {
+      "id": "putnam_2025_a4",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 25,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Find the minimal value of k such that there exist k-by-k real matrices A_1, \u2026, A_{2025} with the property that A_i A_j = A_j A_i if and only if |i - j| \u2208 {0, 1, 2024}.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Find the minimal value of $k$ such that there exist $k$-by-$k$ real matrices $A_1, \\ldots, A_{2025}$ with the property that $A_i A_j = A_j A_i$ if and only if $|i - j| \\in \\{0, 1, 2024\\}$. -/)\n  (proof := /-- By `S_contains_3` we have $3 \\in S$, and by `S_lower_bound` every element of $S$ is at least $3$. Therefore $3$ is the least element of $S$. -/)]\ntheorem putnam_2025_a4 :\n  IsLeast {k : \u2115 | \u2203 A : Fin 2025 \u2192 Matrix (Fin k) (Fin k) \u211d,\n    \u2200 i j : Fin 2025, i \u2264 j \u2192\n      (A i * A j = A j * A i \u2194 j.val - i.val \u2208 ({0, 1, 2024} : Set \u2115))}\n  ((3) : \u2115 ) := by\n  constructor\n  \u00b7 exact S_contains_3\n  \u00b7 intro k hk\n    exact S_lower_bound k hk"
+    },
+    {
+      "id": "scalar_commutes",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.98,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For any scalar c \u2208 \u211d and any 2 \u00d7 2 real matrix M, (c I_2) M = M (c I_2).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any scalar $c \\in \\mathbb{R}$ and any $2 \\times 2$ real matrix $M$, $(c I_2) M = M (c I_2)$. -/)\n  (proof := /-- Direct computation using the definition of scalar multiplication and matrix multiplication. -/)]\nlemma scalar_commutes (c : \u211d) (M : Matrix (Fin 2) (Fin 2) \u211d) : (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * M = M * (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by\n  calc\n    (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) * M = c \u2022 (1 * M) := by\n      simp\n    _ = c \u2022 M := by simp\n    _ = c \u2022 (M * 1) := by simp\n    _ = M * (c \u2022 (1 : Matrix (Fin 2) (Fin 2) \u211d)) := by simp"
+    }
+  ],
+  "edges": [
+    {
+      "source": "not_S_of_lt_3",
+      "target": "S_lower_bound",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "commute_of_both_commute",
+      "target": "centralizer_comm_of_non_scalar_2x2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_independent_vector",
+      "target": "centralizer_span",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "centralizer_span",
+      "target": "commute_of_both_commute",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_S_one",
+      "target": "not_S_of_lt_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_S_two",
+      "target": "not_S_of_lt_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_S_zero",
+      "target": "not_S_of_lt_3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "scalar_commutes",
+      "target": "not_S_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "centralizer_comm_of_non_scalar_2x2",
+      "target": "not_S_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_contains_3",
+      "target": "putnam_2025_a4",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_lower_bound",
+      "target": "putnam_2025_a4",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

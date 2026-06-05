@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">PutnamBench 2016-B3. 564 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item current">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item current">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+<a href="../iter7/" class="nav-item">8</a>
+<a href="../iter8/" class="nav-item">9</a>
+<a href="../iter9/" class="nav-item">10</a>
+<a href="../iter10/" class="nav-item">11</a>
+<a href="../iter11/" class="nav-item">12</a>
+<a href="../iter12/" class="nav-item">13</a>
+<a href="../iter13/" class="nav-item">14</a>
+<a href="../iter14/" class="nav-item">15</a>
+<a href="../iter15/" class="nav-item">16</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "all_collinear_of_all_area_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If every triangle with vertices in S has area zero, then any three points of S are collinear.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If every triangle with vertices in S has area zero, then any three points of S are collinear. -/)\n  (proof := /-- Apply `collinear_of_area_zero` to each triple. -/)]\nlemma all_collinear_of_all_area_zero (S : Finset (Fin 2 \u2192 \u211d))\n    (hzero : \u2200 A \u2208 S, \u2200 B \u2208 S, \u2200 C \u2208 S, MeasureTheory.volume (convexHull \u211d {A, B, C}) = 0) :\n    \u2200 A \u2208 S, \u2200 B \u2208 S, \u2200 C \u2208 S, C \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) := by\n  intro A hA B hB C hC\n  have harea := hzero A hA B hB C hC\n  exact collinear_of_area_zero A B C harea"
+    },
+    {
+      "id": "area_anticomplementary",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The area of the anticomplementary triangle of ABC is four times the area of ABC.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- The area of the anticomplementary triangle of ABC is four times the area of ABC. -/)\n  (proof := /-- Translate A to origin: set u = B-A, v = C-A. Then anticomplementary vertices become 0, -2u, -2v after translation. Use `area_scaled` and translation invariance. -/)]\nlemma area_anticomplementary (A B C : Fin 2 \u2192 \u211d) : MeasureTheory.volume (convexHull \u211d {B + C - A, A + C - B, A + B - C}) = 4 * MeasureTheory.volume (convexHull \u211d {A, B, C}) := by\n  sorry_using []"
+    },
+    {
+      "id": "collinear_case_triangle",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If S is a finite set of collinear points (any three points are in the affine span of two), there exists a triangle of area 4 that covers S.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If S is a finite set of collinear points (any three points are in the affine span of two), there exists a triangle of area 4 that covers S. -/)\n  (proof := /-- Cases on S empty or nonempty. If empty, use `empty_case_triangle`. If nonempty, use `collinear_extreme_points` to get P,Q covering S. If P=Q (S is a singleton), use `empty_case_triangle` or direct construction. If P\u2260Q, use `triangle_covering_segment` to get C, then triangle PQC works. -/)]\nlemma collinear_case_triangle (S : Finset (Fin 2 \u2192 \u211d)) (hcollinear : \u2200 A \u2208 S, \u2200 B \u2208 S, \u2200 C \u2208 S, C \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d))) :\n    \u2203 A' B' C' : Fin 2 \u2192 \u211d, MeasureTheory.volume (convexHull \u211d {A', B', C'}) = 4 \u2227 convexHull \u211d {A', B', C'} \u2287 (S : Set (Fin 2 \u2192 \u211d)) := by\n  by_cases hS_empty : S = \u2205\n  \u00b7 exact empty_case_triangle S hS_empty\n  \u00b7 have hS_nonempty : S.Nonempty := Finset.nonempty_iff_ne_empty.mpr hS_empty\n    rcases collinear_extreme_points S hS_nonempty hcollinear with \u27e8P, Q, hcover\u27e9\n    -- hcover : convexHull \u211d {P, Q} \u2287 (S : Set (Fin 2 \u2192 \u211d))\n    by_cases hPQ_eq : P = Q\n    \u00b7 subst hPQ_eq\n      have hS_sub_singleton : (S : Set (Fin 2 \u2192 \u211d)) \u2286 ({P} : Set (Fin 2 \u2192 \u211d)) := by\n        have h_eq : convexHull \u211d ({P, P} : Set (Fin 2 \u2192 \u211d)) = ({P} : Set (Fin 2 \u2192 \u211d)) := by simp\n        simpa [h_eq] using hcover\n      let Q' : Fin 2 \u2192 \u211d := fun i => P i + 1\n      have hQ'_ne_P : Q' \u2260 P := by\n        intro h\n        have h0 : Q' 0 = P 0 := congr_fun h 0\n        simp [Q'] at h0\n      rcases triangle_covering_segment P Q' hQ'_ne_P.symm with \u27e8C, hvol, hseg\u27e9\n      -- hseg: convexHull \u211d {P, Q'} \u2286 convexHull \u211d {P, Q', C}\n      have hP_in_seg : ({P} : Set (Fin 2 \u2192 \u211d)) \u2286 convexHull \u211d {P, Q'} := by\n        have hP_mem : P \u2208 convexHull \u211d {P, Q'} := by\n          rw [convexHull_pair (E := Fin 2 \u2192 \u211d) P Q']\n          exact left_mem_segment \u211d (E := Fin 2 \u2192 \u211d) P Q'\n        intro x hx\n        simp at hx\n        subst hx\n        exact hP_mem\n      refine \u27e8P, Q', C, hvol, ?_\u27e9\n      -- need convexHull \u211d {P, Q', C} \u2287 (S : Set (Fin 2 \u2192 \u211d))\n      apply Set.Subset.trans ?_ hseg\n      -- need (S : Set ...) \u2286 convexHull \u211d {P, Q'}\n      apply Set.Subset.trans hS_sub_singleton hP_in_seg\n    \u00b7 -- P \u2260 Q\n      rcases triangle_covering_segment P Q hPQ_eq with \u27e8C, hvol, hseg\u27e9\n      refine \u27e8P, Q, C, hvol, ?_\u27e9\n      exact Set.Subset.trans hcover hseg"
+    },
+    {
+      "id": "collinear_extreme_points",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If S is a nonempty finite set of points in \u211d\u00b2 that are collinear (any three points are in the affine span of two), then there exist points P,Q (possibly equal) such that the convex hull of {P,Q} contains S.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If S is a nonempty finite set of points in \u211d\u00b2 that are collinear (any three points are in the affine span of two), then there exist points P,Q (possibly equal) such that the convex hull of {P,Q} contains S. -/)\n  (proof := /-- Choose a direction vector from any two distinct points, then take min and max of dot product. -/)]\nlemma collinear_extreme_points (S : Finset (Fin 2 \u2192 \u211d)) (hS_nonempty : S.Nonempty)\n    (hcollinear : \u2200 A \u2208 S, \u2200 B \u2208 S, \u2200 C \u2208 S, C \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d))) :\n    \u2203 (P Q : Fin 2 \u2192 \u211d), convexHull \u211d {P, Q} \u2287 (S : Set (Fin 2 \u2192 \u211d)) := by\n  by_cases h : \u2203 (A : Fin 2 \u2192 \u211d), A \u2208 S \u2227 \u2203 (B : Fin 2 \u2192 \u211d), B \u2208 S \u2227 A \u2260 B\n  \u00b7 rcases h with \u27e8A, hA, B, hB, hAB\u27e9\n    let v := B - A\n    have hC_eq : \u2200 C \u2208 S, \u2203 (r : \u211d), C = A + r \u2022 v := by\n      intro C hC\n      have hC_line : C \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) := hcollinear A hA B hB C hC\n      have hC_eq' : C = (C - A) +\u1d65 A := by\n        simpa using (vsub_vadd C A).symm\n      have hC_line' : (C - A) +\u1d65 A \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) := by\n        rw [\u2190 hC_eq']\n        exact hC_line\n      rcases (vadd_left_mem_affineSpan_pair.mp hC_line') with \u27e8r, hr\u27e9\n      use r\n      calc\n        C = A + (C - A) := by simp\n        _ = A + r \u2022 (B -\u1d65 A) := by\n          rw [\u2190 hr]\n        _ = A + r \u2022 (B - A) := by simp\n        _ = A + r \u2022 v := rfl\n    have hC_eq' : \u2200 C \u2208 S, \u2203 (r : \u211d), C = A + r \u2022 v := hC_eq\n    let r_fun (x : S) : \u211d := (hC_eq' x.1 x.2).choose\n    have hr_fun_eq (x : S) : x.1 = A + (r_fun x) \u2022 v := (hC_eq' x.1 x.2).choose_spec\n    have h_attach_nonempty : S.attach.Nonempty := Finset.Nonempty.attach hS_nonempty\n    let r_min := Finset.min' (S.attach.image r_fun) (by\n      have : (S.attach.image r_fun).Nonempty := Finset.Nonempty.image h_attach_nonempty r_fun\n      exact this)\n    let r_max := Finset.max' (S.attach.image r_fun) (by\n      have : (S.attach.image r_fun).Nonempty := Finset.Nonempty.image h_attach_nonempty r_fun\n      exact this)\n    have hr_min_le (x : S) : r_min \u2264 r_fun x := by\n      apply Finset.min'_le\n      apply Finset.mem_image.mpr\n      exact \u27e8x, Finset.mem_attach _ _, rfl\u27e9\n    have hr_fun_le_max (x : S) : r_fun x \u2264 r_max := by\n      apply Finset.le_max'\n      apply Finset.mem_image.mpr\n      exact \u27e8x, Finset.mem_attach _ _, rfl\u27e9\n    obtain \u27e8x0, hx0\u27e9 := hS_nonempty\n    let x0_subtype : S := \u27e8x0, hx0\u27e9\n    have h_rmin_le_rmax : r_min \u2264 r_max := by\n      calc\n        r_min \u2264 r_fun x0_subtype := hr_min_le x0_subtype\n        _ \u2264 r_max := hr_fun_le_max x0_subtype\n    by_cases h_eq : r_min = r_max\n    \u00b7 -- all points equal\n      let P := A + r_min \u2022 v\n      let Q := A + r_max \u2022 v\n      have hQ_eq_P : Q = P := by\n        dsimp [Q, P]\n        rw [h_eq]\n      refine \u27e8P, Q, ?_\u27e9\n      intro x hx\n      let x_subtype : S := \u27e8x, hx\u27e9\n      have hx_eq : x = P := by\n        calc\n          x = A + (r_fun x_subtype) \u2022 v := hr_fun_eq x_subtype\n          _ = A + r_min \u2022 v := by\n            have : r_fun x_subtype = r_min := le_antisymm (by\n              calc\n                r_fun x_subtype \u2264 r_max := hr_fun_le_max x_subtype\n                _ = r_min := h_eq.symm\n              ) (hr_min_le x_subtype)\n            rw [this]\n          _ = P := rfl\n      rw [hx_eq]\n      have h_convexHull_eq : convexHull \u211d {P, P} = {P} := by\n        calc\n          convexHull \u211d {P, P} = convexHull \u211d {P} := by simp\n          _ = {P} := convexHull_singleton P\n      -- rewrite Q to P\n      rw [hQ_eq_P]\n      rw [h_convexHull_eq]\n      exact Set.mem_setOf_eq.mpr rfl\n    \u00b7 have h_rmin_lt_rmax : r_min < r_max := by\n        by_contra! hle\n        have : r_min = r_max := le_antisymm h_rmin_le_rmax hle\n        exact h_eq this\n      have hpos : 0 < r_max - r_min := sub_pos.mpr h_rmin_lt_rmax\n      let P := A + r_min \u2022 v\n      let Q := A + r_max \u2022 v\n      refine \u27e8P, Q, ?_\u27e9\n      intro x hx\n      let x_subtype : S := \u27e8x, hx\u27e9\n      let t := (r_fun x_subtype - r_min) / (r_max - r_min)\n      have ht_nonneg : 0 \u2264 t := by\n        apply div_nonneg (sub_nonneg.mpr (hr_min_le x_subtype))\n        exact sub_nonneg.mpr h_rmin_le_rmax\n      have ht_le_one : t \u2264 1 := by\n        have hnum : r_fun x_subtype - r_min \u2264 r_max - r_min := by\n          nlinarith [hr_fun_le_max x_subtype]\n        exact (div_le_one (by exact hpos)).mpr hnum\n      have hA_eq : (1 - t) \u2022 A + t \u2022 A = A := by\n        calc\n          (1 - t) \u2022 A + t \u2022 A = ((1 - t) + t) \u2022 A := by rw [add_smul]\n          _ = 1 \u2022 A := by simp\n          _ = A := by simp\n      have hx_eq_segment : (1 - t) \u2022 P + t \u2022 Q = x := by\n        calc\n          (1 - t) \u2022 P + t \u2022 Q = (1 - t) \u2022 (A + r_min \u2022 v) + t \u2022 (A + r_max \u2022 v) := rfl\n          _ = ((1 - t) \u2022 A + (1 - t) \u2022 (r_min \u2022 v)) + (t \u2022 A + t \u2022 (r_max \u2022 v)) := by\n            simp [add_smul, smul_add]\n          _ = (((1 - t) \u2022 A + t \u2022 A) + ((1 - t) \u2022 (r_min \u2022 v) + t \u2022 (r_max \u2022 v))) := by abel\n          _ = (A + ((1 - t) * r_min + t * r_max) \u2022 v) := by\n            -- use hA_eq and similar for scalar multiplication\n            simp [hA_eq, add_smul, smul_add, mul_smul]\n          _ = A + ((1 - t) * r_min + t * r_max) \u2022 v := rfl\n          _ = A + (r_min + t * (r_max - r_min)) \u2022 v := by ring\n          _ = A + (r_min + ((r_fun x_subtype - r_min) / (r_max - r_min)) * (r_max - r_min)) \u2022 v := by\n            dsimp [t]\n          _ = A + (r_min + (r_fun x_subtype - r_min)) \u2022 v := by\n            field_simp [hpos.ne']\n          _ = A + (r_fun x_subtype) \u2022 v := by ring\n          _ = x := (hr_fun_eq x_subtype).symm\n      have hx_in_segment : x \u2208 segment \u211d P Q := by\n        refine \u27e81 - t, t, ?_, ht_nonneg, ?_, hx_eq_segment\u27e9\n        \u00b7 -- 0 \u2264 1 - t\n          nlinarith\n        \u00b7 -- (1 - t) + t = 1\n          ring\n      rw [convexHull_pair]\n      exact hx_in_segment\n  \u00b7 rcases hS_nonempty with \u27e8P, hP\u27e9\n    refine \u27e8P, P, ?_\u27e9\n    intro x hx\n    have hx_eq : x = P := by\n      have : \u2200 A \u2208 S, \u2200 B \u2208 S, A = B := by\n        intro A hA B hB\n        by_contra! hne\n        exact h \u27e8A, hA, B, hB, hne\u27e9\n      exact this x hx P hP\n    rw [hx_eq]\n    have : convexHull \u211d ({P, P} : Set (Fin 2 \u2192 \u211d)) = {P} := by\n      calc\n        convexHull \u211d ({P, P} : Set (Fin 2 \u2192 \u211d)) = convexHull \u211d ({P} : Set (Fin 2 \u2192 \u211d)) := by\n          simp\n        _ = {P} := convexHull_singleton P\n    rw [this]\n    exact Set.mem_setOf_eq.mpr rfl"
+    },
+    {
+      "id": "collinear_of_area_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#ef4444",
+      "status": "negated",
+      "link": null,
+      "type": "lemma",
+      "statement": "If the volume of triangle ABC is zero, then C lies in the affine span of A and B (i.e., A,B,C are collinear).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "-- This lemma's stated form is FALSE. Goedel-Architect closed its negation\n-- (below), flagging the statement for repair in the next refinement step.\n\ntheorem collinear_of_area_zero_negation : \u00ac (\u2200 (A B C : Fin 2 \u2192 \u211d) (harea : MeasureTheory.volume (convexHull \u211d {A, B, C}) = 0), C \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d))) := by\n  intro h\n  let A : Fin 2 \u2192 \u211d := fun _ => 0\n  let B : Fin 2 \u2192 \u211d := fun _ => 0\n  let C : Fin 2 \u2192 \u211d := fun i => if i = 0 then 1 else 0\n  have hCneA : C \u2260 A := by\n    intro h_eq\n    have h0 : C 0 = A 0 := congrArg (fun f => f 0) h_eq\n    simp [A, C] at h0\n  have harea : MeasureTheory.volume (convexHull \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d))) = 0 := by\n    have hline : (affineSpan \u211d ({A, C} : Set (Fin 2 \u2192 \u211d))) \u2260 \u22a4 := by\n      intro htop\n      let p : Fin 2 \u2192 \u211d := fun i => if i = 1 then 1 else 0\n      have hp_not_mem : p \u2209 (affineSpan \u211d ({A, C} : Set (Fin 2 \u2192 \u211d))) := by\n        intro hp_mem\n        rcases ((mem_affineSpan_iff_exists (k := \u211d) (p := p) (s := ({A, C} : Set (Fin 2 \u2192 \u211d)))).mp hp_mem) with \u27e8p1, hp1, v, hv, h_eq\u27e9\n        have hp1_val : p 1 = 1 := by simp [p]\n        have hsecond : p 1 = 0 := by\n          calc\n            p 1 = (v +\u1d65 p1) 1 := by rw [h_eq]\n            _ = v 1 + p1 1 := rfl\n            _ = 0 + 0 := by\n              have hv1 : v 1 = 0 := by\n                rcases ((mem_vectorSpan_pair (k := \u211d) (p\u2081 := A) (p\u2082 := C)).mp hv) with \u27e8r, hr\u27e9\n                calc\n                  v 1 = (r \u2022 (A -\u1d65 C)) 1 := by rw [hr]\n                  _ = r * ((A -\u1d65 C) 1) := by simp\n                  _ = r * 0 := by simp [A, C]\n                  _ = 0 := by ring\n              have hp1_1 : p1 1 = 0 := by\n                rcases hp1 with (hp1 | hp1)\n                \u00b7 -- hp1 : p1 = A\n                  simp [hp1, A]\n                \u00b7 -- hp1 : p1 \u2208 {C}\n                  have hp1' : p1 = C := hp1\n                  simp [hp1', C]\n              simp [hv1, hp1_1]\n            _ = 0 := by simp\n        rw [hp1_val] at hsecond\n        linarith\n      have hp_mem_top : p \u2208 (\u22a4 : AffineSubspace \u211d (Fin 2 \u2192 \u211d)) := by trivial\n      rw [\u2190 htop] at hp_mem_top\n      exact hp_not_mem hp_mem_top\n    have hsubset : convexHull \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) \u2286 (affineSpan \u211d ({A, C} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d)) := by\n      intro x hx\n      have hset : ({A, B, C} : Set (Fin 2 \u2192 \u211d)) = ({A, C} : Set (Fin 2 \u2192 \u211d)) := by\n        ext y; simp [A, B, C]\n      rw [hset] at hx\n      have hsub' : convexHull \u211d ({A, C} : Set (Fin 2 \u2192 \u211d)) \u2286 (affineSpan \u211d ({A, C} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d)) :=\n        convexHull_subset_affineSpan ({A, C} : Set (Fin 2 \u2192 \u211d))\n      exact hsub' hx\n    have hzero : MeasureTheory.volume ((affineSpan \u211d ({A, C} : Set (Fin 2 \u2192 \u211d))) : Set (Fin 2 \u2192 \u211d)) = 0 :=\n      MeasureTheory.Measure.addHaar_affineSubspace (\u03bc := MeasureTheory.volume) (affineSpan \u211d ({A, C} : Set (Fin 2 \u2192 \u211d))) hline\n    exact MeasureTheory.measure_mono_null hsubset hzero\n  have hmem : C \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) := h A B C harea\n  have hmem' : C \u2209 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) := by\n    have hspan_eq : (affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d)) = {A} := by\n      have : ({A, B} : Set (Fin 2 \u2192 \u211d)) = {A} := by\n        ext y; simp [A, B]\n      rw [this]\n      simpa using (AffineSubspace.coe_affineSpan_singleton A)\n    have : C \u2209 (affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d)) := by\n      rw [hspan_eq]\n      simp [hCneA]\n    exact this\n  exact hmem' hmem"
+    },
+    {
+      "id": "contains_S_in_anticomplementary",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If ABC is a triangle of maximal area among triangles with vertices in S and has positive area, then S is contained in the anticomplementary triangle of ABC.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If ABC is a triangle of maximal area among triangles with vertices in S and has positive area, then S is contained in the anticomplementary triangle of ABC. -/)\n  (proof := /-- Suppose X \u2208 S. If X lies outside the anticomplementary triangle, then area of triangle XBC > area(ABC), contradicting maximality. Similarly for XAC, XAB. Therefore X must be inside. This argument requires positive area to ensure strict inequality. -/)]\nlemma contains_S_in_anticomplementary (S : Finset (Fin 2 \u2192 \u211d)) (A B C : Fin 2 \u2192 \u211d) (hA : A \u2208 S) (hB : B \u2208 S) (hC : C \u2208 S)\n    (hpos : 0 < MeasureTheory.volume (convexHull \u211d {A, B, C}))\n    (hmax : \u2200 A' \u2208 S, \u2200 B' \u2208 S, \u2200 C' \u2208 S, MeasureTheory.volume (convexHull \u211d {A', B', C'}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C})) :\n    (S : Set (Fin 2 \u2192 \u211d)) \u2286 convexHull \u211d {B + C - A, A + C - B, A + B - C} := by\n  sorry_using []"
+    },
+    {
+      "id": "empty_case_triangle",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If S is empty, there exists a triangle of area 4 covering S.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- If S is empty, there exists a triangle of area 4 covering S. -/)\n  (proof := /-- Use `volume_right_triangle` and trivial containment. -/)]\nlemma empty_case_triangle (S : Finset (Fin 2 \u2192 \u211d)) (hS_empty : S = \u2205) : \u2203 A' B' C' : Fin 2 \u2192 \u211d, MeasureTheory.volume (convexHull \u211d {A', B', C'}) = 4 \u2227 convexHull \u211d {A', B', C'} \u2287 (S : Set (Fin 2 \u2192 \u211d)) := by\n  subst hS_empty\n  refine \u27e8![(0:\u211d), (0:\u211d)], ![(2:\u211d), (0:\u211d)], ![(0:\u211d), (4:\u211d)], ?_, ?_\u27e9\n  \u00b7 exact volume_right_triangle\n  \u00b7 simp"
+    },
+    {
+      "id": "exists_triangle_area_four_containing",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any triangle ABC with positive area at most 4, there exists a triangle A'B'C' that contains ABC and has area exactly 4.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For any triangle ABC with positive area at most 4, there exists a triangle A'B'C' that contains ABC and has area exactly 4. -/)\n  (proof := /-- Scale ABC by factor sqrt(4/area) about the centroid. The resulting triangle has area 4, contains ABC because scaling factor \u2265 1. -/)]\nlemma exists_triangle_area_four_containing (A B C : Fin 2 \u2192 \u211d) (hpos : 0 < MeasureTheory.volume (convexHull \u211d {A, B, C}))\n    (hle4 : MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 4) : \u2203 (A' B' C' : Fin 2 \u2192 \u211d),\n    MeasureTheory.volume (convexHull \u211d {A', B', C'}) = 4 \u2227 convexHull \u211d {A, B, C} \u2286 convexHull \u211d {A', B', C'} := by\n  sorry_using []"
+    },
+    {
+      "id": "max_area_triangle_exists",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If S is a nonempty finite set of points in the plane, there exists a triangle with vertices in S of maximal area.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- If S is a nonempty finite set of points in the plane, there exists a triangle with vertices in S of maximal area. -/)\n  (proof := /-- Since S is finite, the set of triples (A,B,C) from S is finite, and area is a nonnegative real, we can use `Finset.max` on the finite set of areas. -/)]\nlemma max_area_triangle_exists (S : Finset (Fin 2 \u2192 \u211d)) (hS_nonempty : S.Nonempty) :\n    \u2203 A \u2208 S, \u2203 B \u2208 S, \u2203 C \u2208 S, \u2200 A' \u2208 S, \u2200 B' \u2208 S, \u2200 C' \u2208 S,\n      MeasureTheory.volume (convexHull \u211d {A', B', C'}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := by\n  -- choose a point in S without consuming hS_nonempty\n  let x := hS_nonempty.choose\n  have hx : x \u2208 S := hS_nonempty.choose_spec\n  -- define the set of all triples\n  let triples : Finset ((Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d)) :=\n    Finset.product S (Finset.product S S)\n  -- function computing area\n  let area : (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d) \u2192 ENNReal :=\n    \u03bb ((A,B,C) : (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d)) => MeasureTheory.volume (convexHull \u211d {A, B, C})\n  -- triples is nonempty because S is nonempty\n  have h_triples_nonempty : triples.Nonempty := by\n    have hS_prod_nonempty : (Finset.product S S).Nonempty :=\n      Finset.Nonempty.product hS_nonempty hS_nonempty\n    exact Finset.Nonempty.product hS_nonempty hS_prod_nonempty\n  -- the set of areas is nonempty\n  let areas : Finset ENNReal := Finset.image area triples\n  have h_areas_nonempty : areas.Nonempty :=\n    h_triples_nonempty.image area\n  -- get max area\n  let M := areas.max' h_areas_nonempty\n  have hM_mem : M \u2208 areas := Finset.max'_mem _ h_areas_nonempty\n  -- from hM_mem, there exists a triple (A,B,C) such that area (A,B,C) = M\n  rcases Finset.mem_image.1 hM_mem with \u27e8\u27e8A, B, C\u27e9, htriple, hM_eq\u27e9\n  -- Now A, B, C are in S because triples is product of S\n  have hA : A \u2208 S := by\n    rcases Finset.mem_product.1 htriple with \u27e8hA, hBC\u27e9\n    exact hA\n  have hB : B \u2208 S := by\n    rcases Finset.mem_product.1 htriple with \u27e8hA, hBC\u27e9\n    rcases Finset.mem_product.1 hBC with \u27e8hB, hC\u27e9\n    exact hB\n  have hC : C \u2208 S := by\n    rcases Finset.mem_product.1 htriple with \u27e8hA, hBC\u27e9\n    rcases Finset.mem_product.1 hBC with \u27e8hB, hC\u27e9\n    exact hC\n  refine \u27e8A, hA, B, hB, C, hC, ?_\u27e9\n  intro A' hA' B' hB' C' hC'\n  -- the triple (A',B',C') is in triples, so its area is \u2264 M\n  have h_triple' : (A', B', C') \u2208 triples := by\n    dsimp [triples]\n    simp [hA', hB', hC']\n  have h_area_le : area (A', B', C') \u2264 M := by\n    have : area (A', B', C') \u2208 areas := by\n      apply Finset.mem_image.mpr\n      exact \u27e8(A',B',C'), h_triple', rfl\u27e9\n    exact Finset.le_max' areas (area (A', B', C')) this\n  -- but M = area (A,B,C) by hM_eq\n  rw [\u2190 hM_eq] at h_area_le\n  exact h_area_le"
+    },
+    {
+      "id": "putnam_2016_b3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Original statement: Suppose S is a finite set of points in the plane such that any triangle with vertices in S has area at most 1. Then there exists a triangle of area 4 covering S.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- Original statement: Suppose S is a finite set of points in the plane such that any triangle with vertices in S has area at most 1. Then there exists a triangle of area 4 covering S. -/)\n  (proof := /-- Cases on S empty or nonempty. If empty, use `empty_case_triangle`. Otherwise, use `max_area_triangle_exists` to get a maximal area triangle ABC. If area(ABC)=0, then all triangles have area zero, so by `all_collinear_of_all_area_zero` we have collinearity, then `collinear_case_triangle` gives a triangle of area 4 covering S. If area(ABC)>0, then `contains_S_in_anticomplementary` says S is contained in the anticomplementary triangle T0 of ABC, whose area is 4*area(ABC) \u2264 4 by `area_anticomplementary`. Then `exists_triangle_area_four_containing` applied to T0 gives a triangle of area 4 containing T0, hence containing S. -/)]\ntheorem putnam_2016_b3\n(S : Finset (Fin 2 \u2192 \u211d))\n(hS : \u2200 A \u2208 S, \u2200 B \u2208 S, \u2200 C \u2208 S, MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 1)\n: \u2203 A' B' C' : Fin 2 \u2192 \u211d, MeasureTheory.volume (convexHull \u211d {A', B', C'}) = 4 \u2227 convexHull \u211d {A', B', C'} \u2287 S := by\n  rcases Finset.eq_empty_or_nonempty S with (hS_empty | hS_nonempty)\n  \u00b7 -- case S empty\n    rcases empty_case_triangle S hS_empty with \u27e8A', B', C', h_area, h_cover\u27e9\n    refine \u27e8A', B', C', h_area, ?_\u27e9\n    simpa using h_cover\n  \u00b7 -- case S nonempty\n    rcases max_area_triangle_exists S hS_nonempty with \u27e8A, hA, B, hB, C, hC, hmax\u27e9\n    by_cases hpos : 0 < MeasureTheory.volume (convexHull \u211d {A, B, C})\n    \u00b7 -- positive area\n      have hle1 : MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 1 := hS A hA B hB C hC\n      have h_area_anticomp : MeasureTheory.volume (convexHull \u211d {B + C - A, A + C - B, A + B - C}) = 4 * MeasureTheory.volume (convexHull \u211d {A, B, C}) :=\n        area_anticomplementary A B C\n      have hpos_anticomp : 0 < MeasureTheory.volume (convexHull \u211d {B + C - A, A + C - B, A + B - C}) := by\n        rw [h_area_anticomp]\n        apply ENNReal.mul_pos (by norm_num : (4 : ENNReal) \u2260 0) (ne_of_gt hpos)\n      have hle4_anticomp : MeasureTheory.volume (convexHull \u211d {B + C - A, A + C - B, A + B - C}) \u2264 4 := by\n        rw [h_area_anticomp]\n        calc\n          (4 : ENNReal) * MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 (4 : ENNReal) * 1 :=\n            mul_le_mul_of_nonneg_left hle1 (by norm_num : (0 : ENNReal) \u2264 4)\n          _ = (4 : ENNReal) := by norm_num\n      rcases exists_triangle_area_four_containing (B + C - A) (A + C - B) (A + B - C) hpos_anticomp hle4_anticomp with \u27e8A'', B'', C'', h_area'', h_cover_anticomp\u27e9\n      have h_cover_S : (S : Set (Fin 2 \u2192 \u211d)) \u2286 convexHull \u211d {B + C - A, A + C - B, A + B - C} :=\n        contains_S_in_anticomplementary S A B C hA hB hC hpos hmax\n      have h_final_cover : convexHull \u211d {A'', B'', C''} \u2287 S := by\n        -- from h_cover_S and h_cover_anticomp\n        exact Set.Subset.trans h_cover_S h_cover_anticomp\n      refine \u27e8A'', B'', C'', h_area'', h_final_cover\u27e9\n    \u00b7 -- area zero\n      have hzero_abc : MeasureTheory.volume (convexHull \u211d {A, B, C}) = 0 := by\n        have hxle : MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 0 := le_of_not_gt hpos\n        have hx0 : 0 \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := zero_le _\n        exact le_antisymm hxle hx0\n      have hzero : \u2200 A' \u2208 S, \u2200 B' \u2208 S, \u2200 C' \u2208 S, MeasureTheory.volume (convexHull \u211d {A', B', C'}) = 0 := by\n        intro A' hA' B' hB' C' hC'\n        have hle : MeasureTheory.volume (convexHull \u211d {A', B', C'}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := hmax A' hA' B' hB' C' hC'\n        have h_nonneg : 0 \u2264 MeasureTheory.volume (convexHull \u211d {A', B', C'}) := zero_le _\n        -- from hle and hzero_abc, we get volume(...) \u2264 0, so equality to 0\n        have hle0 : MeasureTheory.volume (convexHull \u211d {A', B', C'}) \u2264 0 := by\n          -- hle gives \u2264 volume(ABC), which is 0\n          -- we have hzero_abc\n          calc\n            MeasureTheory.volume (convexHull \u211d {A', B', C'}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := hle\n            _ = 0 := hzero_abc\n        exact le_antisymm hle0 h_nonneg\n      have hcollinear : \u2200 A \u2208 S, \u2200 B \u2208 S, \u2200 C \u2208 S, C \u2208 affineSpan \u211d ({A, B} : Set (Fin 2 \u2192 \u211d)) :=\n        all_collinear_of_all_area_zero S hzero\n      rcases collinear_case_triangle S hcollinear with \u27e8A', B', C', h_area', h_cover'\u27e9\n      refine \u27e8A', B', C', h_area', ?_\u27e9\n      simpa using h_cover'"
+    },
+    {
+      "id": "triangle_covering_segment",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any two distinct points P,Q, there exists a point C such that the triangle PQC has area 4 and contains the segment PQ.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any two distinct points P,Q, there exists a point C such that the triangle PQC has area 4 and contains the segment PQ. -/)\n  (proof := /-- Let d = Q-P, perp d = (d[1], -d[0]), set C = P + (8/(d\u00b7d)) \u2022 perp d. Then use `volume_triangle` to compute area. -/)]\nlemma triangle_covering_segment (P Q : Fin 2 \u2192 \u211d) (hne : P \u2260 Q) : \u2203 (C : Fin 2 \u2192 \u211d),\n    MeasureTheory.volume (convexHull \u211d {P, Q, C}) = 4 \u2227 convexHull \u211d {P, Q} \u2286 convexHull \u211d {P, Q, C} := by\n  set u := Q - P with hu\n  have hne_u : u \u2260 0 := by\n    intro hzero\n    apply hne\n    ext i\n    have hi : u i = 0 := by simpa [u] using congr_fun hzero i\n    have hsub : Q i - P i = 0 := by simpa [u] using hi\n    linarith\n  have norm_sq_pos : u 0 * u 0 + u 1 * u 1 \u2260 0 := by\n    intro h\n    apply hne_u\n    ext i\n    have h00 : u 0 = 0 := by\n      nlinarith [sq_nonneg (u 0), sq_nonneg (u 1), h]\n    have h01 : u 1 = 0 := by\n      nlinarith [sq_nonneg (u 0), sq_nonneg (u 1), h]\n    fin_cases i <;> simp [h00, h01]\n  set a := (8 : \u211d) / (u 0 * u 0 + u 1 * u 1) with ha\n  set v : Fin 2 \u2192 \u211d := fun i => match i with\n    | 0 => a * u 1\n    | 1 => a * (-u 0) with hv\n  set C := P + v with hC\n  have hQ_eq : Q = P + u := by\n    ext i\n    simp [u]\n  have hC_eq : C = P + v := rfl\n  have hcalc : -((8 : \u211d) / (u 0 * u 0 + u 1 * u 1)) * (u 0 * u 0 + u 1 * u 1) = -8 := by\n    field_simp [norm_sq_pos]\n    have hd_sq : u 0 ^ 2 + u 1 ^ 2 \u2260 0 := by\n      intro hzero\n      apply norm_sq_pos\n      nlinarith\n    field_simp [hd_sq]\n  have hdet_val : Matrix.det ![u, v] = -8 := by\n    calc\n      Matrix.det ![u, v] = u 0 * v 1 - u 1 * v 0 := by\n        simp [Matrix.det_fin_two]\n      _ = u 0 * (a * (-u 0)) - u 1 * (a * u 1) := by\n        simp [v, hv]\n      _ = -a * (u 0 * u 0 + u 1 * u 1) := by ring\n      _ = -((8 : \u211d) / (u 0 * u 0 + u 1 * u 1)) * (u 0 * u 0 + u 1 * u 1) := rfl\n      _ = -8 := hcalc\n  have habs : |Matrix.det ![u, v]| = 8 := by\n    rw [hdet_val]\n    simp\n  have hvol0 : MeasureTheory.volume (convexHull \u211d {0, u, v}) = (4 : ENNReal) := by\n    calc\n      MeasureTheory.volume (convexHull \u211d {0, u, v}) = ENNReal.ofReal (|Matrix.det ![u, v]| / 2) := volume_triangle u v\n      _ = ENNReal.ofReal (8 / 2) := by rw [habs]\n      _ = ENNReal.ofReal (4 : \u211d) := by norm_num\n      _ = (4 : ENNReal) := by norm_num\n  have hvol : MeasureTheory.volume (convexHull \u211d {P, Q, C}) = (4 : ENNReal) := by\n    calc\n      MeasureTheory.volume (convexHull \u211d {P, Q, C}) = MeasureTheory.volume (convexHull \u211d {P, P+u, P+v}) := by\n        simp [hQ_eq, hC_eq]\n      _ = MeasureTheory.volume (convexHull \u211d {0, u, v}) := volume_triangle_translate P u v\n      _ = (4 : ENNReal) := hvol0\n  have hsub : convexHull \u211d {P, Q} \u2286 convexHull \u211d {P, Q, C} := by\n    apply convexHull_mono\n    intro x hx\n    simp at hx\n    rcases hx with (rfl|rfl)\n    \u00b7 simp\n    \u00b7 simp\n  refine \u27e8C, hvol, hsub\u27e9"
+    },
+    {
+      "id": "volume_right_triangle",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The right triangle with vertices (0,0),(2,0),(0,4) has area 4.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- The right triangle with vertices (0,0),(2,0),(0,4) has area 4. -/)\n  (proof := /-- Apply `volume_triangle` with u = (2,0), v = (0,4). Compute determinant. -/)]\nlemma volume_right_triangle : MeasureTheory.volume (convexHull \u211d {![(0 : \u211d), (0 : \u211d)], ![(2 : \u211d), (0 : \u211d)], ![(0 : \u211d), (4 : \u211d)]}) = (4 : ENNReal) := by\n  have h0 : (0 : Fin 2 \u2192 \u211d) = ![(0 : \u211d), (0 : \u211d)] := by\n    ext i; fin_cases i <;> simp\n  calc\n    MeasureTheory.volume (convexHull \u211d {![(0 : \u211d), (0 : \u211d)], ![(2 : \u211d), (0 : \u211d)], ![(0 : \u211d), (4 : \u211d)]})\n        = MeasureTheory.volume (convexHull \u211d {0, ![(2 : \u211d), (0 : \u211d)], ![(0 : \u211d), (4 : \u211d)]}) := by\n      -- rewrite using h0\n      simp [h0]\n    _ = ENNReal.ofReal (|Matrix.det ![ (![(2 : \u211d), (0 : \u211d)] : Fin 2 \u2192 \u211d), (![(0 : \u211d), (4 : \u211d)] : Fin 2 \u2192 \u211d)]| / 2) := by\n      apply volume_triangle ![(2 : \u211d), (0 : \u211d)] ![(0 : \u211d), (4 : \u211d)]\n    _ = ENNReal.ofReal ((|2*4 - 0*0|) / 2) := by\n      simp [Matrix.det_fin_two, Matrix.vecCons, Matrix.vecEmpty]\n    _ = ENNReal.ofReal ((|8|) / 2) := by ring\n    _ = ENNReal.ofReal (8/2) := by simp\n    _ = ENNReal.ofReal 4 := by norm_num\n    _ = (4 : ENNReal) := by norm_num"
+    },
+    {
+      "id": "volume_triangle",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any u v : Fin 2 \u2192 \u211d, the volume of the convex hull of {0, u, v} is ENNReal.ofReal (|Matrix.det ![u, v]| / 2).",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- For any u v : Fin 2 \u2192 \u211d, the volume of the convex hull of {0, u, v} is ENNReal.ofReal (|Matrix.det ![u, v]| / 2). -/)\n  (proof := /-- Use `parallelepiped_eq_convexHull` and `addHaar_parallelepiped` after establishing that `(Pi.basisFun \u211d (Fin 2)).addHaar = volume`. -/)]\nlemma volume_triangle (u v : Fin 2 \u2192 \u211d) : MeasureTheory.volume (convexHull \u211d {0, u, v}) = ENNReal.ofReal (|Matrix.det ![u, v]| / 2) := by\n  sorry_using []"
+    },
+    {
+      "id": "volume_triangle_translate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Volume of a triangle is invariant under translation.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- Volume of a triangle is invariant under translation. -/)\n  (proof := /-- Use `measurePreserving_add_left`. -/)]\nlemma volume_triangle_translate (A u v : Fin 2 \u2192 \u211d) : MeasureTheory.volume (convexHull \u211d {A, A+u, A+v}) = MeasureTheory.volume (convexHull \u211d {0, u, v}) := by\n  -- Translate the convex hull\n  have h_image_eq : (fun x : Fin 2 \u2192 \u211d => A + x) '' ({0, u, v} : Set (Fin 2 \u2192 \u211d)) = {A, A+u, A+v} := by\n    calc\n      (fun x => A + x) '' ({0, u, v} : Set (Fin 2 \u2192 \u211d)) = (fun x => A + x) '' (insert 0 {u, v}) := by simp\n      _ = insert ((fun x => A + x) 0) ((fun x => A + x) '' {u, v}) := by rw [Set.image_insert_eq]\n      _ = insert (A + 0) ((fun x => A + x) '' {u, v}) := by rfl\n      _ = insert A ((fun x => A + x) '' {u, v}) := by simp\n      _ = insert A {A+u, A+v} := by\n        simp [Set.image_insert_eq, Set.image_singleton]\n      _ = {A, A+u, A+v} := by simp\n  have h_image_convexHull : convexHull \u211d {A, A+u, A+v} = (fun x : Fin 2 \u2192 \u211d => A + x) '' (convexHull \u211d {0, u, v}) := by\n    calc\n      convexHull \u211d {A, A+u, A+v} = convexHull \u211d ((fun x => A + x) '' {0, u, v}) := by rw [h_image_eq]\n      _ = (fun x => A + x) '' (convexHull \u211d {0, u, v}) := by\n        simpa using (AffineMap.image_convexHull ((AffineEquiv.constVAdd \u211d (Fin 2 \u2192 \u211d) A).toAffineMap) {0, u, v}).symm\n  -- Now use translation invariance of volume\n  have h_volume_translation : MeasureTheory.volume ((fun x : Fin 2 \u2192 \u211d => A + x) '' (convexHull \u211d {0, u, v})) = MeasureTheory.volume (convexHull \u211d {0, u, v}) := by\n    calc\n      MeasureTheory.volume ((fun x : Fin 2 \u2192 \u211d => A + x) '' (convexHull \u211d {0, u, v})) = \n        MeasureTheory.volume ((fun x : Fin 2 \u2192 \u211d => -A + x) \u207b\u00b9' (convexHull \u211d {0, u, v})) := by\n        apply congrArg MeasureTheory.volume\n        ext x; constructor; intro h; rcases h with \u27e8y, hy, hxy\u27e9; \n        have hxy' : A + y = x := by simpa using hxy\n        have hx : -A + x = y := by\n          calc\n            -A + x = -A + (A + y) := by rw [hxy']\n            _ = (-A + A) + y := by abel\n            _ = 0 + y := by simp\n            _ = y := by simp\n        have : -A + x \u2208 convexHull \u211d {0, u, v} := by\n          rw [hx]\n          exact hy\n        exact this\n        intro h\n        have hmem : -A + x \u2208 convexHull \u211d {0, u, v} := h\n        refine \u27e8-A + x, hmem, ?_\u27e9\n        calc\n          A + (-A + x) = (A + -A) + x := by abel\n          _ = 0 + x := by simp\n          _ = x := by simp\n      _ = MeasureTheory.volume (convexHull \u211d {0, u, v}) := by\n        rw [MeasureTheory.measure_preimage_add MeasureTheory.volume (-A) (convexHull \u211d {0, u, v})]\n  -- Combine\n  rw [h_image_convexHull, h_volume_translation]"
+    }
+  ],
+  "edges": [
+    {
+      "source": "collinear_of_area_zero",
+      "target": "all_collinear_of_all_area_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "empty_case_triangle",
+      "target": "collinear_case_triangle",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "collinear_extreme_points",
+      "target": "collinear_case_triangle",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "triangle_covering_segment",
+      "target": "collinear_case_triangle",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_right_triangle",
+      "target": "empty_case_triangle",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "max_area_triangle_exists",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "contains_S_in_anticomplementary",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "area_anticomplementary",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_triangle_area_four_containing",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "all_collinear_of_all_area_zero",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "collinear_case_triangle",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "empty_case_triangle",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_triangle",
+      "target": "triangle_covering_segment",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_triangle_translate",
+      "target": "triangle_covering_segment",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_triangle",
+      "target": "volume_right_triangle",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

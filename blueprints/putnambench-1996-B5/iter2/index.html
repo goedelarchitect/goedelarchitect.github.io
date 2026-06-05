@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">PutnamBench 1996-B5. 190 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item current">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item current">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+<a href="../iter7/" class="nav-item">8</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "A",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A n is the number of balanced strings of length n with nonnegative prefix sums.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- A n is the number of balanced strings of length n with nonnegative prefix sums. -/)]\nnoncomputable def A (n : \u2115) : \u2115 := by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_nonneg S)).card"
+    },
+    {
+      "id": "C",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "C n is the number of balanced strings of length n with prefix sums bounded by 1 in absolute value.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- C n is the number of balanced strings of length n with prefix sums bounded by 1 in absolute value. -/)]\nnoncomputable def C (n : \u2115) : \u2115 := by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (\u03bb S => balanced_cond S \u2227 prefixes_abs_le_one S)).card"
+    },
+    {
+      "id": "a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "a n is the number of balanced strings of length n.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- a n is the number of balanced strings of length n. -/)]\nnoncomputable def a (n : \u2115) : \u2115 := by\n  classical\n  exact ((Finset.univ : Finset (Fin n \u2192 \u2124\u02e3)).filter (balanced_cond (n := n))).card"
+    },
+    {
+      "id": "a_closed_form",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For all n, a n equals the closed form 2^{\u230a(n+2)/2\u230b} + 2^{\u230a(n+1)/2\u230b} - 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all n, a n equals the closed form 2^{\u230a(n+2)/2\u230b} + 2^{\u230a(n+1)/2\u230b} - 2. -/)\n  (proof := /-- By induction on n using the recurrence a_{n+2}=2*a_n+2 and the base cases a_0=1, a_1=2. -/)]\nlemma a_closed_form (n : \u2115) : a n = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115) n := by\n  have helper_even (k : \u2115) : 2 ^ ((2*k+2+2)/2) + 2 ^ ((2*k+2+1)/2) = 2*(2 ^ ((2*k+2)/2) + 2 ^ ((2*k+1)/2)) := by\n    have h1 : (2*k+2+2)/2 = k+2 := by omega\n    have h2 : (2*k+2+1)/2 = k+1 := by omega\n    have h3 : (2*k+2)/2 = k+1 := by omega\n    have h4 : (2*k+1)/2 = k := by omega\n    simp [h1, h2, h3, h4]\n    ring\n  have helper_odd (k : \u2115) : 2 ^ ((2*k+1+2+2)/2) + 2 ^ ((2*k+1+2+1)/2) = 2*(2 ^ ((2*k+1+2)/2) + 2 ^ ((2*k+1+1)/2)) := by\n    have h1 : (2*k+1+2+2)/2 = k+2 := by omega\n    have h2 : (2*k+1+2+1)/2 = k+2 := by omega\n    have h3 : (2*k+1+2)/2 = k+1 := by omega\n    have h4 : (2*k+1+1)/2 = k+1 := by omega\n    simp [h1, h2, h3, h4]\n    ring\n  have g_recurrence (n : \u2115) : 2 ^ ((n+2+2)/2) + 2 ^ ((n+2+1)/2) = 2*(2 ^ ((n+2)/2) + 2 ^ ((n+1)/2)) := by\n    rcases Nat.even_or_odd n with (\u27e8k, h\u27e9 | \u27e8k, h\u27e9)\n    \u00b7 have hn2k : n = 2*k := by omega\n      rw [hn2k]\n      exact helper_even k\n    \u00b7 have hn2k1 : n = 2*k+1 := by omega\n      rw [hn2k1]\n      exact helper_odd k\n  have sum_ge_two (n : \u2115) : 2 \u2264 2 ^ ((n+2)/2) + 2 ^ ((n+1)/2) := by\n    have h1 : 1 \u2264 2 ^ ((n+2)/2) := Nat.one_le_two_pow (n := ((n+2)/2))\n    have h2 : 1 \u2264 2 ^ ((n+1)/2) := Nat.one_le_two_pow (n := ((n+1)/2))\n    omega\n  have hf_recurrence (n : \u2115) : (2 ^ ((n+2+2)/2) + 2 ^ ((n+2+1)/2) - 2) = 2*(2 ^ ((n+2)/2) + 2 ^ ((n+1)/2) - 2) + 2 := by\n    have hg := g_recurrence n\n    have hsum1 : 2 \u2264 2 ^ ((n+2+2)/2) + 2 ^ ((n+2+1)/2) := sum_ge_two (n+2)\n    have hsum2 : 2 \u2264 2 ^ ((n+2)/2) + 2 ^ ((n+1)/2) := sum_ge_two n\n    omega\n  induction n using Nat.strong_induction_on with\n  | h n ih =>\n    match n with\n    | 0 => \n      simp [a_zero]\n    | 1 => \n      simp [a_one]\n    | n+2 =>\n      have hrec : a (n+2) = 2*a n + 2 := a_recurrence n\n      rw [hrec]\n      have h_ih_n : a n = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115) n := ih n (by omega)\n      rw [h_ih_n]\n      dsimp\n      apply Eq.symm (hf_recurrence n)"
+    },
+    {
+      "id": "a_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a 1 = 2 (both X and O are balanced).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- a 1 = 2 (both X and O are balanced). -/)\n  (proof := /-- For strings of length 1, each substring is either the whole string or a single symbol. The absolute value of \u0394 is 1, so both are balanced. There are 2 strings. -/)]\nlemma a_one : a 1 = 2 := by\n  have balanced_cond_all (f : Fin 1 \u2192 \u2124\u02e3) : balanced_cond f := by\n    intro a b hle\n    have hsub : Subsingleton (Fin 1) := subsingleton_fin_one\n    have ha0 : a = (0 : Fin 1) := hsub.elim a (0 : Fin 1)\n    have hb0 : b = (0 : Fin 1) := hsub.elim b (0 : Fin 1)\n    subst ha0; subst hb0\n    have hval : (f 0 : \u2124\u02e3) = 1 \u2228 (f 0 : \u2124\u02e3) = -1 := Int.units_eq_one_or (f 0)\n    rcases hval with (h | h)\n    \u00b7 have hval' : (f 0 : \u2124) = 1 := by simpa [h]\n      simp [hval']\n    \u00b7 have hval' : (f 0 : \u2124) = -1 := by simpa [h]\n      simp [hval']\n  unfold a\n  classical\n    have hfilter : (Finset.univ : Finset (Fin 1 \u2192 \u2124\u02e3)).filter (balanced_cond (n := 1)) = (Finset.univ : Finset (Fin 1 \u2192 \u2124\u02e3)) := by\n      ext f; constructor\n      \u00b7 intro h; exact Finset.mem_univ _\n      \u00b7 intro h; apply Finset.mem_filter.mpr; exact \u27e8Finset.mem_univ _, balanced_cond_all f\u27e9\n    rw [hfilter]\n    simp [Fintype.card_fun, Fintype.card_fin, Fintype.card_units_int]"
+    },
+    {
+      "id": "a_recurrence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any n, a_{n+2} = 2*a_n + 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- For any n, a_{n+2} = 2*a_n + 2. -/)\n  (proof := /-- From partition_formula and a_step_two: a (n+2) + 2 = 2*(a n + 2). -/)]\nlemma a_recurrence (n : \u2115) : a (n+2) = 2 * a n + 2 := by\n  have h1 := partition_formula n\n  have h2 := a_step_two n\n  linarith"
+    },
+    {
+      "id": "a_step_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a (n+2) + 2 = 4*A n + 2*C n.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint\n  (statement := /-- a (n+2) + 2 = 4*A n + 2*C n. -/)\n  (proof := /-- By combinatorial decomposition of balanced strings of length n+2. -/)]\nlemma a_step_two (n : \u2115) : a (n+2) + 2 = 4 * A n + 2 * C n := by\n  sorry_using [a, A, C, balanced_cond, prefixes_nonneg, prefixes_abs_le_one, partition_formula]"
+    },
+    {
+      "id": "a_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a 0 = 1 (the empty string is balanced).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint\n  (statement := /-- a 0 = 1 (the empty string is balanced). -/)\n  (proof := /-- By definition, the only string of length 0 is the empty function, which trivially satisfies balanced_cond. -/)]\nlemma a_zero : a 0 = 1 := by\n  unfold a\n  classical\n  have h : (Finset.univ.filter (balanced_cond (n := 0))) = Finset.univ := by\n    ext S; simp [balanced_cond]\n  rw [h]\n  simp"
+    },
+    {
+      "id": "balanced_cond",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A string S of length n (represented as Fin n \u2192 \u2124\u02e3, where X \u21a6 1, O \u21a6 -1) is balanced if every substring T has |\u0394(T)| \u2264 2, i.e., for all a \u2264 b, |\u2211 i \u2208 Finset.Icc a b, (S i : \u2124)| \u2264 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- A string S of length n (represented as Fin n \u2192 \u2124\u02e3, where X \u21a6 1, O \u21a6 -1) is balanced if every substring T has |\u0394(T)| \u2264 2, i.e., for all a \u2264 b, |\u2211 i \u2208 Finset.Icc a b, (S i : \u2124)| \u2264 2. -/)]\ndef balanced_cond {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Prop :=\n  \u2200 a b : Fin n, a \u2264 b \u2192 |(\u2211 i \u2208 Finset.Icc a b, (S i : \u2124))| \u2264 2"
+    },
+    {
+      "id": "card_main_eq_a",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The cardinality of the set of balanced strings (using the given balanced predicate) equals a n.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- The cardinality of the set of balanced strings (using the given balanced predicate) equals a n. -/)\n  (proof := /-- By `hbalanced` and `h\u0394`, `balanced S` is equivalent to `balanced_cond S`. Therefore the set {S | balanced S} equals {S | balanced_cond S}. Hence their cardinalities are equal. -/)]\nlemma card_main_eq_a (n : \u2115) (\u0394 : (Fin n \u2192 \u2124\u02e3) \u2192 Fin n \u2192 Fin n \u2192 \u2124) (balanced : (Fin n \u2192 \u2124\u02e3) \u2192 Prop)\n  (h\u0394 : \u2200 S, \u2200 a b, a \u2264 b \u2192 \u0394 S a b = \u2211 i \u2208 Finset.Icc a b, (S i : \u2124))\n  (hbalanced : \u2200 S, balanced S \u2194 \u2200 a b, a \u2264 b \u2192 |\u0394 S a b| \u2264 2) :\n  {S : Fin n \u2192 \u2124\u02e3 | balanced S}.ncard = a n := by\n  have h_iff : \u2200 S, balanced S \u2194 balanced_cond S := by\n    intro S\n    constructor\n    \u00b7 intro h\n      intro a b hle\n      have h' := (hbalanced S).mp h a b hle\n      rw [h\u0394 S a b hle] at h'\n      exact h'\n    \u00b7 intro h\n      apply (hbalanced S).mpr\n      intro a b hle\n      rw [h\u0394 S a b hle]\n      exact h a b hle\n  have hset : {S | balanced S} = {S | balanced_cond S} := by\n    ext S\n    constructor\n    \u00b7 exact (h_iff S).mp\n    \u00b7 exact (h_iff S).mpr\n  rw [hset]\n  unfold a\n  have hfinite : ({S : Fin n \u2192 \u2124\u02e3 | balanced_cond S} : Set (Fin n \u2192 \u2124\u02e3)).Finite := Set.toFinite _\n  haveI : Fintype ({S : Fin n \u2192 \u2124\u02e3 | balanced_cond S} : Set (Fin n \u2192 \u2124\u02e3)) := hfinite.fintype\n  rw [Set.ncard_eq_toFinset_card (s := {S | balanced_cond S}) (hs := hfinite)]\n  rw [Set.Finite.toFinset_eq_toFinset hfinite]\n  classical\n    rw [Set.toFinset_setOf]"
+    },
+    {
+      "id": "partition_formula",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "a n + 2 = 2*A n + C n.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint\n  (statement := /-- a n + 2 = 2*A n + C n. -/)\n  (proof := /-- By combinatorial decomposition of balanced strings. -/)]\nlemma partition_formula (n : \u2115) : a n + 2 = 2 * A n + C n := by\n  sorry_using [a, A, C, balanced_cond, prefixes_nonneg, prefixes_abs_le_one]"
+    },
+    {
+      "id": "prefixes_abs_le_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A string S has prefix sums bounded by 1 in absolute value.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- A string S has prefix sums bounded by 1 in absolute value. -/)]\ndef prefixes_abs_le_one {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Prop :=\n  \u2200 b : Fin n, |\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)| \u2264 1"
+    },
+    {
+      "id": "prefixes_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "A string S has nonnegative prefix sums.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- A string S has nonnegative prefix sums. -/)]\ndef prefixes_nonneg {n : \u2115} (S : Fin n \u2192 \u2124\u02e3) : Prop :=\n  \u2200 b : Fin n, (\u2211 i \u2208 ((Finset.univ : Finset (Fin n)).filter (\u03bb i => i \u2264 b)), (S i : \u2124)) \u2265 0"
+    },
+    {
+      "id": "putnam_1996_b5",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The original problem statement.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- The original problem statement. -/)\n  (proof := /-- By `card_main_eq_a`, the left side equals `a n`. By `a_closed_form`, `a n` equals the closed form expression. -/)]\ntheorem putnam_1996_b5\n    (n : \u2115)\n    (\u0394 : (Fin n \u2192 \u2124\u02e3) \u2192 Fin n \u2192 Fin n \u2192 \u2124)\n    (balanced : (Fin n \u2192 \u2124\u02e3) \u2192 Prop)\n    (h\u0394 : \u2200 S, \u2200 a b, a \u2264 b \u2192 \u0394 S a b = \u2211 i \u2208 Finset.Icc a b, (S i : \u2124))\n    (hbalanced : \u2200 S, balanced S \u2194 \u2200 a b, a \u2264 b \u2192 |\u0394 S a b| \u2264 2) :\n    {S : Fin n \u2192 \u2124\u02e3 | balanced S}.ncard = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115 ) n := by\n  calc\n    {S : Fin n \u2192 \u2124\u02e3 | balanced S}.ncard = a n := by\n      exact card_main_eq_a n \u0394 balanced h\u0394 hbalanced\n    _ = ((fun n : \u2115 \u21a6 2 ^ \u230a(n + 2) / 2\u230b\u208a + 2 ^ \u230a(n + 1) / 2\u230b\u208a - 2) : \u2115 \u2192 \u2115) n := by\n      rw [a_closed_form n]"
+    }
+  ],
+  "edges": [
+    {
+      "source": "a",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_recurrence",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_zero",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_one",
+      "target": "a_closed_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "a_one",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "partition_formula",
+      "target": "a_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_step_two",
+      "target": "a_recurrence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "partition_formula",
+      "target": "a_step_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "a_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "a_zero",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "card_main_eq_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "card_main_eq_a",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "A",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "C",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "balanced_cond",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_nonneg",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prefixes_abs_le_one",
+      "target": "partition_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "card_main_eq_a",
+      "target": "putnam_1996_b5",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_closed_form",
+      "target": "putnam_1996_b5",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

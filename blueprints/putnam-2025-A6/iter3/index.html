@@ -1,0 +1,2121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">Putnam 2025 A6. 1,340 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item current">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item current">4</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "P_strong",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, there exists odd t such that P_k = 1 + 2^(k+1)*t.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- For k\u22651, there exists odd t such that P_k = 1 + 2^(k+1)*t. -/)\n  (proof := /-- Induction using block_product_congruence. -/)]\nlemma P_strong (k : \u2115) (hk : 1 \u2264 k) : \u2203 t : \u2124, (Finset.prod (Finset.Ico 1 (2 ^ k)) (fun i => (4 * b i + 1))) = 1 + (2 : \u2124)^(k+1) * t \u2227 t % 2 = 1 := by\n  refine Nat.le_induction ?base ?step k hk\n  \u00b7 -- base k=1\n    refine \u27e81, ?_, ?_\u27e9\n    \u00b7 calc\n        (Finset.prod (Finset.Ico 1 (2 ^ 1)) (fun i => (4 * b i + 1))) = (Finset.prod (Finset.Ico (1 : \u2115) 2) (fun i => (4 * b i + 1))) := by norm_num\n        _ = (4 * b 1 + 1) := by\n          simp\n        _ = 5 := by\n          simp [b]\n        _ = 1 + (2 : \u2124) ^ (1+1) * 1 := by norm_num\n    \u00b7 norm_num\n  \u00b7 intro m hm IH\n    have hm' : 1 \u2264 m := hm\n    rcases IH with \u27e8t, hPm, htodd\u27e9\n    -- hPm : product over Ico 1 (2^m) = 1 + (2:\u2124)^(m+1)*t\n    -- htodd : t % 2 = 1\n    have h_t_eq : t = 2 * (t / 2) + 1 := by\n      have h := Int.ediv_add_emod t 2\n      -- h: 2*(t/2) + t%2 = t\n      calc\n        t = 2*(t/2) + t%2 := by linarith\n        _ = 2*(t/2) + 1 := by rw [htodd]\n    set u := t / 2 with hu_def\n    have hu : t = 2*u + 1 := h_t_eq\n\n    -- get r from block_product_congruence\n    have hcongr := block_product_congruence m hm'\n    rcases hcongr.dvd with \u27e8c, hc\u27e9\n    -- hc : (Finset.prod (Finset.Ico 1 (2^m)) (fun i => (4 * b i + 1))) - (Finset.prod (Finset.Ico (2^m) (2^(m+1))) (fun i => (4 * b i + 1))) = (2 : \u2124)^(m+3) * c\n    set A := Finset.prod (Finset.Ico 1 (2^m)) (fun i => (4 * b i + 1)) with hA_def\n    set Q := Finset.prod (Finset.Ico (2^m) (2^(m+1))) (fun i => (4 * b i + 1)) with hQ_def\n    have hQ_eq : Q = A + (2 : \u2124)^(m+3) * (-c) := by\n      linarith\n    have hA_eq : A = 1 + (2 : \u2124)^(m+1) * t := hPm\n\n    -- find v such that (t-1) + (2:\u2124)^m * t^2 = 2*v\n    have h_v_exists : \u2203 v : \u2124, (t-1) + (2 : \u2124)^m * t^2 = 2*v := by\n      have h1 : 2 \u2223 t - 1 := by\n        apply Int.dvd_of_emod_eq_zero\n        calc\n          (t - 1) % 2 = ((t % 2) - (1 % 2)) % 2 := by rw [Int.sub_emod]\n          _ = (1 - 1) % 2 := by rw [htodd, show (1 : \u2124) % 2 = 1 by norm_num]\n          _ = 0 := by norm_num\n      have h2 : 2 \u2223 (2 : \u2124)^m := by\n        have h_eq : (2 : \u2124)^m = 2 * (2 : \u2124)^(m-1) := by\n          calc\n            (2 : \u2124)^m = (2 : \u2124)^(1 + (m-1)) := by rw [Nat.add_sub_cancel' hm']\n            _ = (2 : \u2124)^(1) * (2 : \u2124)^(m-1) := by ring\n            _ = 2 * (2 : \u2124)^(m-1) := by norm_num\n        rw [h_eq]\n        exact \u27e8(2 : \u2124)^(m-1), rfl\u27e9\n      have h3 : 2 \u2223 (2 : \u2124)^m * t^2 := h2.mul_right (t^2)\n      have hsum : 2 \u2223 (t-1) + (2 : \u2124)^m * t^2 := dvd_add h1 h3\n      rcases hsum with \u27e8v, hv\u27e9\n      exact \u27e8v, hv\u27e9\n    rcases h_v_exists with \u27e8v, hv\u27e9\n    -- hv : (t-1) + (2 : \u2124)^m * t^2 = 2*v\n\n    -- compute A^2\n    have hA_sq : A^2 = 1 + (2 : \u2124)^(m+2) + (2 : \u2124)^(m+3) * v := by\n      calc\n        A^2 = ((1 + (2 : \u2124)^(m+1) * t)^2) := by rw [hA_eq]\n        _ = 1 + (2 : \u2124)^(m+2) * t + (2 : \u2124)^(2*m+2) * t^2 := by ring\n        _ = 1 + (2 : \u2124)^(m+2) * t + ((2 : \u2124)^(m+2) * (2 : \u2124)^m) * t^2 := by\n          ring\n        _ = 1 + (2 : \u2124)^(m+2) * (t + (2 : \u2124)^m * t^2) := by ring\n        _ = 1 + (2 : \u2124)^(m+2) * ((t-1) + (2 : \u2124)^m * t^2 + 1) := by ring\n        _ = 1 + (2 : \u2124)^(m+2) * (2*v + 1) := by\n          rw [hv]\n        _ = 1 + (2 : \u2124)^(m+2) + (2 : \u2124)^(m+3) * v := by ring\n\n    -- compute product over Ico 1 (2^(m+1))\n    have h_disjoint : Disjoint (Finset.Ico 1 (2^m)) (Finset.Ico (2^m) (2^(m+1))) := by\n      apply Finset.disjoint_left.mpr\n      intro x hx1 hx2\n      rcases Finset.mem_Ico.mp hx1 with \u27e8hx1l, hx1r\u27e9\n      rcases Finset.mem_Ico.mp hx2 with \u27e8hx2l, hx2r\u27e9\n      have : x < 2^m := hx1r\n      have : 2^m \u2264 x := hx2l\n      omega\n    have h_union : Finset.Ico 1 (2^(m+1 : \u2115)) = Finset.Ico 1 (2^m) \u222a Finset.Ico (2^m) (2^(m+1)) := by\n      symm\n      apply Finset.Ico_union_Ico_eq_Ico (Nat.one_le_two_pow) (Nat.pow_le_pow_right (by norm_num) (by omega : m \u2264 m+1))\n    have h_prod_union : (Finset.prod (Finset.Ico 1 (2^(m+1))) (fun i => (4 * b i + 1))) = A * Q := by\n      calc\n        (Finset.prod (Finset.Ico 1 (2^(m+1))) (fun i => (4 * b i + 1))) = \n          (Finset.prod ((Finset.Ico 1 (2^m)) \u222a (Finset.Ico (2^m) (2^(m+1)))) (fun i => (4 * b i + 1))) := by rw [h_union]\n        _ = (Finset.prod (Finset.Ico 1 (2^m)) (fun i => (4 * b i + 1))) * (Finset.prod (Finset.Ico (2^m) (2^(m+1))) (fun i => (4 * b i + 1))) := by\n          rw [Finset.prod_union h_disjoint]\n        _ = A * Q := by rfl\n\n    have hP_next : (Finset.prod (Finset.Ico 1 (2^(m+1))) (fun i => (4 * b i + 1))) = 1 + (2 : \u2124)^(m+2) * (1 + 2*(v + (-c) * A)) := by\n      calc\n        (Finset.prod (Finset.Ico 1 (2^(m+1))) (fun i => (4 * b i + 1))) = A * Q := h_prod_union\n        _ = A * (A + (2 : \u2124)^(m+3) * (-c)) := by rw [hQ_eq]\n        _ = A^2 + (2 : \u2124)^(m+3) * (-c) * A := by ring\n        _ = (1 + (2 : \u2124)^(m+2) + (2 : \u2124)^(m+3) * v) + (2 : \u2124)^(m+3) * (-c) * A := by rw [hA_sq]\n        _ = 1 + (2 : \u2124)^(m+2) + (2 : \u2124)^(m+3) * (v + (-c) * A) := by ring\n        _ = 1 + (2 : \u2124)^(m+2) * (1 + 2*(v + (-c) * A)) := by ring\n\n    set t' := 1 + 2*(v + (-c) * A) with ht'_def\n    have ht'_odd : t' % 2 = 1 := by\n      dsimp [t']\n      simp\n\n    refine \u27e8t', ?_, ht'_odd\u27e9\n    -- need to rewrite hP_next into the form 1 + (2:\u2124)^(m+1+1)*t'\n    -- note (2:\u2124)^(m+2) = (2:\u2124)^((m+1)+1) = (2:\u2124)^(m+1+1)\n    calc\n      (Finset.prod (Finset.Ico 1 (2^(m+1))) (fun i => (4 * b i + 1))) = 1 + (2 : \u2124)^(m+2) * (1 + 2*(v + (-c) * A)) := hP_next\n      _ = 1 + (2 : \u2124)^(m+1+1) * t' := by\n        dsimp [t']"
+    },
+    {
+      "id": "S_dvd",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, 2^(k-1) \u2223 S_k.",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- For k\u22651, 2^(k-1) \u2223 S_k. -/)\n  (proof := /-- Use sum_b_valuation and padicValInt_dvd_iff. -/)]\nlemma S_dvd (k : \u2115) (hk : 1 \u2264 k) : (2 : \u2124)^(k-1) \u2223 Finset.sum (Finset.Ico 1 (2 ^ k)) b := by\n  have hdiv := padicValInt_dvd (a := Finset.sum (Finset.Ico 1 (2 ^ k)) b) (p := 2)\n  have hval := sum_b_valuation k hk\n  rw [hval] at hdiv\n  exact hdiv"
+    },
+    {
+      "id": "S_not_dvd",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, 2^k does NOT divide S_k.",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- For k\u22651, 2^k does NOT divide S_k. -/)\n  (proof := /-- Use sum_b_valuation and padicValInt_dvd_iff. -/)]\nlemma S_not_dvd (k : \u2115) (hk : 1 \u2264 k) : \u00ac ((2 : \u2124)^k \u2223 Finset.sum (Finset.Ico 1 (2 ^ k)) b) := by\n  have hval := sum_b_valuation k hk\n  have hpos := sum_pos k hk\n  have hpos' : (Finset.sum (Finset.Ico 1 (2 ^ k)) b) \u2260 0 := by\n    linarith\n  have h_not_cond : \u00ac ((Finset.sum (Finset.Ico 1 (2 ^ k)) b) = 0 \u2228 k \u2264 padicValInt 2 (Finset.sum (Finset.Ico 1 (2 ^ k)) b)) := by\n    push_neg\n    constructor\n    \u00b7 exact hpos'\n    \u00b7 rw [hval]\n      omega\n  haveI : Fact (Nat.Prime 2) := \u27e8Nat.prime_two\u27e9\n  have h_iff := padicValInt_dvd_iff (p := 2) (n := k) (a := Finset.sum (Finset.Ico 1 (2 ^ k)) b)\n  apply mt h_iff.mp\n  exact h_not_cond"
+    },
+    {
+      "id": "S_odd_factor",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, S_k = 2^(k-1) * a with a odd.",
+      "is_main": false,
+      "col": 0,
+      "level": 7,
+      "lean": "@[blueprint (statement := /-- For k\u22651, S_k = 2^(k-1) * a with a odd. -/)\n  (proof := /-- Use S_dvd and S_not_dvd. -/)]\nlemma S_odd_factor (k : \u2115) (hk : 1 \u2264 k) : \u2203 a : \u2124, Finset.sum (Finset.Ico 1 (2 ^ k)) b = (2 : \u2124)^(k-1) * a \u2227 a % 2 = 1 := by\n  have h_dvd : (2 : \u2124)^(k-1) \u2223 Finset.sum (Finset.Ico 1 (2 ^ k)) b := S_dvd k hk\n  rcases h_dvd with \u27e8a, ha\u27e9\n  refine \u27e8a, ha, ?_\u27e9\n  by_contra! h\n  -- h: a % 2 \u2260 1\n  have ha_mod2_cases : a % 2 = 0 \u2228 a % 2 = 1 := Int.emod_two_eq_zero_or_one a\n  rcases ha_mod2_cases with (ha0 | ha1)\n  \u00b7 -- a%2 = 0\n    have ha_even : 2 \u2223 a := Int.dvd_of_emod_eq_zero ha0\n    rcases ha_even with \u27e8t, ht\u27e9\n    have hsum : Finset.sum (Finset.Ico 1 (2 ^ k)) b = (2 : \u2124)^k * t := by\n      calc\n        Finset.sum (Finset.Ico 1 (2 ^ k)) b = (2 : \u2124)^(k-1) * a := ha\n        _ = (2 : \u2124)^(k-1) * (2 * t) := by rw [ht]\n        _ = ((2 : \u2124)^(k-1) * 2) * t := by ring\n        _ = (2 : \u2124)^k * t := by\n          have h_eq : (2 : \u2124)^(k-1) * 2 = (2 : \u2124)^k := by\n            calc\n              (2 : \u2124)^(k-1) * 2 = (2 : \u2124)^(k-1) * (2 : \u2124)^(1 : \u2115) := by norm_num\n              _ = (2 : \u2124)^((k-1 : \u2115) + 1) := by rw [pow_add]\n              _ = (2 : \u2124)^k := by rw [Nat.sub_add_cancel hk]\n          rw [h_eq]\n    have h_dvd2 : (2 : \u2124)^k \u2223 Finset.sum (Finset.Ico 1 (2 ^ k)) b := by\n      rw [hsum]\n      exact \u27e8t, rfl\u27e9\n    exact S_not_dvd k hk h_dvd2\n  \u00b7 -- a%2 = 1, contradiction with h\n    exact h ha1"
+    },
+    {
+      "id": "a_seq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Define a sequence a_m = \u220f_{i=0}^{m-1} (2*d(i)+1).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- Define a sequence a_m = \u220f_{i=0}^{m-1} (2*d(i)+1). -/)]\ndef a_seq (m : \u2115) : \u2124 := Finset.prod (Finset.range m) fun i => (2 * d i + 1)"
+    },
+    {
+      "id": "a_seq_eq_prod",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "a_seq (2^k) = \u220f_{i \u2208 Ico 1 (2^k)} (4*b i + 1).",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- a_seq (2^k) = \u220f_{i \u2208 Ico 1 (2^k)} (4*b i + 1). -/)\n  (proof := /-- Combinatorial equality. -/)]\nlemma a_seq_eq_prod (k : \u2115) : a_seq (2 ^ k) = Finset.prod (Finset.Ico 1 (2 ^ k)) fun i => (4 * b i + 1) := by\n  have h_simplify : \u2200 i : \u2115, 2 * (2 * b i) + 1 = 4 * b i + 1 := by\n    intro i; ring\n  have h0_not_mem : 0 \u2209 Finset.Ico 1 (2 ^ k) := by simp\n  have h_disjoint : Disjoint (Finset.Ico 1 (2 ^ k)) ({0} : Finset \u2115) :=\n    (Finset.disjoint_singleton_left.mpr h0_not_mem).symm\n  have h_range_eq : Finset.range (2 ^ k) = Finset.Ico 1 (2 ^ k) \u222a {0} := by\n    ext i\n    simp [Finset.mem_range, Finset.mem_Ico, Finset.mem_insert, Finset.mem_union]\n    constructor\n    \u00b7 intro hi\n      by_cases hi0 : i = 0\n      \u00b7 exact Or.inl hi0\n      \u00b7 exact Or.inr \u27e8Nat.succ_le_of_lt (Nat.pos_of_ne_zero hi0), hi\u27e9\n    \u00b7 intro h\n      rcases h with (h0 | \u27e8h1, h2\u27e9)\n      \u00b7 subst h0; exact Nat.lt_of_lt_of_le (by norm_num) (Nat.one_le_two_pow (n := k))\n      \u00b7 exact h2\n  calc\n    a_seq (2 ^ k) = \u220f x \u2208 Finset.range (2 ^ k), (2 * (2 * b x) + 1) := by\n      simp [a_seq, d]\n    _ = \u220f x \u2208 Finset.range (2 ^ k), (4 * b x + 1) := by\n      simp [h_simplify]\n    _ = \u220f x \u2208 (Finset.Ico 1 (2 ^ k) \u222a {0}), (4 * b x + 1) := by rw [h_range_eq]\n    _ = (\u220f x \u2208 Finset.Ico 1 (2 ^ k), (4 * b x + 1)) * (\u220f x \u2208 ({0} : Finset \u2115), (4 * b x + 1)) := by\n      rw [Finset.prod_union h_disjoint]\n    _ = (\u220f x \u2208 Finset.Ico 1 (2 ^ k), (4 * b x + 1)) * (4 * b 0 + 1) := by simp\n    _ = (\u220f x \u2208 Finset.Ico 1 (2 ^ k), (4 * b x + 1)) * 1 := by simp [b]\n    _ = \u220f x \u2208 Finset.Ico 1 (2 ^ k), (4 * b x + 1) := by simp"
+    },
+    {
+      "id": "a_seq_succ",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Recurrence for a_seq.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Recurrence for a_seq. -/)\n  (proof := /-- Unfold product. -/)]\nlemma a_seq_succ (m : \u2115) : a_seq (m+1) = a_seq m * (2*d m + 1) := by\n  unfold a_seq\n  rw [Finset.prod_range_succ]"
+    },
+    {
+      "id": "b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "Sequence b defined by b_0 = 0 and b_{n+1} = 2*b_n^2 + b_n + 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Sequence b defined by b_0 = 0 and b_{n+1} = 2*b_n^2 + b_n + 1. -/)]\ndef b : \u2115 \u2192 \u2124\n| 0 => 0\n| n + 1 => 2 * (b n) ^ 2 + b n + 1"
+    },
+    {
+      "id": "b_double_mod_four_b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If 2\u2223b n, then b(2*n) \u2261 2*b n [ZMOD 4*b n].",
+      "is_main": false,
+      "col": 0,
+      "level": 14,
+      "lean": "@[blueprint (statement := /-- If 2\u2223b n, then b(2*n) \u2261 2*b n [ZMOD 4*b n]. -/)\n  (proof := /-- Use b_double_sub_eq_sum, congruence_term, sum_range_two_bsq_plus_one. -/)]\nlemma b_double_mod_four_b (n : \u2115) (hEven : 2 \u2223 b n) : b (2*n) \u2261 2*b n [ZMOD 4*b n] := by\n  have hsub : b (2*n) - b n = Finset.sum (Finset.range n) (fun i => 2*(b (n+i))^2 + 1) := b_double_sub_eq_sum n\n  have hsum : Finset.sum (Finset.range n) (fun i => 2*(b i)^2 + 1) = b n := sum_range_two_bsq_plus_one n\n  have hcongr_sum : (Finset.sum (Finset.range n) (fun i => 2*(b (n+i))^2 + 1)) \u2261 (Finset.sum (Finset.range n) (fun i => 2*(b i)^2 + 1)) [ZMOD (4*b n)] := by\n    apply Int.ModEq.sum\n    intro i hi\n    rw [Finset.mem_range] at hi\n    exact congruence_term n i hEven\n  have hS_eq_bn : (Finset.sum (Finset.range n) (fun i => 2*(b (n+i))^2 + 1)) \u2261 b n [ZMOD (4*b n)] :=\n    hcongr_sum.trans (by\n      simpa [hsum] using Int.ModEq.refl (b n))\n  have h_main : b (2*n) - 2*b n \u2261 0 [ZMOD 4*b n] := by\n    calc\n      b (2*n) - 2*b n = (b (2*n) - b n) - b n := by ring\n      _ = (Finset.sum (Finset.range n) (fun i => 2*(b (n+i))^2 + 1)) - b n := by rw [hsub]\n      _ \u2261 (b n) - b n [ZMOD 4*b n] := by\n        exact Int.ModEq.sub_right (b n) hS_eq_bn\n      _ = 0 := by ring\n      _ \u2261 0 [ZMOD 4*b n] := by rfl\n  calc\n    b (2*n) = (b (2*n) - 2*b n) + 2*b n := by ring\n    _ \u2261 (0 : \u2124) + 2*b n [ZMOD 4*b n] := by\n      exact Int.ModEq.add h_main (Int.ModEq.refl (2*b n))\n    _ = 2*b n := by ring\n    _ \u2261 2*b n [ZMOD 4*b n] := by rfl"
+    },
+    {
+      "id": "b_double_sub_eq_sum",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "b(2*n) - b n = sum_{i=0}^{n-1} (2*b(n+i)^2 + 1).",
+      "is_main": false,
+      "col": 0,
+      "level": 15,
+      "lean": "@[blueprint (statement := /-- b(2*n) - b n = sum_{i=0}^{n-1} (2*b(n+i)^2 + 1). -/)\n  (proof := /-- Use b_succ_sub and sum_Ico_telescope. -/)]\nlemma b_double_sub_eq_sum (n : \u2115) : b (2*n) - b n = Finset.sum (Finset.range n) (fun i => 2*(b (n+i))^2 + 1) := by\n  have sum_range_succ_shift (k : \u2115) (f : \u2115 \u2192 \u2124) : Finset.sum (Finset.range (k+1)) f = f 0 + Finset.sum (Finset.range k) (fun i => f (i+1)) := by\n    induction' k with m ih\n    \u00b7 simp\n    \u00b7 simp [Finset.sum_range_succ, ih, add_assoc]\n  have sum_range_shift_eq (k : \u2115) : Finset.sum (Finset.range k) (fun i => 2*(b (k+i+1))^2 + 1) = (Finset.sum (Finset.range k) (fun i => 2*(b (k+i))^2 + 1)) - (2*(b k)^2 + 1) + (2*(b (2*k))^2 + 1) := by\n    set f : \u2115 \u2192 \u2124 := fun i => 2*(b (k+i))^2 + 1\n    have hsum_succ : Finset.sum (Finset.range (k+1)) f = (Finset.sum (Finset.range k) f) + f k := by\n      rw [Finset.sum_range_succ]\n    have hsum_shift : Finset.sum (Finset.range (k+1)) f = f 0 + Finset.sum (Finset.range k) (fun i => f (i+1)) :=\n      sum_range_succ_shift k f\n    have hf0 : f 0 = 2*(b k)^2 + 1 := by\n      simp [f]\n    have hfk : f k = 2*(b (2*k))^2 + 1 := by\n      calc\n        f k = 2*(b (k + k))^2 + 1 := rfl\n        _ = 2*(b (2*k))^2 + 1 := by\n          have h : k + k = 2*k := by omega\n          rw [h]\n    calc\n      Finset.sum (Finset.range k) (fun i => 2*(b (k+i+1))^2 + 1) = Finset.sum (Finset.range k) (fun i => f (i+1)) := by\n        refine Finset.sum_congr rfl ?_\n        intro i hi\n        simp [f, add_assoc]\n      _ = (Finset.sum (Finset.range (k+1)) f) - f 0 := by\n        rw [hsum_shift]\n        ring\n      _ = ((Finset.sum (Finset.range k) f) + f k) - f 0 := by rw [hsum_succ]\n      _ = (Finset.sum (Finset.range k) f) - f 0 + f k := by ring\n      _ = (Finset.sum (Finset.range k) (fun i => 2*(b (k+i))^2 + 1)) - (2*(b k)^2 + 1) + (2*(b (2*k))^2 + 1) := by\n        simp [f, hf0, hfk]\n  induction' n with k ih\n  \u00b7 simp [b]\n  \u00b7 have h_succ_sub := b_succ_sub\n    have h_2k1 : b (2*k+1) - b (2*k) = 2*(b (2*k))^2 + 1 := h_succ_sub (2*k)\n    have h_2k2 : b (2*k+2) - b (2*k+1) = 2*(b (2*k+1))^2 + 1 := h_succ_sub (2*k+1)\n    have h_k1 : b (k+1) - b k = 2*(b k)^2 + 1 := h_succ_sub k\n    -- compute LHS expression\n    have hLHS : b (2*(k+1)) - b (k+1) = (b (2*k) - b k) + 2*(b (2*k+1))^2 + 2*(b (2*k))^2 - 2*(b k)^2 + 1 := by\n      calc\n        b (2*(k+1)) - b (k+1) = (b (2*k+2) - b (2*k)) - (b (k+1) - b k) + (b (2*k) - b k) := by ring\n        _ = ((b (2*k+2) - b (2*k+1)) + (b (2*k+1) - b (2*k))) - (b (k+1) - b k) + (b (2*k) - b k) := by ring\n        _ = ((2*(b (2*k+1))^2 + 1) + (2*(b (2*k))^2 + 1)) - (2*(b k)^2 + 1) + (b (2*k) - b k) := by rw [h_2k2, h_2k1, h_k1]\n        _ = (b (2*k) - b k) + 2*(b (2*k+1))^2 + 2*(b (2*k))^2 - 2*(b k)^2 + 1 := by ring\n    -- compute RHS expression\n    have hRHS : Finset.sum (Finset.range (k+1)) (fun i => 2*(b ((k+1)+i))^2 + 1) = (b (2*k) - b k) + 2*(b (2*k+1))^2 + 2*(b (2*k))^2 - 2*(b k)^2 + 1 := by\n      calc\n        Finset.sum (Finset.range (k+1)) (fun i => 2*(b ((k+1)+i))^2 + 1) = (Finset.sum (Finset.range k) (fun i => 2*(b ((k+1)+i))^2 + 1)) + (2*(b ((k+1)+k))^2 + 1) := by\n          rw [Finset.sum_range_succ]\n        _ = (Finset.sum (Finset.range k) (fun i => 2*(b (k+i+1))^2 + 1)) + (2*(b (2*k+1))^2 + 1) := by\n          have h1 : \u2200 i : \u2115, ((k+1)+i : \u2115) = k+i+1 := by omega\n          have h2 : ((k+1)+k : \u2115) = 2*k+1 := by omega\n          have h3 : (k + k + 1 : \u2115) = 2*k+1 := by omega\n          simp [h1, h2, h3]\n        _ = ((Finset.sum (Finset.range k) (fun i => 2*(b (k+i))^2 + 1)) - (2*(b k)^2 + 1) + (2*(b (2*k))^2 + 1)) + (2*(b (2*k+1))^2 + 1) := by\n          rw [sum_range_shift_eq k]\n        _ = (b (2*k) - b k) + 2*(b (2*k+1))^2 + 2*(b (2*k))^2 - 2*(b k)^2 + 1 := by\n          rw [ih]\n          ring\n    rw [hLHS, hRHS]"
+    },
+    {
+      "id": "b_mod_b",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "b(n+i) \u2261 b i [ZMOD b n] for all n,i.",
+      "is_main": false,
+      "col": 0,
+      "level": 16,
+      "lean": "@[blueprint (statement := /-- b(n+i) \u2261 b i [ZMOD b n] for all n,i. -/)\n  (proof := /-- Induction on n? -/)]\nlemma b_mod_b (n i : \u2115) : b (n + i) \u2261 b i [ZMOD b n] := by\n  induction' i with k ih generalizing n\n  \u00b7 -- base i = 0\n    rw [Int.modEq_iff_dvd]\n    simp [b]\n  \u00b7 -- inductive step\n    have h : b (n + k) \u2261 b k [ZMOD b n] := ih n\n    calc\n      b (n + (k+1)) = b ((n + k) + 1) := by ring\n      _ = 2 * (b (n + k)) ^ 2 + b (n + k) + 1 := by rw [b]\n      _ \u2261 2 * (b k) ^ 2 + b k + 1 [ZMOD b n] := by\n        have h_sq : (b (n + k)) ^ 2 \u2261 (b k) ^ 2 [ZMOD b n] := h.pow 2\n        have h_mul : 2 * (b (n + k)) ^ 2 \u2261 2 * (b k) ^ 2 [ZMOD b n] := by\n          simpa using h_sq.mul_left 2\n        have h_lin : b (n + k) \u2261 b k [ZMOD b n] := h\n        have h_sum : 2 * (b (n + k)) ^ 2 + b (n + k) \u2261 2 * (b k) ^ 2 + b k [ZMOD b n] := by\n          exact h_mul.add h_lin\n        have h_one : (1 : \u2124) \u2261 (1 : \u2124) [ZMOD b n] := by rfl\n        exact h_sum.add h_one\n      _ = b (k + 1) := by rw [b]\n      _ = b (k+1) := rfl"
+    },
+    {
+      "id": "b_mod_two_pow",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all m\u22651 and n, b (n + 2^m) \u2261 b n [ZMOD 2^(m+1)].",
+      "is_main": false,
+      "col": 0,
+      "level": 11,
+      "lean": "@[blueprint (statement := /-- For all m\u22651 and n, b (n + 2^m) \u2261 b n [ZMOD 2^(m+1)]. -/)\n  (proof := /-- Use b_mod_b and b_pow_two_valuation. -/)]\nlemma b_mod_two_pow (m : \u2115) (hm : 1 \u2264 m) (n : \u2115) : b (n + 2^m) \u2261 b n [ZMOD (2 : \u2124)^(m+1)] := by\n  have h_symm : b (n + 2^m) \u2261 b n [ZMOD b (2 ^ m)] := by\n    simpa [add_comm] using b_mod_b (2 ^ m) n\n  have h_val : padicValInt 2 (b (2 ^ m)) = m + 1 := b_pow_two_valuation m hm\n  have h_dvd : (2 : \u2124) ^ (m + 1) \u2223 b (2 ^ m) := by\n    have htemp := padicValInt_dvd (b (2 ^ m)) (p := 2)\n    rw [h_val] at htemp\n    exact htemp\n  have h_mod : b (n + 2^m) \u2261 b n [ZMOD (2 : \u2124)^(m+1)] := by\n    rw [Int.modEq_iff_dvd]\n    have h_target : (2 : \u2124) ^ (m + 1) \u2223 b n - b (n + 2 ^ m) := by\n      have htemp1 : (2 : \u2124) ^ (m + 1) \u2223 b (n + 2 ^ m) - b n := by\n        have h_symm_dvd : b (2 ^ m) \u2223 b n - b (n + 2 ^ m) := Int.modEq_iff_dvd.mp h_symm\n        have h_dvd2 : b (2 ^ m) \u2223 b (n + 2 ^ m) - b n := by\n          have htemp : b (2 ^ m) \u2223 -(b n - b (n + 2 ^ m)) := dvd_neg.mpr h_symm_dvd\n          simpa [neg_sub] using htemp\n        exact h_dvd.trans h_dvd2\n      have h_eq : b n - b (n + 2 ^ m) = -(b (n + 2 ^ m) - b n) := by ring\n      rw [h_eq]\n      exact dvd_neg.mpr htemp1\n    exact h_target\n  exact h_mod"
+    },
+    {
+      "id": "b_nonneg",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "b n \u2265 0 for all n.",
+      "is_main": false,
+      "col": 0,
+      "level": 11,
+      "lean": "@[blueprint (statement := /-- b n \u2265 0 for all n. -/)\n  (proof := /-- Induction using b recurrence. -/)]\nlemma b_nonneg (n : \u2115) : 0 \u2264 b n := by\n  induction n with\n  | zero =>\n    simp [b]\n  | succ n ih =>\n    rw [b]\n    have hsq_nonneg : 0 \u2264 (b n) ^ 2 := sq_nonneg (b n)\n    have h2 : 0 \u2264 2 * (b n) ^ 2 := by nlinarith\n    have h3 : 0 \u2264 b n := ih\n    have h4 : 0 \u2264 1 := by norm_num\n    nlinarith"
+    },
+    {
+      "id": "b_pow_two_valuation",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.68,
+      "proof_length": 5,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "The 2-adic valuation of b(2^k) is k+1 for k \u2265 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 12,
+      "lean": "@[blueprint (statement := /-- The 2-adic valuation of b(2^k) is k+1 for k \u2265 1. -/)\n  (proof := /-- Induction on k using padicValInt_b_double. -/)]\nlemma b_pow_two_valuation (k : \u2115) (hk : 1 \u2264 k) : padicValInt 2 (b (2 ^ k)) = k + 1 := by\n  haveI : Fact (Nat.Prime 2) := Nat.fact_prime_two\n  have b_two_power_properties : \u2200 (k : \u2115), 1 \u2264 k \u2192 2 \u2223 b (2 ^ k) \u2227 b (2 ^ k) \u2260 0 := by\n    intro k hk\n    refine Nat.le_induction ?_ (fun m hm h_ih => ?_) k hk\n    \u00b7 -- base k=1\n      constructor\n      \u00b7 norm_num [b]\n      \u00b7 norm_num [b]\n    \u00b7 -- induction step from m to m+1, given hm: 1 \u2264 m, h_ih: P(m)\n      rcases h_ih with \u27e8hEven_m, hpos_m\u27e9\n      have h_val := padicValInt_b_double (2 ^ m) hEven_m hpos_m\n      -- h_val : padicValInt 2 (b (2*(2 ^ m))) = padicValInt 2 (b (2 ^ m)) + 1\n      have h_eq : 2*(2 ^ m) = 2 ^ (m+1) := by ring\n      have h_val' : padicValInt 2 (b (2 ^ (m+1))) = padicValInt 2 (b (2 ^ m)) + 1 := by\n        simpa [h_eq] using h_val\n      -- from h_val', we deduce 2 \u2223 b (2 ^ (m+1)) and nonzero\n      have h_nonzero : b (2 ^ (m+1)) \u2260 0 := by\n        intro hzero\n        have hpadzero : padicValInt 2 (b (2 ^ (m+1))) = 0 := by\n          simpa [hzero] using padicValInt.zero (p := 2)\n        rw [hpadzero] at h_val'\n        -- h_val' says 0 = (padicValInt 2 (b (2 ^ m)) + 1)\n        -- But padicValInt 2 (b (2 ^ m)) \u2265 1 because 2 \u2223 b (2 ^ m)\n        have hpad_ge_one : 1 \u2264 padicValInt 2 (b (2 ^ m)) := by\n          have hdv : (2 : \u2124) \u2223 b (2 ^ m) := hEven_m\n          have htemp := padicValInt_dvd_iff (p := 2) (n := 1) (a := b (2 ^ m))\n          have htemp' := htemp.mp (by\n            simpa using hdv)\n          rcases htemp' with (hzero' | hle)\n          \u00b7 exact (hpos_m hzero').elim\n          \u00b7 exact hle\n        omega\n      have h_even : 2 \u2223 b (2 ^ (m+1)) := by\n        have hpad_ge_one : 1 \u2264 padicValInt 2 (b (2 ^ (m+1))) := by\n          have hpad_ge_one_m : 1 \u2264 padicValInt 2 (b (2 ^ m)) := by\n            have hdv : (2 : \u2124) \u2223 b (2 ^ m) := hEven_m\n            have htemp := padicValInt_dvd_iff (p := 2) (n := 1) (a := b (2 ^ m))\n            have htemp' := htemp.mp (by\n              simpa using hdv)\n            rcases htemp' with (hzero' | hle)\n            \u00b7 exact (hpos_m hzero').elim\n            \u00b7 exact hle\n          omega\n        have hdv : (2 : \u2124) ^ (1 : \u2115) \u2223 b (2 ^ (m+1)) := by\n          apply (padicValInt_dvd_iff (p := 2) (n := 1) (a := b (2 ^ (m+1)))).mpr\n          right\n          exact hpad_ge_one\n        simpa using hdv\n      exact \u27e8h_even, h_nonzero\u27e9\n  have h_props : 2 \u2223 b (2 ^ k) \u2227 b (2 ^ k) \u2260 0 := b_two_power_properties k hk\n  rcases h_props with \u27e8hEven, hpos\u27e9\n  refine Nat.le_induction ?_ (fun m hm h_ih => ?_) k hk\n  \u00b7 -- base case k=1\n    calc\n      padicValInt 2 (b (2 ^ 1)) = padicValInt 2 (b 2) := by norm_num\n      _ = padicValInt 2 (4 : \u2124) := by norm_num [b]\n      _ = padicValNat 2 (4 : \u2115) := by simpa using padicValInt.of_nat (p := 2) (n := 4)\n      _ = padicValNat 2 ((2 : \u2115) ^ 2) := by norm_num\n      _ = 2 := by\n        simpa using padicValNat.prime_pow (p := 2) (n := 2)\n      _ = 1 + 1 := by omega\n  \u00b7 -- induction step\n    have h_props_m : 2 \u2223 b (2 ^ m) \u2227 b (2 ^ m) \u2260 0 := b_two_power_properties m hm\n    rcases h_props_m with \u27e8hEven_m, hpos_m\u27e9\n    have h_val := padicValInt_b_double (2 ^ m) hEven_m hpos_m\n    have h_eq : 2 * (2 ^ m) = 2 ^ (m + 1) := by ring\n    have h_val' : padicValInt 2 (b (2 ^ (m + 1))) = padicValInt 2 (b (2 ^ m)) + 1 := by\n      simpa [h_eq] using h_val\n    rw [h_val', h_ih]"
+    },
+    {
+      "id": "b_succ_sub",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "b(n+1) - b n = 2*b(n)^2 + 1",
+      "is_main": false,
+      "col": 0,
+      "level": 16,
+      "lean": "@[blueprint (statement := /-- b(n+1) - b n = 2*b(n)^2 + 1 -/)\n  (proof := /-- Unfold b. -/)]\nlemma b_succ_sub (n : \u2115) : b (n+1) - b n = 2*(b n)^2 + 1 := by\n  simp [b]\n  omega"
+    },
+    {
+      "id": "block_product_congruence",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, the product over the second block is congruent to the product over the first block modulo 2^(k+3).",
+      "is_main": false,
+      "col": 0,
+      "level": 8,
+      "lean": "@[blueprint (statement := /-- For k\u22651, the product over the second block is congruent to the product over the first block modulo 2^(k+3). -/)\n  (proof := /-- Use b_mod_two_pow and Int.ModEq.mul. -/)]\nlemma block_product_congruence (k : \u2115) (hk : 1 \u2264 k) : (Finset.prod (Finset.Ico (2^k) (2^(k+1))) (fun i => (4 * b i + 1))) \u2261 (Finset.prod (Finset.Ico 1 (2^k)) (fun i => (4 * b i + 1))) [ZMOD (2 : \u2124)^(k+3)] := by\n  let M : \u2124 := (2 : \u2124)^(k+3)\n  have hM_eq : M = 4 * (2 : \u2124)^(k+1) := by\n    calc\n      M = (2 : \u2124)^(k+3) := rfl\n      _ = (2 : \u2124)^(k+1) * (2 : \u2124)^(2) := by ring\n      _ = 4 * (2 : \u2124)^(k+1) := by ring\n  -- rewrite left side using Finset.prod_Ico_eq_prod_range\n  have h_left_eq : Finset.prod (Finset.Ico (2^k) (2^(k+1))) (fun i => 4 * b i + 1) = Finset.prod (Finset.range (2^k)) (fun i => 4 * b (2^k + i) + 1) := by\n    rw [Finset.prod_Ico_eq_prod_range (fun i : \u2115 => 4 * b i + 1) (2^k) (2^(k+1))]\n    have h_sub : (2^(k+1 : \u2115) - 2^k : \u2115) = 2^k := by\n      have h_pow_succ : 2^(k+1 : \u2115) = 2^k + 2^k := by\n        calc\n          2^(k+1 : \u2115) = 2 * 2^k := by ring\n          _ = 2^k + 2^k := by ring\n      rw [h_pow_succ, Nat.add_sub_cancel]\n    rw [h_sub]\n  -- congruence for each factor\n  have h_factor_congr : \u2200 (i : \u2115), i \u2208 Finset.range (2^k) \u2192 (4 * b (2^k + i) + 1) \u2261 (4 * b i + 1) [ZMOD M] := by\n    intro i hi\n    have hb_mod := b_mod_two_pow k hk i\n    -- hb_mod : b (i + 2^k) \u2261 b i [ZMOD (2 : \u2124)^(k+1)]\n    have hb_mod' : b (2^k + i) \u2261 b i [ZMOD (2 : \u2124)^(k+1)] := by\n      simpa [add_comm] using hb_mod\n    -- use mul_left' to scale modulus\n    have h_mul : (4 : \u2124) * b (2^k + i) \u2261 (4 : \u2124) * b i [ZMOD (4 : \u2124) * ((2 : \u2124)^(k+1 : \u2115))] := by\n      apply Int.ModEq.mul_left' hb_mod'\n    have h_add : (4 : \u2124) * b (2^k + i) + 1 \u2261 (4 : \u2124) * b i + 1 [ZMOD (4 : \u2124) * ((2 : \u2124)^(k+1 : \u2115))] :=\n      h_mul.add_right (1 : \u2124)\n    simpa [hM_eq] using h_add\n  -- use Int.ModEq.prod\n  have h_prod_congr : Finset.prod (Finset.range (2^k)) (fun i => 4 * b (2^k + i) + 1) \u2261 Finset.prod (Finset.range (2^k)) (fun i => 4 * b i + 1) [ZMOD M] :=\n    Int.ModEq.prod h_factor_congr\n  -- rewrite RHS product over range to product over Ico 1 (2^k)\n  have h_range_eq_Ico : Finset.prod (Finset.range (2^k)) (fun i => 4 * b i + 1) = Finset.prod (Finset.Ico 1 (2^k)) (fun i => 4 * b i + 1) := by\n    calc\n      Finset.prod (Finset.range (2^k)) (fun i => 4 * b i + 1) = (4 * b 0 + 1) * Finset.prod (Finset.Ico 1 (2^k)) (fun i => 4 * b i + 1) := by\n        apply Finset.prod_range_eq_mul_Ico (fun i : \u2115 => 4 * b i + 1) (by\n          have hpos : 0 < 2^k := pow_pos (by norm_num) k\n          exact hpos)\n      _ = 1 * Finset.prod (Finset.Ico 1 (2^k)) (fun i => 4 * b i + 1) := by\n        simp [b]\n      _ = Finset.prod (Finset.Ico 1 (2^k)) (fun i => 4 * b i + 1) := by simp\n  -- combine everything\n  calc\n    Finset.prod (Finset.Ico (2^k) (2^(k+1))) (fun i => 4 * b i + 1) = Finset.prod (Finset.range (2^k)) (fun i => 4 * b (2^k + i) + 1) := h_left_eq\n    _ \u2261 Finset.prod (Finset.range (2^k)) (fun i => 4 * b i + 1) [ZMOD M] := h_prod_congr\n    _ = Finset.prod (Finset.Ico 1 (2^k)) (fun i => 4 * b i + 1) := h_range_eq_Ico\n    _ \u2261 Finset.prod (Finset.Ico 1 (2^k)) (fun i => 4 * b i + 1) [ZMOD M] := by rfl"
+    },
+    {
+      "id": "congruence_term",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If 2\u2223b n, then 2*b(n+i)^2 + 1 \u2261 2*b(i)^2 + 1 [ZMOD 4*b n].",
+      "is_main": false,
+      "col": 0,
+      "level": 15,
+      "lean": "@[blueprint (statement := /-- If 2\u2223b n, then 2*b(n+i)^2 + 1 \u2261 2*b(i)^2 + 1 [ZMOD 4*b n]. -/)\n  (proof := /-- Use b_mod_b. -/)]\nlemma congruence_term (n i : \u2115) (hEven : 2 \u2223 b n) : 2*(b (n+i))^2 + 1 \u2261 2*(b i)^2 + 1 [ZMOD 4*b n] := by\n  have h := b_mod_b n i\n  have hdiv_dvd : (b n : \u2124) \u2223 (b (n + i) - b i) := by\n    have := (Int.modEq_iff_dvd.mp h.symm)\n    exact this\n  rcases hdiv_dvd with \u27e8k, hk\u27e9\n  have hb_eq : b (n+i) = b i + (b n) * k := by\n    linarith\n  rcases hEven with \u27e8z, hz\u27e9\n  have h4y : (4 * b n : \u2124) = 8*z := by\n    calc\n      (4 * b n : \u2124) = 4*(2*z) := by rw [hz]\n      _ = 8*z := by ring\n  have hdiff_val : (2*(b (n+i))^2 + 1) - (2*(b i)^2 + 1) = 8*z*(b i * k + z * k^2) := by\n    calc\n      (2*(b (n+i))^2 + 1) - (2*(b i)^2 + 1) = 2*((b (n+i))^2 - (b i)^2) := by ring\n      _ = 2*((b (n+i) - b i) * (b (n+i) + b i)) := by ring\n      _ = 2*(((b n) * k) * ((b (n+i) + b i))) := by rw [hk]\n      _ = 2*((b n) * k * ((b i + (b n) * k) + b i)) := by rw [hb_eq]\n      _ = 2*((b n) * k * (2*b i + (b n) * k)) := by ring\n      _ = 2*((2*z) * k * (2*b i + (2*z) * k)) := by rw [hz]\n      _ = 8*z*(b i * k + z * k^2) := by ring\n  have hdiv : (4 * b n) \u2223 (2*(b (n+i))^2 + 1) - (2*(b i)^2 + 1) := by\n    rw [hdiff_val, h4y]\n    exact dvd_mul_right (8*z) (b i * k + z * k^2)\n  rw [Int.modEq_iff_dvd]\n  have : (2*(b i)^2 + 1) - (2*(b (n+i))^2 + 1) = -((2*(b (n+i))^2 + 1) - (2*(b i)^2 + 1)) := by ring\n  rw [this]\n  exact dvd_neg.mpr hdiv"
+    },
+    {
+      "id": "d",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "d n = 2*b n.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- d n = 2*b n. -/)]\ndef d (n : \u2115) : \u2124 := 2 * b n"
+    },
+    {
+      "id": "d_diff_divisible",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, 2^{2k+3} \u2223 d(2^{k+1}) - 2*d(2^k).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- For k\u22651, 2^{2k+3} \u2223 d(2^{k+1}) - 2*d(2^k). -/)\n  (proof := /-- Use f_iter_expansion and prod_valuation. -/)]\nlemma d_diff_divisible (k : \u2115) (hk : 1 \u2264 k) : (2 ^ (2*k+3) : \u2124) \u2223 (d (2 ^ (k+1)) - 2 * d (2 ^ k)) := by\n  haveI : Fact (Nat.Prime 2) := \u27e8Nat.prime_two\u27e9\n  -- helper lemma: d n = iterate of f n times at 0\n  have d_eq_iterate (n : \u2115) : d n = (Nat.iterate (fun x : \u2124 => x ^ 2 + x + 2) n) 0 := by\n    induction' n with n ih\n    \u00b7 simp [d, b]\n    \u00b7 have hcalc : d (n+1) = (d n)^2 + d n + 2 := by\n        simp [d, b]\n        ring\n      calc\n        d (n+1) = (d n)^2 + d n + 2 := hcalc\n        _ = ((Nat.iterate (fun x : \u2124 => x ^ 2 + x + 2) n) 0)^2 + ((Nat.iterate (fun x : \u2124 => x ^ 2 + x + 2) n) 0) + 2 := by rw [ih]\n        _ = (fun x : \u2124 => x ^ 2 + x + 2) ((Nat.iterate (fun x : \u2124 => x ^ 2 + x + 2) n) 0) := rfl\n        _ = (Nat.iterate (fun x : \u2124 => x ^ 2 + x + 2) (n+1)) 0 := by\n          rw [Function.iterate_succ' (fun x : \u2124 => x ^ 2 + x + 2) n]\n          rfl\n  have h_expand := f_iter_expansion (2 ^ k) (d (2 ^ k))\n  rcases h_expand with \u27e8h, h_eq\u27e9\n  have h_iter_eq : (Nat.iterate (fun x : \u2124 => x^2 + x + 2) (2 ^ k)) (d (2 ^ k)) = d (2 ^ (k+1)) := by\n    calc\n      (Nat.iterate (fun x : \u2124 => x^2 + x + 2) (2 ^ k)) (d (2 ^ k)) = (Nat.iterate (fun x : \u2124 => x^2 + x + 2) (2 ^ k)) ((Nat.iterate (fun x : \u2124 => x^2 + x + 2) (2 ^ k)) 0) := by\n        rw [d_eq_iterate (2 ^ k)]\n      _ = (Nat.iterate (fun x : \u2124 => x^2 + x + 2) ((2 ^ k) + (2 ^ k))) 0 := by\n        rw [Function.iterate_add_apply (fun x : \u2124 => x^2 + x + 2) (2 ^ k) (2 ^ k) 0]\n      _ = d ((2 ^ k) + (2 ^ k)) := by rw [d_eq_iterate]\n      _ = d (2 ^ (k+1)) := by ring\n  have h_diff : d (2 ^ (k+1)) - 2 * d (2 ^ k) = (a_seq (2 ^ k) - 1) * d (2 ^ k) + (d (2 ^ k)) ^ 2 * h (d (2 ^ k)) := by\n    linarith [h_eq, h_iter_eq]\n  rw [h_diff]\n  -- now we need to show divisibility by 2^(2k+3)\n  -- first, relate a_seq (2^k) - 1 to the product in prod_valuation\n  have ha_seq_eq : a_seq (2 ^ k) - 1 = (Finset.prod (Finset.Ico 1 (2 ^ k)) fun i => (4 * b i + 1)) - 1 := by\n    calc\n      a_seq (2 ^ k) - 1 = (Finset.prod (Finset.range (2 ^ k)) fun i => (4 * b i + 1)) - 1 := by\n        simp [a_seq, d]\n        refine Finset.prod_congr rfl fun i hi => ?_\n        ring\n      _ = (Finset.prod (Finset.Ico 1 (2 ^ k)) fun i => (4 * b i + 1)) - 1 := by\n        have hsub : Finset.Ico 1 (2 ^ k) \u2286 Finset.range (2 ^ k) := by\n          intro x hx\n          rw [Finset.mem_Ico] at hx\n          rw [Finset.mem_range]\n          omega\n        have hzero_term : \u2200 i, i \u2208 Finset.range (2 ^ k) \u2192 i \u2209 Finset.Ico 1 (2 ^ k) \u2192 (4 * b i + 1) = 1 := by\n          intro i hi hi_not\n          rw [Finset.mem_range] at hi\n          have hi0 : i = 0 := by\n            by_contra! hpos\n            have hpos' : 1 \u2264 i := by omega\n            have mem : i \u2208 Finset.Ico 1 (2 ^ k) := by\n              apply Finset.mem_Ico.mpr\n              exact \u27e8hpos', hi\u27e9\n            exact hi_not mem\n          subst hi0\n          simp [b]\n        have hprod_eq : Finset.prod (Finset.range (2 ^ k)) (fun i => (4 * b i + 1)) = Finset.prod (Finset.Ico 1 (2 ^ k)) (fun i => (4 * b i + 1)) :=\n          (Finset.prod_subset hsub hzero_term).symm\n        rw [hprod_eq]\n  have ha_val : padicValInt 2 (a_seq (2 ^ k) - 1) = k + 1 := by\n    rw [ha_seq_eq]\n    exact prod_valuation k hk\n  have hb_nonzero : b (2 ^ k) \u2260 0 := by\n    intro hzero\n    have hval : padicValInt 2 (b (2 ^ k)) = 0 := by\n      simpa [hzero] using padicValInt.zero (p := 2)\n    rw [b_pow_two_valuation k hk] at hval\n    omega\n  have hd_nonzero : d (2 ^ k) \u2260 0 := by\n    intro hzero\n    have hzero' : 2 * b (2 ^ k) = 0 := hzero\n    have hbzero : b (2 ^ k) = 0 := by\n      nlinarith\n    exact hb_nonzero hbzero\n  have hpadic_d : padicValInt 2 (d (2 ^ k)) = k + 2 := by\n    rw [show d (2 ^ k) = (2 : \u2124) * b (2 ^ k) from rfl]\n    have h2 : (2 : \u2124) \u2260 0 := by norm_num\n    rw [padicValInt.mul (p := 2) (ha := h2) (hb := hb_nonzero)]\n    have hpadic2 : padicValInt 2 (2 : \u2124) = 1 := by simpa using padicValInt_self (p := 2)\n    rw [hpadic2, b_pow_two_valuation k hk]\n    ring\n  have hda : (2 : \u2124) ^ (k+1) \u2223 a_seq (2 ^ k) - 1 := by\n    have := padicValInt_dvd (a := a_seq (2 ^ k) - 1) (p := 2)\n    rw [ha_val] at this\n    exact this\n  have hdd : (2 : \u2124) ^ (k+2) \u2223 d (2 ^ k) := by\n    have := padicValInt_dvd (a := d (2 ^ k)) (p := 2)\n    rw [hpadic_d] at this\n    exact this\n  have hprod_div : (2 : \u2124) ^ (2*k+3) \u2223 (a_seq (2 ^ k) - 1) * d (2 ^ k) := by\n    have hpow : (2 : \u2124) ^ (2*k+3) = (2 : \u2124) ^ (k+1) * (2 : \u2124) ^ (k+2) := by\n      calc\n        (2 : \u2124) ^ (2*k+3) = (2 : \u2124) ^ ((k+1)+(k+2)) := by ring\n        _ = (2 : \u2124) ^ (k+1) * (2 : \u2124) ^ (k+2) := by rw [pow_add]\n    rw [hpow]\n    exact mul_dvd_mul hda hdd\n  have hsq_div : (2 : \u2124) ^ (2*k+3) \u2223 (d (2 ^ k)) ^ 2 * h (d (2 ^ k)) := by\n    have hsqd : (2 : \u2124) ^ (2*k+4) \u2223 (d (2 ^ k)) ^ 2 := by\n      have htemp : (2 : \u2124) ^ (k+2) * (2 : \u2124) ^ (k+2) \u2223 d (2 ^ k) * d (2 ^ k) := mul_dvd_mul hdd hdd\n      have hpow_eq : (2 : \u2124) ^ (2*k+4) = (2 : \u2124) ^ (k+2) * (2 : \u2124) ^ (k+2) := by\n        calc\n          (2 : \u2124) ^ (2*k+4) = (2 : \u2124) ^ ((k+2)+(k+2)) := by ring\n          _ = (2 : \u2124) ^ (k+2) * (2 : \u2124) ^ (k+2) := by rw [pow_add]\n      rw [hpow_eq]\n      simpa [pow_two] using htemp\n    have h_pow_dvd : (2 : \u2124) ^ (2*k+3) \u2223 (2 : \u2124) ^ (2*k+4) :=\n      pow_dvd_pow (2 : \u2124) (by omega)\n    have htemp : (2 : \u2124) ^ (2*k+3) \u2223 (d (2 ^ k)) ^ 2 :=\n      h_pow_dvd.trans hsqd\n    exact htemp.mul_right (h (d (2 ^ k)))\n  exact dvd_add hprod_div hsq_div"
+    },
+    {
+      "id": "d_diff_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 13.09,
+      "proof_length": 18,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For all k : \u2115, d (2^(k+1)) - 2*d (2^k) = 2 * (b (2^(k+1)) - 2*b (2^k)).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint\n  (statement := /-- For all k : \u2115, d (2^(k+1)) - 2*d (2^k) = 2 * (b (2^(k+1)) - 2*b (2^k)). -/)\n  (proof := /-- Unfold d: d n = 2*b n, so left side = 2*b(2^(k+1)) - 4*b(2^k) = 2*(b(2^(k+1)) - 2*b(2^k)). -/)]\nlemma d_diff_eq (k : \u2115) : d (2 ^ (k+1)) - 2 * d (2 ^ k) = 2 * (b (2 ^ (k+1)) - 2 * b (2 ^ k)) := by\n  unfold d\n  ring"
+    },
+    {
+      "id": "d_diff_not_divisible",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, 2^{2k+4} does NOT divide d(2^{k+1}) - 2*d(2^k).",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- For k\u22651, 2^{2k+4} does NOT divide d(2^{k+1}) - 2*d(2^k). -/)\n  (proof := /-- Use f_iter_expansion, d_mul_two, valuation_of_X, d_sq_dvd, not_dvd_X. -/)]\nlemma d_diff_not_divisible (k : \u2115) (hk : 1 \u2264 k) : \u00ac ((2 ^ (2*k+4) : \u2124) \u2223 (d (2 ^ (k+1)) - 2 * d (2 ^ k))) := by\n  intro hdiv\n  have h_d2k1 : d (2 ^ (k+1)) = (Nat.iterate (fun x : \u2124 => x^2 + x + 2) (2 ^ k)) (d (2 ^ k)) := by\n    calc\n      d (2 ^ (k+1)) = d (2 * (2 ^ k)) := by\n        simp [pow_succ, mul_comm]\n      _ = (Nat.iterate (fun x : \u2124 => x^2 + x + 2) (2 ^ k)) (d (2 ^ k)) := by\n        simpa using d_mul_two (2 ^ k)\n  rcases f_iter_expansion (2 ^ k) (d (2 ^ k)) with \u27e8h, h_eq\u27e9\n  have h_diff : d (2 ^ (k+1)) - 2 * d (2 ^ k) = (a_seq (2 ^ k) - 1) * d (2 ^ k) + (d (2 ^ k)) ^ 2 * h (d (2 ^ k)) := by\n    calc\n      d (2 ^ (k+1)) - 2 * d (2 ^ k) = ((Nat.iterate (fun x : \u2124 => x^2 + x + 2) (2 ^ k)) (d (2 ^ k))) - 2 * d (2 ^ k) := by\n        rw [h_d2k1]\n      _ = (d (2 ^ k) + a_seq (2 ^ k) * (d (2 ^ k)) + (d (2 ^ k)) ^ 2 * h (d (2 ^ k))) - 2 * d (2 ^ k) := by\n        rw [h_eq]\n      _ = (a_seq (2 ^ k) - 1) * d (2 ^ k) + (d (2 ^ k)) ^ 2 * h (d (2 ^ k)) := by ring\n  rw [h_diff] at hdiv\n  have hdsq : (2 : \u2124) ^ (2*k+4) \u2223 (d (2 ^ k)) ^ 2 := d_sq_dvd k hk\n  have hdsq_mul : (2 : \u2124) ^ (2*k+4) \u2223 (d (2 ^ k)) ^ 2 * h (d (2 ^ k)) :=\n    hdsq.mul_right (h (d (2 ^ k)))\n  have hdiv_sub : (2 : \u2124) ^ (2*k+4) \u2223 (a_seq (2 ^ k) - 1) * d (2 ^ k) :=\n    (Int.dvd_add_left hdsq_mul).mp hdiv\n  apply not_dvd_X k hk\n  simpa [mul_comm] using hdiv_sub"
+    },
+    {
+      "id": "d_factor",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Recurrence: d(n+1) = d(n)^2 + d(n) + 2.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Recurrence: d(n+1) = d(n)^2 + d(n) + 2. -/)\n  (proof := /-- Unfold d and b. -/)]\nlemma d_factor (n : \u2115) : d (n+1) = d n ^ 2 + d n + 2 := by\n  unfold d\n  simp [b]\n  ring"
+    },
+    {
+      "id": "d_mul_two",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "d(2*n) = (iterate (fun x => x^2 + x + 2) n) (d n).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- d(2*n) = (iterate (fun x => x^2 + x + 2) n) (d n). -/)\n  (proof := /-- Use d_eq_iterate and Function.iterate_add. -/)]\nlemma d_mul_two (n : \u2115) : d (2*n) = (Nat.iterate (fun x : \u2124 => x^2 + x + 2) n) (d n) := by\n  let f : \u2124 \u2192 \u2124 := fun x => x^2 + x + 2\n  have h_d_succ (k : \u2115) : d (k+1) = f (d k) := by\n    calc\n      d (k+1) = 2 * b (k+1) := rfl\n      _ = 2 * (2 * (b k)^2 + b k + 1) := rfl\n      _ = 4*(b k)^2 + 2*(b k) + 2 := by ring\n      _ = (2*(b k))^2 + (2*(b k)) + 2 := by ring\n      _ = (d k)^2 + (d k) + 2 := by simp [d]\n      _ = f (d k) := rfl\n  have iterate_comm (k : \u2115) (x : \u2124) : f^[k] (f x) = f (f^[k] x) := by\n    induction' k with m ih generalizing x\n    \u00b7 rfl\n    \u00b7 simp [Function.iterate_succ_apply, Function.iterate_succ_apply, ih]\n  induction' n with k ih\n  \u00b7 simp [d, b]\n  \u00b7 have hm : 2*(k+1) = 2*k + 2 := by ring\n    rw [hm]\n    have h_double_succ : d (2*k+2) = f (f (d (2*k))) := by\n      rw [h_d_succ (2*k+1), h_d_succ (2*k)]\n    rw [h_double_succ]\n    rw [ih]\n    rw [h_d_succ k]\n    calc\n      f (f (f^[k] (d k))) = f (f^[k] (f (d k))) := by\n        rw [iterate_comm k (d k)]\n      _ = f^[k] (f (f (d k))) := by\n        rw [\u2190 iterate_comm k (f (d k))]\n      _ = f^[k+1] (f (d k)) := by\n        rw [Function.iterate_succ_apply]"
+    },
+    {
+      "id": "d_sq_dvd",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, (2:\u2124)^(2*k+4) \u2223 (d (2^k))^2.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- For k\u22651, (2:\u2124)^(2*k+4) \u2223 (d (2^k))^2. -/)\n  (proof := /-- Use valuation_of_D and padicValInt_sq. -/)]\nlemma d_sq_dvd (k : \u2115) (hk : 1 \u2264 k) : (2 : \u2124) ^ (2*k+4) \u2223 (d (2 ^ k)) ^ 2 := by\n  have b_nonneg : \u2200 n : \u2115, 0 \u2264 b n := by\n    intro n\n    induction' n with m ih\n    \u00b7 simp [b]\n    \u00b7 rw [b]\n      have hsq_nonneg : 0 \u2264 (b m) ^ 2 := pow_two_nonneg _\n      nlinarith\n  have b_pos : \u2200 n : \u2115, 1 \u2264 n \u2192 0 < b n := by\n    intro n hn\n    refine (Nat.le_induction ?base ?step n hn) ; clear n hn\n    \u00b7 -- base case n = 1\n      simp [b]\n    \u00b7 intro m hm hpos_m\n      rw [b]\n      have hsq_pos : 0 < (b m)^2 := pow_pos hpos_m 2\n      nlinarith\n  have d_nonzero : d (2 ^ k) \u2260 0 := by\n    unfold d\n    refine mul_ne_zero (by norm_num : (2 : \u2124) \u2260 0) ?_\n    have hbpos : 0 < b (2 ^ k) := b_pos (2 ^ k) (by\n      have h2k : 1 \u2264 2 ^ k := Nat.one_le_two_pow (n := k)\n      exact h2k)\n    exact ne_of_gt hbpos\n  have hpadic_sq : padicValInt 2 ((d (2 ^ k)) ^ 2) = 2 * (k + 2) := by\n    calc\n      padicValInt 2 ((d (2 ^ k)) ^ 2) = 2 * padicValInt 2 (d (2 ^ k)) :=\n        padicValInt_sq (d (2 ^ k)) d_nonzero\n      _ = 2 * (k + 2) := by rw [valuation_of_D k hk]\n      _ = 2*k + 4 := by ring\n  have h_d_sq_nonzero : (d (2 ^ k)) ^ 2 \u2260 0 := pow_ne_zero 2 d_nonzero\n  apply (padicValInt_dvd_iff (2*k+4) ((d (2 ^ k)) ^ 2) (p := 2)).mpr\n  right\n  rw [hpadic_sq]\n  omega"
+    },
+    {
+      "id": "f_iter_expansion",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.68,
+      "proof_length": 5,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Expand f^m(t) = d(m) + a_seq m * t + t^2 * h(t).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- Expand f^m(t) = d(m) + a_seq m * t + t^2 * h(t). -/)\n  (proof := /-- Induction on m using d_factor. -/)]\nlemma f_iter_expansion (m : \u2115) (t : \u2124) : \u2203 h : \u2124 \u2192 \u2124, (Nat.iterate (fun x : \u2124 => x^2 + x + 2) m) t = d m + a_seq m * t + t^2 * h t := by\n  induction m generalizing t with\n  | zero =>\n    refine \u27e8fun _ => 0, ?_\u27e9\n    unfold d a_seq b\n    simp\n  | succ m ih =>\n    have h_m_exists : \u2200 t : \u2124, \u2203 h : \u2124 \u2192 \u2124, (Nat.iterate (fun x : \u2124 => x^2 + x + 2) m) t = d m + a_seq m * t + t^2 * h t := ih\n    let h_m : \u2124 \u2192 \u2124 := fun t => ((h_m_exists t).choose) t\n    have h_m_spec (t : \u2124) : (Nat.iterate (fun x : \u2124 => x^2 + x + 2) m) t = d m + a_seq m * t + t^2 * (h_m t) := by\n      dsimp [h_m]\n      exact (h_m_exists t).choose_spec\n    have h_d_succ : d (m+1) = (d m)^2 + d m + 2 := by\n      rw [d_factor]\n    have h_a_succ : a_seq (m+1) = a_seq m * (2*d m + 1) := by\n      rw [a_seq_succ]\n    let h_next : \u2124 \u2192 \u2124 := fun t' => (2*(d m))*(h_m t') + (a_seq m)^2 + (h_m t') + (2*(a_seq m)*(h_m t'))*t' + ((h_m t')^2)*t'^2\n    refine \u27e8h_next, ?_\u27e9\n    calc\n      (Nat.iterate (fun x : \u2124 => x^2 + x + 2) (m+1)) t = (fun x : \u2124 => x^2 + x + 2) ((Nat.iterate (fun x : \u2124 => x^2 + x + 2) m) t) := by\n        rw [Function.iterate_succ_apply']\n      _ = (fun x : \u2124 => x^2 + x + 2) (d m + a_seq m * t + t^2 * (h_m t)) := by rw [h_m_spec t]\n      _ = (d m + a_seq m * t + t^2 * (h_m t))^2 + (d m + a_seq m * t + t^2 * (h_m t)) + 2 := rfl\n      _ = d (m+1) + a_seq (m+1) * t + t^2 * (h_next t) := by\n        rw [h_d_succ, h_a_succ]\n        dsimp [h_next]\n        ring"
+    },
+    {
+      "id": "first_block_product_form",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, the product \u220f_{i=1}^{2^k-1} (4*b i + 1) can be written as 1 + 4*S + 2^{k+2}*u.",
+      "is_main": false,
+      "col": 0,
+      "level": 6,
+      "lean": "@[blueprint (statement := /-- For k\u22651, the product \u220f_{i=1}^{2^k-1} (4*b i + 1) can be written as 1 + 4*S + 2^{k+2}*u. -/)\n  (proof := /-- Use P_strong and S_odd_factor. -/)]\nlemma first_block_product_form (k : \u2115) (hk : 1 \u2264 k) : \u2203 u : \u2124,\n    Finset.prod (Finset.Ico 1 (2 ^ k)) (fun i => (4 * b i + 1)) = 1 + 4 * Finset.sum (Finset.Ico 1 (2 ^ k)) b + (2 : \u2124) ^ (k + 2) * u := by\n  rcases P_strong k hk with \u27e8t, hP, ht_odd\u27e9\n  rcases S_odd_factor k hk with \u27e8a, hS, ha_odd\u27e9\n  have hsub_mod2 : (t - a) % 2 = 0 := by\n    calc\n      (t - a) % 2 = ((t % 2) - (a % 2)) % 2 := by\n        rw [Int.sub_emod]\n      _ = (1 - 1) % 2 := by\n        rw [ht_odd, ha_odd]\n      _ = 0 % 2 := by ring\n      _ = 0 := by norm_num\n  have hdiv : 2 \u2223 (t - a) :=\n    Int.dvd_of_emod_eq_zero hsub_mod2\n  rcases hdiv with \u27e8u, h\u27e9\n  have h2 : (2 : \u2124)^(k+1) * a = 4 * ((2 : \u2124)^(k-1) * a) := by\n    calc\n      (2 : \u2124)^(k+1) * a = ((2 : \u2124)^(k-1) * (2 : \u2124)^2) * a := by\n        rw [\u2190 pow_add, show (k-1 : \u2115) + 2 = k+1 by omega]\n      _ = (2 : \u2124)^(k-1) * ((2 : \u2124)^2 * a) := by ring\n      _ = (2 : \u2124)^(k-1) * (4 * a) := by norm_num\n      _ = 4 * ((2 : \u2124)^(k-1) * a) := by ring\n  have h1 : (2 : \u2124)^(k+1) * (2 * u) = (2 : \u2124)^(k+2) * u := by\n    calc\n      (2 : \u2124)^(k+1) * (2 * u) = ((2 : \u2124)^(k+1) * 2) * u := by ring\n      _ = (2 : \u2124)^(k+2) * u := by\n        rw [\u2190 pow_succ, show (k+1 : \u2115) + 1 = k+2 by omega]\n      _ = (2 : \u2124)^(k+2) * u := rfl\n  use u\n  calc\n    Finset.prod (Finset.Ico 1 (2 ^ k)) (fun i => (4 * b i + 1)) = 1 + (2 : \u2124) ^ (k+1) * t := hP\n    _ = 1 + (2 : \u2124) ^ (k+1) * (a + 2*u) := by\n      have : t = a + 2*u := by linarith\n      rw [this]\n    _ = 1 + (2 : \u2124) ^ (k+1) * a + (2 : \u2124) ^ (k+1) * (2*u) := by ring\n    _ = 1 + (2 : \u2124) ^ (k+1) * a + (2 : \u2124) ^ (k+2) * u := by rw [h1]\n    _ = 1 + 4 * ((2 : \u2124) ^ (k-1) * a) + (2 : \u2124) ^ (k+2) * u := by rw [h2]\n    _ = 1 + 4 * (Finset.sum (Finset.Ico 1 (2 ^ k)) b) + (2 : \u2124) ^ (k+2) * u := by rw [hS]\n    _ = 1 + 4 * Finset.sum (Finset.Ico 1 (2 ^ k)) b + (2 : \u2124) ^ (k + 2) * u := rfl"
+    },
+    {
+      "id": "not_dvd_X",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, \u00ac ((2:\u2124)^(2*k+4) \u2223 d (2^k) * (a_seq (2^k) - 1)).",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- For k\u22651, \u00ac ((2:\u2124)^(2*k+4) \u2223 d (2^k) * (a_seq (2^k) - 1)). -/)\n  (proof := /-- Use valuation_of_X and padicValInt_dvd_iff. -/)]\nlemma not_dvd_X (k : \u2115) (hk : 1 \u2264 k) : \u00ac ((2 : \u2124) ^ (2*k+4) \u2223 d (2 ^ k) * (a_seq (2 ^ k) - 1)) := by\n  have hval := valuation_of_X k hk\n  have hnonzero : d (2 ^ k) * (a_seq (2 ^ k) - 1) \u2260 0 := by\n    intro hzero\n    have hzero_val : padicValInt 2 (d (2 ^ k) * (a_seq (2 ^ k) - 1)) = 0 := by\n      simpa [hzero]\n    rw [hval] at hzero_val\n    omega\n  apply (padicValInt_dvd_iff (p := 2) (2*k+4) (d (2 ^ k) * (a_seq (2 ^ k) - 1))).not.mpr\n  push_neg\n  constructor\n  \u00b7 exact hnonzero\n  \u00b7 rw [hval]\n    omega"
+    },
+    {
+      "id": "padicValInt_b_double",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.68,
+      "proof_length": 5,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If 2\u2223b n and b n \u2260 0, then padicValInt 2 (b(2*n)) = padicValInt 2 (b n) + 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 13,
+      "lean": "@[blueprint (statement := /-- If 2\u2223b n and b n \u2260 0, then padicValInt 2 (b(2*n)) = padicValInt 2 (b n) + 1. -/)\n  (proof := /-- Use b_double_mod_four_b and valuation lemmas. -/)]\nlemma padicValInt_b_double (n : \u2115) (hEven : 2 \u2223 b n) (hpos : b n \u2260 0) : padicValInt 2 (b (2*n)) = padicValInt 2 (b n) + 1 := by\n  have hcongr : b (2*n) \u2261 2*b n [ZMOD 4*b n] := b_double_mod_four_b n hEven\n  have h_mod_eq_zero : (b (2*n) - 2*b n) % (4*b n) = 0 := by\n    calc\n      (b (2*n) - 2*b n) % (4*b n) = ((b (2*n) % (4*b n)) - ((2*b n) % (4*b n))) % (4*b n) := by rw [Int.sub_emod]\n      _ = (0) % (4*b n) := by rw [hcongr, sub_self]\n      _ = 0 := by norm_num\n  have h_dvd : (4*b n) \u2223 (b (2*n) - 2*b n) := Int.dvd_of_emod_eq_zero h_mod_eq_zero\n  rcases h_dvd with \u27e8k, h\u27e9\n  have h_eq : b (2*n) = (2*b n) * (1 + 2*k) := by\n    linarith\n  have h_two_bn_nonzero : 2*b n \u2260 0 := by\n    intro hzero\n    apply hpos\n    nlinarith\n  have h_c_nonzero : (1 + 2*k : \u2124) \u2260 0 := by\n    omega\n  have h_odd : \u00ac (2 : \u2124) \u2223 (1 + 2*k : \u2124) := by\n    intro hdiv\n    have h2k : (2 : \u2124) \u2223 2*k := \u27e8k, by ring\u27e9\n    have h1 : (2 : \u2124) \u2223 (1 : \u2124) := by\n      have : (1 : \u2124) = (1 + 2*k) - 2*k := by ring\n      rw [this]\n      exact dvd_sub hdiv h2k\n    have : \u00ac (2 : \u2124) \u2223 (1 : \u2124) := by norm_num\n    exact this h1\n  have hpad_c : padicValInt 2 (1 + 2*k) = 0 :=\n    padicValInt.eq_zero_of_not_dvd h_odd\n  have hpad_two_bn : padicValInt 2 (2*b n) = padicValInt 2 (2 : \u2124) + padicValInt 2 (b n) :=\n    padicValInt.mul (by norm_num : (2 : \u2124) \u2260 0) hpos\n  have hpad_two : padicValInt 2 (2 : \u2124) = 1 := padicValInt_self (p := 2)\n  calc\n    padicValInt 2 (b (2*n)) = padicValInt 2 ((2*b n) * (1 + 2*k)) := by rw [h_eq]\n    _ = padicValInt 2 (2*b n) + padicValInt 2 (1 + 2*k) :=\n      padicValInt.mul h_two_bn_nonzero h_c_nonzero\n    _ = (padicValInt 2 (2 : \u2124) + padicValInt 2 (b n)) + padicValInt 2 (1 + 2*k) := by rw [hpad_two_bn]\n    _ = (1 + padicValInt 2 (b n)) + 0 := by rw [hpad_two, hpad_c]\n    _ = padicValInt 2 (b n) + 1 := by ring"
+    },
+    {
+      "id": "padicValInt_sq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "padicValInt 2 (a^2) = 2 * padicValInt 2 a for a \u2260 0.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- padicValInt 2 (a^2) = 2 * padicValInt 2 a for a \u2260 0. -/)\n  (proof := /-- Use padicValInt.mul. -/)]\nlemma padicValInt_sq (a : \u2124) (ha : a \u2260 0) : padicValInt 2 (a^2) = 2 * padicValInt 2 a := by\n  haveI : Fact (Nat.Prime 2) := Nat.fact_prime_two\n  simpa [sq, two_mul] using padicValInt.mul (p := 2) ha ha"
+    },
+    {
+      "id": "padicValInt_two_mul_add_pow",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "If padicValInt 2 r = k-1 and r \u2260 0, then padicValInt 2 (2*r + 2^(k+1)*t) = k, for k\u22651.",
+      "is_main": false,
+      "col": 0,
+      "level": 11,
+      "lean": "@[blueprint (statement := /-- If padicValInt 2 r = k-1 and r \u2260 0, then padicValInt 2 (2*r + 2^(k+1)*t) = k, for k\u22651. -/)\n  (proof := /-- Use padicValInt.add_eq_min. -/)]\nlemma padicValInt_two_mul_add_pow (r t : \u2124) (k : \u2115) (hk : 1 \u2264 k) (hr_val : padicValInt 2 r = k-1) (hr0 : r \u2260 0) : padicValInt 2 (2*r + ((2 : \u2124)^(k+1) * t)) = k := by\n  -- from padicValInt_dvd, we get that 2^(k-1) divides r\n  have hpadic_dvd : ((2 : \u2124) ^ (padicValInt 2 r)) \u2223 r := padicValInt_dvd (p := 2) r\n  rw [hr_val] at hpadic_dvd\n  have hdiv' : ((2 : \u2124) ^ (k-1)) \u2223 r := hpadic_dvd\n  rcases hdiv' with \u27e8u, hu\u27e9\n  have hu0 : u \u2260 0 := by\n    intro hzero\n    apply hr0\n    rw [hu, hzero, mul_zero]\n  -- lemma for valuation of powers of 2\n  have hp_two_pow (n : \u2115) : padicValInt 2 ((2 : \u2124) ^ n) = n := by\n    induction' n with n ih\n    \u00b7 simp\n    \u00b7 rw [pow_succ, padicValInt.mul (pow_ne_zero n (by norm_num : (2 : \u2124) \u2260 0)) (by norm_num : (2 : \u2124) \u2260 0)]\n      simp [padicValInt_two_self, ih]\n  have hpow_val : padicValInt 2 ((2 : \u2124) ^ (k-1)) = k-1 := hp_two_pow (k-1)\n  have hval_u : padicValInt 2 u = 0 := by\n    have h_mul_val : padicValInt 2 r = padicValInt 2 ((2 : \u2124) ^ (k-1)) + padicValInt 2 u := by\n      calc\n        padicValInt 2 r = padicValInt 2 (((2 : \u2124) ^ (k-1)) * u) := by rw [hu]\n        _ = padicValInt 2 ((2 : \u2124) ^ (k-1)) + padicValInt 2 u :=\n          padicValInt.mul (pow_ne_zero (k-1) (by norm_num : (2 : \u2124) \u2260 0)) hu0\n    rw [hr_val, hpow_val] at h_mul_val\n    omega\n  -- now we know u is not divisible by 2\n  have h_u_not_dvd2 : \u00ac ((2 : \u2124) \u2223 u) := by\n    have h_iff : ((2 : \u2124) ^ 1 \u2223 u) \u2194 (u = 0 \u2228 1 \u2264 padicValInt 2 u) := by\n      simpa using padicValInt_dvd_iff (p := 2) (n := 1) (a := u)\n    have h_not : \u00ac ((2 : \u2124) ^ 1 \u2223 u) := by\n      rw [h_iff]\n      intro h_or\n      rcases h_or with (hzero | hle)\n      \u00b7 exact hu0 hzero\n      \u00b7 rw [hval_u] at hle\n        exact Nat.not_succ_le_zero 0 hle\n    simpa [pow_one] using h_not\n  have h_sum_ne_zero : u + 2*t \u2260 0 := by\n    intro hsum\n    have h2_dvd_u : (2 : \u2124) \u2223 u := by\n      have : u = -(2*t) := by linarith\n      rw [this]\n      exact \u27e8-t, by ring\u27e9\n    exact h_u_not_dvd2 h2_dvd_u\n  have hval_sum : padicValInt 2 (u + 2*t) = 0 := by\n    have h_not_dvd_sum : \u00ac ((2 : \u2124) \u2223 u + 2*t) := by\n      intro h_dvd_sum\n      have h_dvd_u : (2 : \u2124) \u2223 u := by\n        have h_dvd_2t : (2 : \u2124) \u2223 (2*t) := \u27e8t, by ring\u27e9\n        have h_dvd_diff : (2 : \u2124) \u2223 (u + 2*t) - (2*t) := dvd_sub h_dvd_sum h_dvd_2t\n        simpa [sub_add_cancel] using h_dvd_diff\n      exact h_u_not_dvd2 h_dvd_u\n    have h_iff_sum : ((2 : \u2124) ^ 1 \u2223 u + 2*t) \u2194 (u + 2*t = 0 \u2228 1 \u2264 padicValInt 2 (u + 2*t)) := by\n      simpa using padicValInt_dvd_iff (p := 2) (n := 1) (a := u + 2*t)\n    have h_not_or : \u00ac (u + 2*t = 0 \u2228 1 \u2264 padicValInt 2 (u + 2*t)) := by\n      rw [\u2190 h_iff_sum]\n      exact h_not_dvd_sum\n    have h_not_one_le : \u00ac (1 \u2264 padicValInt 2 (u + 2*t)) := by\n      intro hle; apply h_not_or; exact Or.inr hle\n    omega\n  have hA_eq : 2*r + ((2 : \u2124)^(k+1) * t) = ((2 : \u2124)^k) * (u + 2*t) := by\n    calc\n      2*r + ((2 : \u2124)^(k+1) * t) = 2 * (((2 : \u2124)^(k-1)) * u) + ((2 : \u2124)^(k+1) * t) := by rw [hu]\n      _ = (2 * ((2 : \u2124)^(k-1))) * u + ((2 : \u2124)^(k+1) * t) := by ring\n      _ = ((2 : \u2124)^k) * u + ((2 : \u2124)^(k+1) * t) := by\n        have hk_eq : ((2 : \u2124)^k) = 2 * ((2 : \u2124)^(k-1)) := by\n          have hk' : (k-1)+1 = k := Nat.sub_add_cancel hk\n          calc\n            ((2 : \u2124)^k) = ((2 : \u2124)^((k-1)+1)) := by rw [hk']\n            _ = ((2 : \u2124)^(k-1)) * (2 : \u2124) := by ring\n            _ = 2 * ((2 : \u2124)^(k-1)) := by ring\n        rw [hk_eq]\n      _ = ((2 : \u2124)^k) * u + ((2 : \u2124)^k * (2*t)) := by ring\n      _ = ((2 : \u2124)^k) * (u + 2*t) := by ring\n  have hA_ne_zero : 2*r + ((2 : \u2124)^(k+1) * t) \u2260 0 := by\n    rw [hA_eq]\n    apply mul_ne_zero (pow_ne_zero k (by norm_num : (2 : \u2124) \u2260 0)) h_sum_ne_zero\n  have hpowk_val : padicValInt 2 ((2 : \u2124)^k) = k := hp_two_pow k\n  have h_mul_val' : padicValInt 2 (((2 : \u2124)^k) * (u + 2*t)) =\n    padicValInt 2 ((2 : \u2124)^k) + padicValInt 2 (u + 2*t) :=\n    padicValInt.mul (pow_ne_zero k (by norm_num : (2 : \u2124) \u2260 0)) h_sum_ne_zero\n  rw [hA_eq, h_mul_val', hpowk_val, hval_sum, add_zero]"
+    },
+    {
+      "id": "padicValInt_two_self",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.7,
+      "proof_length": 2,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "padicValInt 2 (2 : \u2124) = 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 12,
+      "lean": "@[blueprint (statement := /-- padicValInt 2 (2 : \u2124) = 1. -/)\n  (proof := /-- Use padicValInt.self. -/)]\nlemma padicValInt_two_self : padicValInt 2 (2 : \u2124) = 1 := by\n  haveI : Fact (Nat.Prime 2) := \u27e8Nat.prime_two\u27e9\n  exact padicValInt_self"
+    },
+    {
+      "id": "prod_valuation",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k \u2265 1, padicValInt 2 (\u220f_{i=1}^{2^k-1} (4*b i + 1) - 1) = k+1.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- For k \u2265 1, padicValInt 2 (\u220f_{i=1}^{2^k-1} (4*b i + 1) - 1) = k+1. -/)\n  (proof := /-- Use first_block_product_form and sum_b_valuation. -/)]\nlemma prod_valuation (k : \u2115) (hk : 1 \u2264 k) : padicValInt 2 ((Finset.prod (Finset.Ico 1 (2 ^ k)) fun i => (4 * b i + 1)) - 1) = k + 1 := by\n  have b_nonneg (n : \u2115) : 0 \u2264 b n := by\n    induction' n with n ih\n    \u00b7 norm_num [b]\n    \u00b7 unfold b\n      have hsq : 0 \u2264 (b n)^2 := pow_two_nonneg _\n      have hsq' : 0 \u2264 2 * (b n)^2 := mul_nonneg (by norm_num) hsq\n      have hb : 0 \u2264 b n := ih\n      nlinarith\n  have padicValInt_two_pow (n : \u2115) : padicValInt 2 ((2 : \u2124) ^ n) = n := by\n    calc\n      padicValInt 2 ((2 : \u2124) ^ n) = padicValInt 2 (((2 : \u2115) ^ n : \u2115) : \u2124) := by norm_num\n      _ = padicValNat 2 ((2 : \u2115) ^ n) := by rw [padicValInt.of_nat]\n      _ = n := by\n        have h2pos : (2 : \u2115) \u2260 0 := by norm_num\n        rw [padicValNat.pow n h2pos, padicValNat.self (by norm_num : 1 < (2 : \u2115))]\n        simp\n  rcases first_block_product_form k hk with \u27e8u, hprod\u27e9\n  let S := Finset.sum (Finset.Ico 1 (2 ^ k)) b\n  have hsum_eq : (Finset.prod (Finset.Ico 1 (2 ^ k)) fun i => (4 * b i + 1)) - 1 = 4 * S + (2 : \u2124) ^ (k + 2) * u := by\n    linarith\n  rw [hsum_eq]\n  have hSpos : 0 < S := by\n    have h1mem : (1 : \u2115) \u2208 Finset.Ico (1 : \u2115) (2 ^ k) := by\n      refine Finset.mem_Ico.mpr \u27e8by omega, ?_\u27e9\n      have hpow_gt1 : 1 < 2 ^ k := Nat.one_lt_two_pow (by omega)\n      exact hpow_gt1\n    have hb1 : b 1 = 1 := by unfold b; rfl\n    have h1pos : 0 \u2264 b 1 := b_nonneg 1\n    have hsumpos : b 1 \u2264 S := Finset.single_le_sum (fun i hi => b_nonneg i) h1mem\n    have hpos : (0 : \u2124) < b 1 := by\n      rw [hb1]; norm_num\n    linarith\n  have hS_ne_zero : S \u2260 0 := by linarith\n  have h4_ne_zero : (4 : \u2124) \u2260 0 := by norm_num\n  have hx_ne_zero : 4 * S \u2260 0 := mul_ne_zero h4_ne_zero hS_ne_zero\n  have hp4 : padicValInt 2 (4 : \u2124) = 2 := by\n    have : (4 : \u2124) = ((4 : \u2115) : \u2124) := by norm_num\n    rw [this, padicValInt.of_nat]\n    calc\n      padicValNat 2 4 = padicValNat 2 (2 ^ 2) := by norm_num\n      _ = 2 * padicValNat 2 2 := by\n        have h2pos : (2 : \u2115) \u2260 0 := by norm_num\n        rw [padicValNat.pow 2 h2pos]\n      _ = 2 * 1 := by rw [padicValNat.self (by norm_num : 1 < (2 : \u2115))]\n      _ = 2 := by norm_num\n  have hvalS : padicValInt 2 S = k - 1 := sum_b_valuation k hk\n  have hvalx : padicValInt 2 (4 * S) = k + 1 := by\n    rw [padicValInt.mul h4_ne_zero hS_ne_zero, hp4, hvalS]\n    omega\n  by_cases hu : u = 0\n  \u00b7 subst hu\n    simp\n    exact hvalx\n  \u00b7 have h2pow_ne_zero : (2 : \u2124) ^ (k + 2) \u2260 0 := pow_ne_zero (k + 2) (by norm_num : (2 : \u2124) \u2260 0)\n    have hy_ne_zero : (2 : \u2124) ^ (k + 2) * u \u2260 0 := mul_ne_zero h2pow_ne_zero hu\n    have hval2pow : padicValInt 2 ((2 : \u2124) ^ (k + 2)) = k + 2 := by\n      rw [padicValInt_two_pow (k + 2)]\n    have hvaly_ge : padicValInt 2 ((2 : \u2124) ^ (k + 2) * u) \u2265 k + 2 := by\n      rw [padicValInt.mul h2pow_ne_zero hu, hval2pow]\n      exact Nat.le_add_right (k + 2) (padicValInt 2 u)\n    have hvalx_val : padicValInt 2 (4 * S) = k + 1 := hvalx\n    have hvalx_lt_hvaly : padicValInt 2 (4 * S) < padicValInt 2 ((2 : \u2124) ^ (k + 2) * u) := by\n      have hy_gt : padicValInt 2 ((2 : \u2124) ^ (k + 2) * u) > k + 1 := by\n        omega\n      omega\n    have hx\u211a_ne_zero : ((4 * S : \u2124) : \u211a) \u2260 0 := by\n      exact_mod_cast hx_ne_zero\n    have hy\u211a_ne_zero : (((2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a) \u2260 0 := by\n      exact_mod_cast hy_ne_zero\n    have hvalx\u211a_lt_hvaly\u211a : padicValRat 2 ((4 * S : \u2124) : \u211a) < padicValRat 2 (((2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a) := by\n      rw [padicValRat.of_int, padicValRat.of_int]\n      exact Nat.cast_lt.mpr hvalx_lt_hvaly\n    have hsum\u211a_ne_zero : ((4 * S : \u2124) : \u211a) + (((2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a) \u2260 0 := by\n      intro hzero\n      have : ((4 * S : \u2124) : \u211a) = -(((2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a) := by\n        linarith\n      have hval_eq : padicValRat 2 ((4 * S : \u2124) : \u211a) = padicValRat 2 (((2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a) := by\n        rw [this, padicValRat.neg]\n      linarith\n    have hval_sum : padicValRat 2 (((4 * S : \u2124) : \u211a) + (((2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a)) = padicValRat 2 ((4 * S : \u2124) : \u211a) := by\n      refine padicValRat.add_eq_of_lt hsum\u211a_ne_zero hx\u211a_ne_zero hy\u211a_ne_zero hvalx\u211a_lt_hvaly\u211a\n    have hval_sum_int : padicValInt 2 (4 * S + (2 : \u2124) ^ (k + 2) * u) = padicValInt 2 (4 * S) := by\n      apply (Nat.cast_injective (R := \u2124))\n      calc\n        (padicValInt 2 (4 * S + (2 : \u2124) ^ (k + 2) * u) : \u2124) = padicValRat 2 (((4 * S + (2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a)) := by rw [padicValRat.of_int]\n        _ = padicValRat 2 (((4 * S : \u2124) : \u211a) + (((2 : \u2124) ^ (k + 2) * u : \u2124) : \u211a)) := by norm_num\n        _ = padicValRat 2 ((4 * S : \u2124) : \u211a) := hval_sum\n        _ = (padicValInt 2 (4 * S) : \u2124) := by rw [padicValRat.of_int]\n    rw [hval_sum_int, hvalx]"
+    },
+    {
+      "id": "putnam_2025_a6",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 11,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, 2^{2k+2} \u2223 b(2^{k+1}) - 2*b(2^k) but 2^{2k+3} does not.",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint\n  (statement := /-- For k\u22651, 2^{2k+2} \u2223 b(2^{k+1}) - 2*b(2^k) but 2^{2k+3} does not. -/)\n  (proof := /-- Use d_diff_eq to translate to d-difference, then apply d_diff_divisible and d_diff_not_divisible. -/)]\ntheorem putnam_2025_a6 (k : \u2115) (hk : 1 \u2264 k) :\n    (2 ^ (2 * k + 2) : \u2124) \u2223 (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) \u2227\n    \u00ac((2 ^ (2 * k + 3) : \u2124) \u2223 (b (2 ^ (k + 1)) - 2 * b (2 ^ k))) := by\n  have h_diff_eq : d (2 ^ (k + 1)) - 2 * d (2 ^ k) = 2 * (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) := d_diff_eq k\n  have h_div : (2 ^ (2 * k + 3) : \u2124) \u2223 (d (2 ^ (k + 1)) - 2 * d (2 ^ k)) := d_diff_divisible k hk\n  have h_not_div : \u00ac ((2 ^ (2 * k + 4) : \u2124) \u2223 (d (2 ^ (k + 1)) - 2 * d (2 ^ k))) := d_diff_not_divisible k hk\n  have hA : (2 ^ (2 * k + 2) : \u2124) \u2223 (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) := by\n    rcases h_div with \u27e8t, ht\u27e9\n    have factor : (2 ^ (2 * k + 3) : \u2124) = 2 * (2 ^ (2 * k + 2) : \u2124) := by\n      ring\n    rw [factor] at ht\n    have h_eq' : 2 * (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) = 2 * ((2 ^ (2 * k + 2) : \u2124) * t) := by\n      calc\n        2 * (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) = d (2 ^ (k + 1)) - 2 * d (2 ^ k) := by\n          symm; exact h_diff_eq\n        _ = (2 * (2 ^ (2 * k + 2) : \u2124)) * t := ht\n        _ = 2 * ((2 ^ (2 * k + 2) : \u2124) * t) := by ring\n    have h_cancel : (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) = (2 ^ (2 * k + 2) : \u2124) * t := by\n      apply mul_left_cancel\u2080 (by norm_num : (2 : \u2124) \u2260 0)\n      calc\n        2 * (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) = 2 * ((2 ^ (2 * k + 2) : \u2124) * t) := h_eq'\n        _ = 2 * ((2 ^ (2 * k + 2) : \u2124) * t) := rfl\n    exact \u27e8t, h_cancel\u27e9\n  have h_not_A : \u00ac ((2 ^ (2 * k + 3) : \u2124) \u2223 (b (2 ^ (k + 1)) - 2 * b (2 ^ k))) := by\n    intro h\n    have h2 : (2 ^ (2 * k + 4) : \u2124) \u2223 (d (2 ^ (k + 1)) - 2 * d (2 ^ k)) := by\n      rcases h with \u27e8t, ht\u27e9\n      use t\n      calc\n        d (2 ^ (k + 1)) - 2 * d (2 ^ k) = 2 * (b (2 ^ (k + 1)) - 2 * b (2 ^ k)) := h_diff_eq\n        _ = 2 * ((2 ^ (2 * k + 3) : \u2124) * t) := by rw [ht]\n        _ = (2 * (2 ^ (2 * k + 3) : \u2124)) * t := by ring\n        _ = (2 ^ (2 * k + 4) : \u2124) * t := by ring\n    exact h_not_div h2\n  exact And.intro hA h_not_A"
+    },
+    {
+      "id": "sum_b_valuation",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 12.95,
+      "proof_length": 17,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, padicValInt 2 (\u2211_{i=1}^{2^k-1} b i) = k-1.",
+      "is_main": false,
+      "col": 0,
+      "level": 9,
+      "lean": "@[blueprint (statement := /-- For k\u22651, padicValInt 2 (\u2211_{i=1}^{2^k-1} b i) = k-1. -/)\n  (proof := /-- Use sum_range_one, sum_range_b_valuation_step, and Nat.le_induction. Also note Ico sum equals range sum because b 0 = 0. -/)]\nlemma sum_b_valuation (k : \u2115) (hk : 1 \u2264 k) : padicValInt 2 (Finset.sum (Finset.Ico 1 (2 ^ k)) b) = k - 1 := by\n  have hpos : 2 ^ k \u2260 0 := by\n    apply pow_ne_zero\n    norm_num\n  have range_eq_insert_Ico_one : Finset.range (2 ^ k) = {0} \u222a Finset.Ico 1 (2 ^ k) := by\n    ext i; constructor\n    \u00b7 intro hi\n      rw [Finset.mem_range] at hi\n      by_cases hi0 : i = 0\n      \u00b7 subst hi0; apply Finset.mem_union_left; exact Finset.mem_singleton.mpr rfl\n      \u00b7 apply Finset.mem_union_right\n        refine Finset.mem_Ico.mpr ?_\n        have : 1 \u2264 i := Nat.one_le_iff_ne_zero.mpr hi0\n        exact \u27e8this, hi\u27e9\n    \u00b7 intro hi\n      rcases Finset.mem_union.mp hi with (hi' | hi')\n      \u00b7 rw [Finset.mem_singleton.mp hi']; apply Finset.mem_range.mpr\n        exact pow_pos (by norm_num : 0 < 2) k\n      \u00b7 rcases Finset.mem_Ico.mp hi' with \u27e8h1, h2\u27e9\n        apply Finset.mem_range.mpr\n        exact h2\n  have h0not : 0 \u2209 Finset.Ico 1 (2 ^ k) := by\n    intro h0\n    rcases Finset.mem_Ico.mp h0 with \u27e8h0_ge, h0_lt\u27e9\n    have : (1 : \u2115) \u2264 0 := h0_ge\n    linarith\n  have hsum_range_eq : Finset.sum (Finset.range (2 ^ k)) b = Finset.sum (Finset.Ico 1 (2 ^ k)) b := by\n    calc\n      Finset.sum (Finset.range (2 ^ k)) b = Finset.sum ({0} \u222a Finset.Ico 1 (2 ^ k)) b := by\n        rw [range_eq_insert_Ico_one]\n      _ = Finset.sum ({0} : Finset \u2115) b + Finset.sum (Finset.Ico 1 (2 ^ k)) b := by\n        apply Finset.sum_union (Finset.disjoint_singleton_left.mpr h0not)\n      _ = b 0 + Finset.sum (Finset.Ico 1 (2 ^ k)) b := by simp\n      _ = 0 + Finset.sum (Finset.Ico 1 (2 ^ k)) b := by simp [b]\n      _ = Finset.sum (Finset.Ico 1 (2 ^ k)) b := by simp\n  have hsum_range_eq' : Finset.sum (Finset.Ico 1 (2 ^ k)) b = Finset.sum (Finset.range (2 ^ k)) b := by\n    symm; exact hsum_range_eq\n  rw [hsum_range_eq']\n  let P (n : \u2115) (hn : 1 \u2264 n) : Prop := padicValInt 2 (Finset.sum (Finset.range (2 ^ n)) b) = n - 1\n  have base : P 1 (by exact le_refl 1) := by\n    have hsum : Finset.sum (Finset.range (2 ^ 1)) b = 1 := by\n      simpa using sum_range_one\n    calc\n      padicValInt 2 (Finset.sum (Finset.range (2 ^ 1)) b) = padicValInt 2 1 := by rw [hsum]\n      _ = 0 := padicValInt.one\n      _ = 1 - 1 := by omega\n\n  have step : \u2200 (n : \u2115) (hn : 1 \u2264 n), P n hn \u2192 P (n+1) (Nat.le_succ_of_le hn) := by\n    intro n hn hP\n    have h := sum_range_b_valuation_step n hn hP\n    have hgoal : padicValInt 2 (Finset.sum (Finset.range (2 ^ (n + 1))) b) = (n + 1) - 1 := by\n      rw [show (n + 1) - 1 = n by omega]\n      exact h\n    exact hgoal\n  exact Nat.le_induction base step k hk"
+    },
+    {
+      "id": "sum_pos",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 11.17,
+      "proof_length": 7,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, 0 < sum_{i=1}^{2^k-1} b i.",
+      "is_main": false,
+      "col": 0,
+      "level": 9,
+      "lean": "@[blueprint (statement := /-- For k\u22651, 0 < sum_{i=1}^{2^k-1} b i. -/)\n  (proof := /-- Use b_nonneg and b 1 = 1. -/)]\nlemma sum_pos (k : \u2115) (hk : 1 \u2264 k) : 0 < Finset.sum (Finset.Ico 1 (2 ^ k)) b := by\n  have hpos : \u2200 i, 1 \u2264 i \u2192 0 < b i := by\n    intro i hi\n    refine Nat.le_induction ?_ (fun m hm ih => ?_) i hi\n    \u00b7 -- base i=1\n      have : b 1 = 1 := by\n        simp [b]\n      simpa [this] using by norm_num\n    \u00b7 -- step m -> m+1\n      have : b (m+1) = 2 * (b m) ^ 2 + b m + 1 := rfl\n      rw [this]\n      have hsq : 0 \u2264 (b m) ^ 2 := pow_two_nonneg _\n      have hbpos : 0 \u2264 b m := b_nonneg m\n      nlinarith\n  have h_nonempty : (Finset.Ico 1 (2 ^ k)).Nonempty := by\n    refine \u27e81, ?_\u27e9\n    rw [Finset.mem_Ico]\n    have h_one_le_one : (1 : \u2115) \u2264 1 := le_refl 1\n    have h_one_lt_two_k : 1 < 2 ^ k := by\n      have hk_ne_zero : k \u2260 0 := by omega\n      exact Nat.one_lt_two_pow hk_ne_zero\n    exact \u27e8h_one_le_one, h_one_lt_two_k\u27e9\n  have hpos_all : \u2200 i \u2208 Finset.Ico 1 (2 ^ k), 0 < b i := by\n    intro i hi\n    rcases Finset.mem_Ico.1 hi with \u27e8hi1, hi2\u27e9\n    exact hpos i hi1\n  exact Finset.sum_pos hpos_all h_nonempty"
+    },
+    {
+      "id": "sum_range_b_valuation_step",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Induction step: if padicValInt 2 (\u2211_{j<2^k} b j) = k-1, then padicValInt 2 (\u2211_{j<2^(k+1)} b j) = k.",
+      "is_main": false,
+      "col": 0,
+      "level": 10,
+      "lean": "@[blueprint (statement := /-- Induction step: if padicValInt 2 (\u2211_{j<2^k} b j) = k-1, then padicValInt 2 (\u2211_{j<2^(k+1)} b j) = k. -/)\n  (proof := /-- Use b_mod_two_pow and padicValInt_two_mul_add_pow. -/)]\nlemma sum_range_b_valuation_step (k : \u2115) (hk : 1 \u2264 k) (h_induction : padicValInt 2 (Finset.sum (Finset.range (2^k)) b) = k-1) : padicValInt 2 (Finset.sum (Finset.range (2^(k+1))) b) = k := by\n  set S := Finset.sum (Finset.range (2^k)) b with hS_def\n  have hS_nonzero : S \u2260 0 := by\n    have hS_pos : 0 < S := by\n      have h1mem : 1 \u2208 Finset.range (2^k) := by\n        rw [Finset.mem_range]\n        have hk0 : k \u2260 0 := by\n          linarith\n        exact Nat.one_lt_two_pow hk0\n      have hb1pos : 0 < b 1 := by\n        have hb1 : b 1 = 1 := by\n          unfold b; simp [b]\n        rw [hb1]; norm_num\n      have hS_ge_b1 : b 1 \u2264 S := by\n        apply Finset.single_le_sum (fun i hi => b_nonneg i) h1mem\n      linarith\n    exact ne_of_gt hS_pos\n  have h_mod_each (j : \u2115) : (2 : \u2124)^(k+1) \u2223 b (j + 2^k) - b j := by\n    have h_mod := b_mod_two_pow k hk j\n    have h_dvd1 : (2 : \u2124)^(k+1) \u2223 b j - b (j + 2^k) := (Int.modEq_iff_dvd.mp h_mod)\n    have h_dvd2 : (2 : \u2124)^(k+1) \u2223 b (j + 2^k) - b j := by\n      rw [show b (j + 2^k) - b j = -(b j - b (j + 2^k)) by ring]\n      exact h_dvd1.neg_right\n    exact h_dvd2\n  have h_dvd_sum : (2 : \u2124)^(k+1) \u2223 (Finset.sum (Finset.range (2^k)) fun j => b (j + 2^k) - b j) :=\n    Finset.dvd_sum (fun i hi => h_mod_each i)\n  obtain \u27e8T, hT\u27e9 := h_dvd_sum\n  have hS_next : Finset.sum (Finset.range (2^(k+1))) b = 2*S + ((2 : \u2124)^(k+1))*T := by\n    have h_shift_eq : Finset.sum (Finset.range (2^k)) (fun j => b (j + 2^k)) = S + (Finset.sum (Finset.range (2^k)) (fun j => b (j + 2^k) - b j)) := by\n      simp [S, Finset.sum_add_distrib, add_comm, add_left_comm, add_assoc, sub_add_cancel]\n    calc\n      Finset.sum (Finset.range (2^(k+1))) b = (Finset.sum (Finset.range (2^k)) b) + (Finset.sum (Finset.range (2^k)) (fun j => b (j + 2^k))) := by\n        calc\n          Finset.sum (Finset.range (2^(k+1))) b = Finset.sum (Finset.range (2^k + 2^k)) b := by\n            rw [show 2^(k+1) = 2^k + 2^k by\n              calc\n                2^(k+1) = 2*2^k := by simp [pow_succ, mul_comm]\n                _ = 2^k + 2^k := by ring\n            ]\n          _ = (Finset.sum (Finset.range (2^k)) b) + (Finset.sum (Finset.range (2^k)) (fun j => b (2^k + j))) := by\n            rw [Finset.sum_range_add b (2^k) (2^k)]\n          _ = (Finset.sum (Finset.range (2^k)) b) + (Finset.sum (Finset.range (2^k)) (fun j => b (j + 2^k))) := by\n            simp [add_comm]\n      _ = S + (Finset.sum (Finset.range (2^k)) (fun j => b (j + 2^k))) := by rfl\n      _ = S + (S + (Finset.sum (Finset.range (2^k)) (fun j => b (j + 2^k) - b j))) := by rw [h_shift_eq]\n      _ = 2*S + (Finset.sum (Finset.range (2^k)) (fun j => b (j + 2^k) - b j)) := by ring\n      _ = 2*S + ((2 : \u2124)^(k+1))*T := by rw [hT]\n  rw [hS_next]\n  apply padicValInt_two_mul_add_pow (S) (T) k hk ?_ hS_nonzero\n  simpa [hS_def] using h_induction"
+    },
+    {
+      "id": "sum_range_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 1,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "sum_{j=0}^{1} b j = 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 10,
+      "lean": "@[blueprint (statement := /-- sum_{j=0}^{1} b j = 1. -/)\n  (proof := /-- Compute. -/)]\nlemma sum_range_one : Finset.sum (Finset.range 2) b = 1 := by\n  simp [b, Finset.sum_range_succ, Finset.sum_range_one]"
+    },
+    {
+      "id": "sum_range_two_bsq_plus_one",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.08,
+      "proof_length": 3,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "sum_{i< n} (2*b(i)^2 + 1) = b n.",
+      "is_main": false,
+      "col": 0,
+      "level": 15,
+      "lean": "@[blueprint (statement := /-- sum_{i< n} (2*b(i)^2 + 1) = b n. -/)\n  (proof := /-- Induction using b_succ_sub. -/)]\nlemma sum_range_two_bsq_plus_one (n : \u2115) : Finset.sum (Finset.range n) (fun i => 2*(b i)^2 + 1) = b n := by\n  induction' n with k ih\n  \u00b7 simp [b]\n  \u00b7 calc\n      Finset.sum (Finset.range (k+1)) (fun i => 2*(b i)^2 + 1)\n          = (Finset.sum (Finset.range k) (fun i => 2*(b i)^2 + 1)) + (2*(b k)^2 + 1) := by\n            rw [Finset.sum_range_succ]\n      _ = b k + (2*(b k)^2 + 1) := by rw [ih]\n      _ = 2*(b k)^2 + b k + 1 := by ring\n      _ = b (k+1) := rfl"
+    },
+    {
+      "id": "valuation_of_D",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.94,
+      "proof_length": 6,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, padicValInt 2 (d (2^k)) = k+2.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- For k\u22651, padicValInt 2 (d (2^k)) = k+2. -/)\n  (proof := /-- Use b_pow_two_valuation and definition of d. -/)]\nlemma valuation_of_D (k : \u2115) (hk : 1 \u2264 k) : padicValInt 2 (d (2 ^ k)) = k + 2 := by\n  have hb_nonzero : b (2 ^ k) \u2260 0 := by\n    intro hzero\n    have hval0 : padicValInt 2 (b (2 ^ k)) = 0 := by simpa [hzero] using padicValInt.zero\n    have hval_kplus1 : padicValInt 2 (b (2 ^ k)) = k + 1 := b_pow_two_valuation k hk\n    rw [hval0] at hval_kplus1\n    have : k + 1 > 0 := by omega\n    omega\n  have htwo_nonzero : (2 : \u2124) \u2260 0 := by norm_num\n  have h_mul : padicValInt 2 (d (2 ^ k)) = padicValInt 2 (2 : \u2124) + padicValInt 2 (b (2 ^ k)) := by\n    calc\n      padicValInt 2 (d (2 ^ k)) = padicValInt 2 (2 * b (2 ^ k)) := rfl\n      _ = padicValInt 2 (2 : \u2124) + padicValInt 2 (b (2 ^ k)) := by\n        apply padicValInt.mul htwo_nonzero hb_nonzero\n  calc\n    padicValInt 2 (d (2 ^ k)) = padicValInt 2 (2 : \u2124) + padicValInt 2 (b (2 ^ k)) := h_mul\n    _ = 1 + (k + 1) := by\n      simp [padicValInt_two_self, b_pow_two_valuation k hk]\n    _ = k + 2 := by omega"
+    },
+    {
+      "id": "valuation_of_X",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, padicValInt 2 (d (2^k) * (a_seq (2^k) - 1)) = 2*k+3.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- For k\u22651, padicValInt 2 (d (2^k) * (a_seq (2^k) - 1)) = 2*k+3. -/)\n  (proof := /-- Use valuation_of_D, valuation_of_u, padicValInt.mul. -/)]\nlemma valuation_of_X (k : \u2115) (hk : 1 \u2264 k) : padicValInt 2 (d (2 ^ k) * (a_seq (2 ^ k) - 1)) = 2*k+3 := by\n  have hd_val : padicValInt 2 (d (2 ^ k)) = k + 2 := valuation_of_D k hk\n  have hu_val : padicValInt 2 (a_seq (2 ^ k) - 1) = k + 1 := valuation_of_u k hk\n  have hd_nonzero : d (2 ^ k) \u2260 0 := by\n    intro hzero\n    have hzero_val : padicValInt 2 (d (2 ^ k)) = 0 := by simpa [hzero] using padicValInt.zero (p := 2)\n    rw [hd_val] at hzero_val\n    have : (k+2 : \u2115) \u2260 0 := by omega\n    exact this hzero_val\n  have hu_nonzero : (a_seq (2 ^ k) - 1) \u2260 0 := by\n    intro hzero\n    have hzero_val : padicValInt 2 (a_seq (2 ^ k) - 1) = 0 := by simpa [hzero] using padicValInt.zero (p := 2)\n    rw [hu_val] at hzero_val\n    have : (k+1 : \u2115) \u2260 0 := by omega\n    exact this hzero_val\n  have hprod : padicValInt 2 (d (2 ^ k) * (a_seq (2 ^ k) - 1)) =\n      padicValInt 2 (d (2 ^ k)) + padicValInt 2 (a_seq (2 ^ k) - 1) := by\n    apply padicValInt.mul hd_nonzero hu_nonzero\n  rw [hprod, hd_val, hu_val]\n  omega"
+    },
+    {
+      "id": "valuation_of_u",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 10.4,
+      "proof_length": 4,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "For k\u22651, padicValInt 2 (a_seq (2^k) - 1) = k+1.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- For k\u22651, padicValInt 2 (a_seq (2^k) - 1) = k+1. -/)\n  (proof := /-- Use a_seq_eq_prod and prod_valuation. -/)]\nlemma valuation_of_u (k : \u2115) (hk : 1 \u2264 k) : padicValInt 2 (a_seq (2 ^ k) - 1) = k + 1 := by\n  rw [a_seq_eq_prod]\n  exact prod_valuation k hk"
+    }
+  ],
+  "edges": [
+    {
+      "source": "block_product_congruence",
+      "target": "P_strong",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_b_valuation",
+      "target": "S_dvd",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_b_valuation",
+      "target": "S_not_dvd",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_pos",
+      "target": "S_not_dvd",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_not_dvd",
+      "target": "S_odd_factor",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_dvd",
+      "target": "S_odd_factor",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "a_seq_eq_prod",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_range_two_bsq_plus_one",
+      "target": "b_double_mod_four_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_double_sub_eq_sum",
+      "target": "b_double_mod_four_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "congruence_term",
+      "target": "b_double_mod_four_b",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_succ_sub",
+      "target": "b_double_sub_eq_sum",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_pow_two_valuation",
+      "target": "b_mod_two_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_mod_b",
+      "target": "b_mod_two_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValInt_b_double",
+      "target": "b_pow_two_valuation",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_mod_two_pow",
+      "target": "block_product_congruence",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_mod_b",
+      "target": "congruence_term",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_iter_expansion",
+      "target": "d_diff_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_seq",
+      "target": "d_diff_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_pow_two_valuation",
+      "target": "d_diff_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prod_valuation",
+      "target": "d_diff_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b",
+      "target": "d_diff_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "f_iter_expansion",
+      "target": "d_diff_not_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_seq",
+      "target": "d_diff_not_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d_mul_two",
+      "target": "d_diff_not_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d_sq_dvd",
+      "target": "d_diff_not_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "not_dvd_X",
+      "target": "d_diff_not_divisible",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b",
+      "target": "d_factor",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b",
+      "target": "d_mul_two",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "valuation_of_D",
+      "target": "d_sq_dvd",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValInt_sq",
+      "target": "d_sq_dvd",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b",
+      "target": "d_sq_dvd",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d_factor",
+      "target": "f_iter_expansion",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_seq_succ",
+      "target": "f_iter_expansion",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b",
+      "target": "f_iter_expansion",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "S_odd_factor",
+      "target": "first_block_product_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "P_strong",
+      "target": "first_block_product_form",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "valuation_of_X",
+      "target": "not_dvd_X",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_double_mod_four_b",
+      "target": "padicValInt_b_double",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValInt_two_self",
+      "target": "padicValInt_two_mul_add_pow",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_b_valuation",
+      "target": "prod_valuation",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "first_block_product_form",
+      "target": "prod_valuation",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d_diff_not_divisible",
+      "target": "putnam_2025_a6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d",
+      "target": "putnam_2025_a6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d_diff_eq",
+      "target": "putnam_2025_a6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "d_diff_divisible",
+      "target": "putnam_2025_a6",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_range_one",
+      "target": "sum_b_valuation",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_range_b_valuation_step",
+      "target": "sum_b_valuation",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_nonneg",
+      "target": "sum_pos",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_nonneg",
+      "target": "sum_range_b_valuation_step",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_mod_two_pow",
+      "target": "sum_range_b_valuation_step",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValInt_two_mul_add_pow",
+      "target": "sum_range_b_valuation_step",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "padicValInt_two_self",
+      "target": "valuation_of_D",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b_pow_two_valuation",
+      "target": "valuation_of_D",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b",
+      "target": "valuation_of_D",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "valuation_of_D",
+      "target": "valuation_of_X",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "valuation_of_u",
+      "target": "valuation_of_X",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "a_seq_eq_prod",
+      "target": "valuation_of_u",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "prod_valuation",
+      "target": "valuation_of_u",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "b",
+      "target": "valuation_of_u",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

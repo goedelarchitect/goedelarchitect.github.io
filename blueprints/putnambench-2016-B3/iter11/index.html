@@ -1,0 +1,1827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lean Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #141414;
+            --controls-bg: rgba(255, 255, 255, 0.95);
+            --controls-border: #d0d0d0;
+            --tooltip-bg: rgba(50, 50, 50, 0.95);
+            --tooltip-text: white;
+            --main-node-color: #3b82f6;
+            --main-edge-color: #93c5fd;
+            --external-node-color: #b8bcc4;
+            --external-edge-color: #b8bcc4;
+            --hover-highlight-color: #f9a8d4;
+            --external-highlight-color: #deb8cc;
+        }
+        body.dark-mode {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --controls-bg: rgba(30, 30, 30, 0.9);
+            --controls-border: #3e3e3e;
+            --tooltip-bg: rgba(0, 0, 0, 0.9);
+            --tooltip-text: white;
+            --main-node-color: #4ade80;
+            --main-edge-color: #4ade80;
+            --external-node-color: #9ca3af;
+            --external-edge-color: #555555;
+            --hover-highlight-color: #fbbf24;
+            --external-highlight-color: #9a8540;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--controls-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        .controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        .controls input[type="checkbox"] {
+            margin-right: 6px;
+        }
+        .controls select {
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--controls-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .node {
+            cursor: pointer;
+            stroke: none;
+        }
+        .node.highlighted {
+            stroke: var(--hover-highlight-color);
+            stroke-width: 3px;
+        }
+        .node.url-highlighted {
+            fill: var(--hover-highlight-color) !important;
+        }
+        .link.highlighted {
+            stroke: var(--hover-highlight-color) !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 2px !important;
+        }
+        .link.highlighted-external {
+            stroke: var(--external-highlight-color) !important;
+            stroke-opacity: 0.8 !important;
+            stroke-width: 1.5px !important;
+        }
+        .tooltip {
+            position: absolute;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .watermark {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+        }
+        .watermark a {
+            color: #141414;
+        }
+        body.dark-mode .watermark a {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <style>
+        .nav-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .nav-overlay * {
+            pointer-events: auto;
+        }
+        .nav-title {
+            font-size: 18px;
+            font-weight: 400;
+            color: #555;
+        }
+        .nav-title a {
+            color: #555;
+            text-decoration: underline;
+            text-decoration-color: #aaa;
+            text-underline-offset: 2px;
+        }
+        .nav-title a:hover {
+            color: #3b82f6;
+            text-decoration-color: #3b82f6;
+        }
+        body.dark-mode .nav-title {
+            color: var(--text-color);
+        }
+        body.dark-mode .nav-title a {
+            color: var(--text-color);
+            text-decoration-color: #666;
+        }
+        body.dark-mode .nav-title a:hover {
+            color: #60a5fa;
+            text-decoration-color: #60a5fa;
+        }
+        /* Navigation panel - upper right */
+        .navigation-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--controls-bg);
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--controls-border);
+            z-index: 1000;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .navigation-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        .navigation-panel .nav-item {
+            display: block;
+            font-size: 11px;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 6px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .navigation-panel .nav-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .navigation-panel .nav-item.current {
+            background: rgba(59, 130, 246, 0.15);
+            font-weight: 500;
+        }
+        .navigation-panel .nav-item strong {
+            color: #3b82f6;
+        }
+        body.dark-mode .navigation-panel .nav-item strong {
+            color: #60a5fa;
+        }
+        /* Competition group header + compact chip grid (many problems fit without scrolling) */
+        .navigation-panel .nav-group {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: #94a3b8;
+            margin: 11px 0 4px 8px;
+        }
+        .navigation-panel .nav-group:first-of-type { margin-top: 4px; }
+        .navigation-panel .nav-grid {
+            display: flex; flex-wrap: wrap; gap: 3px; max-width: 168px;
+        }
+        .navigation-panel .nav-grid .nav-item {
+            padding: 4px 9px; margin: 0; min-width: 22px; text-align: center;
+        }
+        /* Prevent scrollbars */
+        html, body {
+            overflow: hidden;
+        }
+        /* Watermark at bottom right */
+        .watermark {
+            position: fixed !important;
+            bottom: 20px !important;
+            top: auto !important;
+            right: 20px !important;
+        }
+        /* Node-status legend (inside the left controls panel) */
+        .controls .legend {
+            margin-top: 12px; padding-top: 10px;
+            border-top: 1px solid var(--controls-border);
+        }
+        .controls .legend .lg-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+        .controls .legend .lg-row { display: flex; align-items: center; font-size: 12px; margin: 4px 0; }
+        .controls .legend .dot { width: 11px; height: 11px; border-radius: 50%;
+            display: inline-block; margin-right: 7px; }
+        /* Blueprint Refinement panel - bottom centre, same format as the nav panel */
+        .refine-panel {
+            position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+            background: var(--controls-bg); border: 1px solid var(--controls-border);
+            border-radius: 8px; padding: 12px 15px; z-index: 1000;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .refine-panel:empty { display: none; }
+        .refine-panel h3 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+            color: var(--text-color); text-align: center; }
+        .refine-panel .refine-items { display: flex; gap: 6px; flex-wrap: wrap;
+            justify-content: center; max-width: 80vw; }
+        .refine-panel .nav-item { font-size: 12px; color: var(--text-color); text-decoration: none;
+            padding: 6px 11px; border-radius: 4px; transition: background 0.15s;
+            min-width: 14px; text-align: center; }
+        .refine-panel .nav-item:hover { background: rgba(59, 130, 246, 0.1); }
+        .refine-panel .nav-item.current { background: rgba(59, 130, 246, 0.15);
+            font-weight: 600; color: #3b82f6; }
+        body.dark-mode .refine-panel .nav-item.current { color: #60a5fa; }
+    </style>
+    <div class="nav-overlay">
+        <div class="nav-title">PutnamBench 2016-B3. 1,010 line proof.</div>
+    </div>
+    <div class="navigation-panel">
+        <h3>Goedel-Architect</h3>
+<div class="nav-group">IMO 2025</div>
+<div class="nav-grid">
+<a href="../../imo-2025-P1/" class="nav-item">P1</a>
+<a href="../../imo-2025-P3/" class="nav-item">P3</a>
+<a href="../../imo-2025-P4/" class="nav-item">P4</a>
+<a href="../../imo-2025-P5/" class="nav-item">P5</a>
+</div>
+<div class="nav-group">Putnam 2025</div>
+<div class="nav-grid">
+<a href="../../putnam-2025-A1/" class="nav-item">A1</a>
+<a href="../../putnam-2025-A2/" class="nav-item">A2</a>
+<a href="../../putnam-2025-A3/" class="nav-item">A3</a>
+<a href="../../putnam-2025-A4/" class="nav-item">A4</a>
+<a href="../../putnam-2025-A6/" class="nav-item">A6</a>
+<a href="../../putnam-2025-B1/" class="nav-item">B1</a>
+<a href="../../putnam-2025-B2/" class="nav-item">B2</a>
+<a href="../../putnam-2025-B3/" class="nav-item">B3</a>
+<a href="../../putnam-2025-B4/" class="nav-item">B4</a>
+<a href="../../putnam-2025-B5/" class="nav-item">B5</a>
+<a href="../../putnam-2025-B6/" class="nav-item">B6</a>
+</div>
+<div class="nav-group">USAMO 2026</div>
+<div class="nav-grid">
+<a href="../../usamo-2026-P1/" class="nav-item">P1</a>
+<a href="../../usamo-2026-P4/" class="nav-item">P4</a>
+<a href="../../usamo-2026-P6/" class="nav-item">P6</a>
+</div>
+<div class="nav-group">PutnamBench</div>
+<div class="nav-grid">
+<a href="../../putnambench-2015-A4/" class="nav-item">2015-A4</a>
+<a href="../../putnambench-2016-B3/" class="nav-item current">2016-B3</a>
+<a href="../../putnambench-1995-A2/" class="nav-item">1995-A2</a>
+<a href="../../putnambench-1996-B5/" class="nav-item">1996-B5</a>
+</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label style="display: block; margin-bottom: 5px;">
+                Spacing
+            </label>
+            <input type="range" id="spacingSlider" min="100" max="1000" value="175" step="25" style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: #141414; margin-top: 2px;">
+                <span>Tight</span>
+                <span>Loose</span>
+            </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px;">
+            Theme
+            <select id="themeSelect">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+        </label>
+        <div class="legend">
+            <div class="lg-title">Node status</div>
+            <div class="lg-row"><span class="dot" style="background:#4ade80"></span>solved</div>
+            <div class="lg-row"><span class="dot" style="background:#3b82f6"></span>unsolved</div>
+            <div class="lg-row"><span class="dot" style="background:#ef4444"></span>formally negated</div>
+        </div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+    <div class="watermark">
+        
+    </div>
+    <div class="refine-panel"><h3>Blueprint Refinement</h3>
+<div class="refine-items">
+<a href="../iter0/" class="nav-item">1</a>
+<a href="../iter1/" class="nav-item">2</a>
+<a href="../iter2/" class="nav-item">3</a>
+<a href="../iter3/" class="nav-item">4</a>
+<a href="../iter4/" class="nav-item">5</a>
+<a href="../iter5/" class="nav-item">6</a>
+<a href="../iter6/" class="nav-item">7</a>
+<a href="../iter7/" class="nav-item">8</a>
+<a href="../iter8/" class="nav-item">9</a>
+<a href="../iter9/" class="nav-item">10</a>
+<a href="../iter10/" class="nav-item">11</a>
+<a href="../iter11/" class="nav-item current">12</a>
+<a href="../iter12/" class="nav-item">13</a>
+<a href="../iter13/" class="nav-item">14</a>
+<a href="../iter14/" class="nav-item">15</a>
+<a href="../iter15/" class="nav-item">16</a>
+</div></div>
+    <svg id="graph"></svg>
+
+    <script>
+
+        const data = {
+  "nodes": [
+    {
+      "id": "affineSpan_ne_top_of_collinear",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If A,B,C are collinear, their affine span is not the whole plane.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- If A,B,C are collinear, their affine span is not the whole plane. -/) (proof := /-- Reduce to vector span via lemma. -/)]\nlemma affineSpan_ne_top_of_collinear (A B C : Fin 2 \u2192 \u211d)\n    (h : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0) :\n    affineSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) \u2260 \u22a4 := by\n  have h_nonempty : ({A, B, C} : Set (Fin 2 \u2192 \u211d)).Nonempty := by\n    use A\n    simp\n  have h_vectorSpan_eq : vectorSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) = Submodule.span \u211d {B - A, C - A} :=\n    vectorSpan_eq_span_of_collinear A B C\n  intro h_affine_top\n  have h_vector_top : vectorSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) = \u22a4 :=\n    ((AffineSubspace.affineSpan_eq_top_iff_vectorSpan_eq_top_of_nonempty \u211d (Fin 2 \u2192 \u211d) (Fin 2 \u2192 \u211d) h_nonempty).mp h_affine_top)\n  have h_span_top : Submodule.span \u211d {B - A, C - A} = \u22a4 := by\n    calc\n      Submodule.span \u211d {B - A, C - A} = vectorSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) := by\n        symm; exact h_vectorSpan_eq\n      _ = \u22a4 := h_vector_top\n  have h_span_ne_top : Submodule.span \u211d {B - A, C - A} \u2260 \u22a4 := collinear_span_ne_top A B C h\n  exact h_span_ne_top h_span_top"
+    },
+    {
+      "id": "anticomplementaryTriangle",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "definition",
+      "statement": "The anticomplementary triangle of ABC: triangle formed by lines through A,B,C parallel to opposite sides. Its vertices are B+C-A, A+C-B, A+B-C.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The anticomplementary triangle of ABC: triangle formed by lines through A,B,C parallel to opposite sides. Its vertices are B+C-A, A+C-B, A+B-C. -/)]\ndef anticomplementaryTriangle (A B C : Fin 2 \u2192 \u211d) : Set (Fin 2 \u2192 \u211d) :=\n  convexHull \u211d {B + C - A, A + C - B, A + B - C}"
+    },
+    {
+      "id": "anticomplementary_condition",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "X \u2208 anticomplementaryTriangle A B C iff its barycentric coordinates (\u03b1,\u03b2,\u03b3) satisfy \u03b1 \u2264 1, \u03b2 \u2264 1, \u03b3 \u2264 1.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- X \u2208 anticomplementaryTriangle A B C iff its barycentric coordinates (\u03b1,\u03b2,\u03b3) satisfy \u03b1 \u2264 1, \u03b2 \u2264 1, \u03b3 \u2264 1. -/) (proof := /-- The vertices of the anticomplementary triangle have barycentric coordinates (-1,1,1), (1,-1,1), (1,1,-1). The set of points with \u03b1\u22641, \u03b2\u22641, \u03b3\u22641 is the convex hull of these three vertices. Use barycentric_coords to get coordinates. -/)]\nlemma anticomplementary_condition (A B C X : Fin 2 \u2192 \u211d) (hdet : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0) :\n    X \u2208 anticomplementaryTriangle A B C \u2194 (\u2203 (\u03b1 \u03b2 \u03b3 : \u211d), \u03b1 + \u03b2 + \u03b3 = 1 \u2227 X = \u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C \u2227 \u03b1 \u2264 1 \u2227 \u03b2 \u2264 1 \u2227 \u03b3 \u2264 1) := by\n  constructor\n  \u00b7 intro hX\n    -- hX : X \u2208 anticomplementaryTriangle A B C\n    let S : Finset (Fin 2 \u2192 \u211d) := {B + C - A, A + C - B, A + B - C}\n    have hS : X \u2208 convexHull \u211d (S : Set (Fin 2 \u2192 \u211d)) := by\n      simpa [S, anticomplementaryTriangle] using hX\n    rcases Finset.mem_convexHull.mp hS with \u27e8w, hw_nonneg, hw_sum, hw_cm\u27e9\n    have hsum_smul : S.centerMass w id = \u2211 y \u2208 S, w y \u2022 y :=\n      Finset.centerMass_eq_of_sum_1 S id hw_sum\n    have hsum_smul' : \u2211 y \u2208 S, w y \u2022 y = w (B + C - A) \u2022 (B + C - A) + w (A + C - B) \u2022 (A + C - B) + w (A + B - C) \u2022 (A + B - C) := by\n      simpa using sum_three_eq_smul A B C hdet w\n    have hX_eq : X = w (B + C - A) \u2022 (B + C - A) + w (A + C - B) \u2022 (A + C - B) + w (A + B - C) \u2022 (A + B - C) := by\n      calc\n        X = S.centerMass w id := hw_cm.symm\n        _ = \u2211 y \u2208 S, w y \u2022 y := hsum_smul\n        _ = w (B + C - A) \u2022 (B + C - A) + w (A + C - B) \u2022 (A + C - B) + w (A + B - C) \u2022 (A + B - C) := hsum_smul'\n    have hsum_three : w (B + C - A) + w (A + C - B) + w (A + B - C) = 1 := by\n      calc\n        w (B + C - A) + w (A + C - B) + w (A + B - C) = \u2211 y \u2208 S, w y := by\n          symm; exact sum_three_eq A B C hdet w\n        _ = 1 := hw_sum\n    set \u03b1 := 1 - 2 * w (B + C - A) with h\u03b1\n    set \u03b2 := 1 - 2 * w (A + C - B) with h\u03b2\n    set \u03b3 := 1 - 2 * w (A + B - C) with h\u03b3\n    have hsum_\u03b1\u03b2\u03b3 : \u03b1 + \u03b2 + \u03b3 = 1 := by\n      dsimp [\u03b1, \u03b2, \u03b3]\n      calc\n        (1 - 2*w (B + C - A)) + (1 - 2*w (A + C - B)) + (1 - 2*w (A + B - C)) = 3 - 2*(w (B + C - A) + w (A + C - B) + w (A + B - C)) := by ring\n        _ = 3 - 2*1 := by rw [hsum_three]\n        _ = 1 := by ring\n    have hX_eq2 : X = \u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C := by\n      calc\n        X = w (B + C - A) \u2022 (B + C - A) + w (A + C - B) \u2022 (A + C - B) + w (A + B - C) \u2022 (A + B - C) := hX_eq\n        _ = (1 - 2*w (B + C - A)) \u2022 A + (1 - 2*w (A + C - B)) \u2022 B + (1 - 2*w (A + B - C)) \u2022 C := by\n          symm; apply aux_eq A B C (w (B + C - A)) (w (A + C - B)) (w (A + B - C)) hsum_three\n        _ = \u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C := by simp [\u03b1, \u03b2, \u03b3]\n    have h\u03b1le1 : \u03b1 \u2264 1 := by\n      dsimp [\u03b1]; nlinarith [hw_nonneg (B + C - A) (by simp [S])]\n    have h\u03b2le1 : \u03b2 \u2264 1 := by\n      dsimp [\u03b2]; nlinarith [hw_nonneg (A + C - B) (by simp [S])]\n    have h\u03b3le1 : \u03b3 \u2264 1 := by\n      dsimp [\u03b3]; nlinarith [hw_nonneg (A + B - C) (by simp [S])]\n    exact \u27e8\u03b1, \u03b2, \u03b3, hsum_\u03b1\u03b2\u03b3, hX_eq2, h\u03b1le1, h\u03b2le1, h\u03b3le1\u27e9\n  \u00b7 intro h\n    rcases h with \u27e8\u03b1, \u03b2, \u03b3, hsum, hX_eq, h\u03b1le1, h\u03b2le1, h\u03b3le1\u27e9\n    have hw_nonneg : 0 \u2264 (1-\u03b1)/2 \u2227 0 \u2264 (1-\u03b2)/2 \u2227 0 \u2264 (1-\u03b3)/2 := by\n      refine \u27e8?_, ?_, ?_\u27e9\n      \u00b7 nlinarith\n      \u00b7 nlinarith\n      \u00b7 nlinarith\n    have hw_sum : ((1-\u03b1)/2) + ((1-\u03b2)/2) + ((1-\u03b3)/2) = 1 := by\n      nlinarith\n    have hX_eq_anticomp : X = ((1-\u03b1)/2) \u2022 (B + C - A) + ((1-\u03b2)/2) \u2022 (A + C - B) + ((1-\u03b3)/2) \u2022 (A + B - C) := by\n      calc\n        X = \u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C := hX_eq\n        _ = ((1 - \u03b1)/2) \u2022 (B + C - A) + ((1 - \u03b2)/2) \u2022 (A + C - B) + ((1 - \u03b3)/2) \u2022 (A + B - C) := by\n          apply aux_eq2 A B C \u03b1 \u03b2 \u03b3 hsum\n    -- now use mem_convexHull_of_exists_fintype\n    let \u03b9 := Fin 3\n    let z : \u03b9 \u2192 Fin 2 \u2192 \u211d := \u03bb i => match i with\n      | 0 => B + C - A\n      | 1 => A + C - B\n      | 2 => A + B - C\n    let w : \u03b9 \u2192 \u211d := \u03bb i => match i with\n      | 0 => (1-\u03b1)/2\n      | 1 => (1-\u03b2)/2\n      | 2 => (1-\u03b3)/2\n    have hw\u2080 : \u2200 i : \u03b9, 0 \u2264 w i := by\n      intro i; fin_cases i <;> dsimp [w] <;> nlinarith\n    have hw\u2081 : \u2211 i : \u03b9, w i = 1 := by\n      dsimp [\u03b9, w]\n      simp [Fin.sum_univ_ofNat, hw_sum]\n    have hz : \u2200 i : \u03b9, z i \u2208 ({B + C - A, A + C - B, A + B - C} : Set (Fin 2 \u2192 \u211d)) := by\n      intro i; fin_cases i <;> simp [z]\n    have hx : \u2211 i : \u03b9, w i \u2022 z i = X := by\n      dsimp [\u03b9, w, z]\n      calc\n        \u2211 i : Fin 3, ((\u03bb i : Fin 3 => match i with | 0 => (1-\u03b1)/2 | 1 => (1-\u03b2)/2 | 2 => (1-\u03b3)/2) i) \u2022 ((\u03bb i : Fin 3 => match i with | 0 => B + C - A | 1 => A + C - B | 2 => A + B - C) i) = ((1-\u03b1)/2) \u2022 (B + C - A) + ((1-\u03b2)/2) \u2022 (A + C - B) + ((1-\u03b3)/2) \u2022 (A + B - C) := by\n          simp [Fin.sum_univ_ofNat]\n        _ = X := by symm; exact hX_eq_anticomp\n    have h_mem : X \u2208 convexHull \u211d ({B + C - A, A + C - B, A + B - C} : Set (Fin 2 \u2192 \u211d)) :=\n      mem_convexHull_of_exists_fintype w z hw\u2080 hw\u2081 hz hx\n    exact h_mem\n-- REVISED"
+    },
+    {
+      "id": "anticomplementary_volume",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The volume of the anticomplementary triangle is 4 times the volume of the original triangle.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- The volume of the anticomplementary triangle is 4 times the volume of the original triangle. -/) (proof := /-- Determinant scaling. -/)]\nlemma anticomplementary_volume (A B C : Fin 2 \u2192 \u211d) : MeasureTheory.volume (anticomplementaryTriangle A B C) = 4 * MeasureTheory.volume (convexHull \u211d {A, B, C}) := by\n  let s := convexHull \u211d {A, B, C}\n  let g : AffineMap \u211d (Fin 2 \u2192 \u211d) (Fin 2 \u2192 \u211d) :=\n    { toFun := fun x => (A + B + C) - 2 \u2022 x\n      linear := (-2 : \u211d) \u2022 (LinearMap.id : (Fin 2 \u2192 \u211d) \u2192\u2097[\u211d] (Fin 2 \u2192 \u211d))\n      map_vadd' := by\n        intro p v\n        ext i\n        simp\n        ring\n    }\n  have hgA : (g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) A = B + C - A := by\n    dsimp [g]; abel\n  have hgB : (g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) B = A + C - B := by\n    dsimp [g]; abel\n  have hgC : (g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) C = A + B - C := by\n    dsimp [g]; abel\n  have h_image : (g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) '' {A, B, C} = {B + C - A, A + C - B, A + B - C} := by\n    simp [Set.image_insert_eq, Set.image_singleton, hgA, hgB, hgC]\n  have h_anticomplementary_eq : anticomplementaryTriangle A B C = (g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) '' s := by\n    calc\n      anticomplementaryTriangle A B C = convexHull \u211d {B + C - A, A + C - B, A + B - C} := rfl\n      _ = convexHull \u211d ((g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) '' {A, B, C}) := by rw [h_image]\n      _ = (g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) '' (convexHull \u211d {A, B, C}) := by rw [AffineMap.image_convexHull]\n      _ = (g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) '' s := rfl\n  rw [h_anticomplementary_eq]\n  let f : (Fin 2 \u2192 \u211d) \u2192\u2097[\u211d] (Fin 2 \u2192 \u211d) := (-2 : \u211d) \u2022 (LinearMap.id : (Fin 2 \u2192 \u211d) \u2192\u2097[\u211d] (Fin 2 \u2192 \u211d))\n  have hf : (f : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) = (fun X : Fin 2 \u2192 \u211d => -2 \u2022 X) := by\n    ext X; simp [f]\n  have hdet : LinearMap.det f = (4 : \u211d) := by\n    simp [f]; norm_num\n  calc\n    MeasureTheory.volume ((g : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) '' s) = MeasureTheory.volume (((fun X : Fin 2 \u2192 \u211d => (A + B + C) + (-2 \u2022 X)) '' s)) := by\n      dsimp [g]; simp [sub_eq_add_neg]\n    _ = MeasureTheory.volume (((fun X : Fin 2 \u2192 \u211d => -2 \u2022 X) '' s)) := by\n      calc\n        MeasureTheory.volume ((fun X : Fin 2 \u2192 \u211d => (A + B + C) + (-2 \u2022 X)) '' s) = MeasureTheory.volume (((fun Y : Fin 2 \u2192 \u211d => (A + B + C) + Y) \u2218 (fun X : Fin 2 \u2192 \u211d => -2 \u2022 X)) '' s) := rfl\n        _ = MeasureTheory.volume ((fun Y : Fin 2 \u2192 \u211d => (A + B + C) + Y) '' ((fun X : Fin 2 \u2192 \u211d => -2 \u2022 X) '' s)) := by rw [Set.image_comp]\n        _ = MeasureTheory.volume ((fun X : Fin 2 \u2192 \u211d => -2 \u2022 X) '' s) := by simp\n    _ = MeasureTheory.volume ((f : (Fin 2 \u2192 \u211d) \u2192 (Fin 2 \u2192 \u211d)) '' s) := by rw [hf]\n    _ = ENNReal.ofReal |LinearMap.det f| * MeasureTheory.volume s := by\n      rw [MeasureTheory.Measure.addHaar_image_linearMap volume f s]\n    _ = ENNReal.ofReal (4 : \u211d) * MeasureTheory.volume s := by\n      rw [hdet, abs_of_pos (by norm_num : (0 : \u211d) < 4)]\n    _ = (4 : ENNReal) * MeasureTheory.volume s := by norm_num\n    _ = 4 * MeasureTheory.volume (convexHull \u211d {A, B, C}) := rfl"
+    },
+    {
+      "id": "aux_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Algebraic identity relating convex combinations of anticomplementary vertices to barycentric coordinates.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Algebraic identity relating convex combinations of anticomplementary vertices to barycentric coordinates. -/) (proof := /-- Direct computation. -/)]\nlemma aux_eq (A B C : Fin 2 \u2192 \u211d) (w\u2081 w\u2082 w\u2083 : \u211d) (hsum : w\u2081 + w\u2082 + w\u2083 = 1) : (1 - 2*w\u2081) \u2022 A + (1 - 2*w\u2082) \u2022 B + (1 - 2*w\u2083) \u2022 C = w\u2081 \u2022 (B + C - A) + w\u2082 \u2022 (A + C - B) + w\u2083 \u2022 (A + B - C) := by\n  ext i\n  simp [Pi.add_apply, Pi.smul_apply, Pi.sub_apply]\n  have hcalc : ((1 - 2*w\u2081) * A i + (1 - 2*w\u2082) * B i + (1 - 2*w\u2083) * C i) - (w\u2081*(B i + C i - A i) + w\u2082*(A i + C i - B i) + w\u2083*(A i + B i - C i)) = 0 := by\n    calc\n      ((1 - 2*w\u2081) * A i + (1 - 2*w\u2082) * B i + (1 - 2*w\u2083) * C i) - (w\u2081*(B i + C i - A i) + w\u2082*(A i + C i - B i) + w\u2083*(A i + B i - C i))\n          = (A i + B i + C i) * (1 - (w\u2081 + w\u2082 + w\u2083)) := by ring\n      _ = (A i + B i + C i) * 0 := by\n        rw [hsum]\n        simp\n      _ = 0 := by ring\n  linarith\n-- NEW"
+    },
+    {
+      "id": "aux_eq2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Algebraic identity relating barycentric coordinates to convex combinations of anticomplementary vertices.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Algebraic identity relating barycentric coordinates to convex combinations of anticomplementary vertices. -/) (proof := /-- Direct computation. -/)]\nlemma aux_eq2 (A B C : Fin 2 \u2192 \u211d) (\u03b1 \u03b2 \u03b3 : \u211d) (hsum : \u03b1 + \u03b2 + \u03b3 = 1) : \u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C = ((1 - \u03b1)/2) \u2022 (B + C - A) + ((1 - \u03b2)/2) \u2022 (A + C - B) + ((1 - \u03b3)/2) \u2022 (A + B - C) := by\n  ext i\n  simp\n  field_simp\n  calc\n    (\u03b1 * A i + \u03b2 * B i + \u03b3 * C i) * 2 = (2*\u03b1)*A i + (2*\u03b2)*B i + (2*\u03b3)*C i := by ring\n    _ = ((\u03b1 - \u03b2 - \u03b3 + 1)*A i + (\u03b2 - \u03b1 - \u03b3 + 1)*B i + (1 - \u03b1 - \u03b2 + \u03b3)*C i) := by\n      have h1 : 2*\u03b1 = \u03b1 - \u03b2 - \u03b3 + 1 := by linarith\n      have h2 : 2*\u03b2 = \u03b2 - \u03b1 - \u03b3 + 1 := by linarith\n      have h3 : 2*\u03b3 = 1 - \u03b1 - \u03b2 + \u03b3 := by linarith\n      simp [h1, h2, h3]\n    _ = (1-\u03b1)*(B i + C i - A i) + (1-\u03b2)*(A i + C i - B i) + (1-\u03b3)*(A i + B i - C i) := by ring\n-- NEW"
+    },
+    {
+      "id": "barycentric_coords",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any points A,B,C,X with A,B,C non-collinear, there exist \u03b1,\u03b2,\u03b3 such that \u03b1+\u03b2+\u03b3 = 1 and X = \u03b1\u2022A + \u03b2\u2022B + \u03b3\u2022C. Moreover, \u03b1 = (det(B-X,C-X))/det(B-A,C-A), etc.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- For any points A,B,C,X with A,B,C non-collinear, there exist \u03b1,\u03b2,\u03b3 such that \u03b1+\u03b2+\u03b3 = 1 and X = \u03b1\u2022A + \u03b2\u2022B + \u03b3\u2022C. Moreover, \u03b1 = (det(B-X,C-X))/det(B-A,C-A), etc. -/) (proof := /-- Use Cramer's rule: write X = A + s*(B-A) + t*(C-A) and set \u03b1=1-s-t, \u03b2=s, \u03b3=t. Then compute determinants. -/)]\nlemma barycentric_coords (A B C X : Fin 2 \u2192 \u211d) (hdet : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0) :\n    \u2203 (\u03b1 \u03b2 \u03b3 : \u211d), \u03b1 + \u03b2 + \u03b3 = 1 \u2227 X = \u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C := by\n  -- Define the matrix M whose columns are B-A and C-A\n  let M : Matrix (Fin 2) (Fin 2) \u211d := \u03bb i j => match j with\n    | 0 => (B - A) i\n    | 1 => (C - A) i\n  -- det M equals the given expression\n  have hdetM : Matrix.det M \u2260 0 := by\n    rw [Matrix.det_fin_two]\n    simpa [M, mul_comm] using hdet\n  have hdet_unit : IsUnit (Matrix.det M) := (isUnit_iff_ne_zero.mpr hdetM)\n  haveI : Invertible M := Matrix.invertibleOfIsUnitDet M hdet_unit\n  -- vector dx = X - A\n  let dx : Fin 2 \u2192 \u211d := X - A\n  -- solve M * v = dx\n  let v : Fin 2 \u2192 \u211d := M\u207b\u00b9.mulVec dx\n  have hMv : M.mulVec v = dx := by\n    -- lemma: M.mulVec (M\u207b\u00b9.mulVec dx) = dx\n    have htemp : \u2200 (A : Matrix (Fin 2) (Fin 2) \u211d) [Invertible A] (u : Fin 2 \u2192 \u211d), A.mulVec (A\u207b\u00b9.mulVec u) = u := by\n      intro A hA u\n      have hM' : A\u207b\u00b9.mulVec u = A\u207b\u00b9.mulVec u := rfl\n      have h := Matrix.inv_mulVec_eq_vec (A := A\u207b\u00b9) (u := A\u207b\u00b9.mulVec u) (v := u) hM'\n      simpa [inv_inv] using h\n    exact htemp M dx\n  -- Now we have M.mulVec v = dx, i.e., X - A = v 0 \u2022 (B-A) + v 1 \u2022 (C-A)\n  have h_eq : X - A = (v 0) \u2022 (B - A) + (v 1) \u2022 (C - A) := by\n    calc\n      X - A = M.mulVec v := by symm; exact hMv\n      _ = (v 0) \u2022 (B - A) + (v 1) \u2022 (C - A) := by\n        ext i\n        fin_cases i <;> simp [Matrix.mulVec, M, mul_comm, mul_left_comm, mul_assoc]\n  have hX : X = A + ((v 0) \u2022 (B - A) + (v 1) \u2022 (C - A)) := by\n    calc\n      X = (X - A) + A := by abel\n      _ = ((v 0) \u2022 (B - A) + (v 1) \u2022 (C - A)) + A := by rw [h_eq]\n      _ = A + ((v 0) \u2022 (B - A) + (v 1) \u2022 (C - A)) := by abel\n  have hX_expanded : X = (1 - v 0 - v 1) \u2022 A + v 0 \u2022 B + v 1 \u2022 C := by\n    calc\n      X = A + ((v 0) \u2022 (B - A) + (v 1) \u2022 (C - A)) := hX\n      _ = A + ((v 0 \u2022 B - v 0 \u2022 A) + (v 1 \u2022 C - v 1 \u2022 A)) := by simp [smul_sub]\n      _ = (1 - v 0 - v 1) \u2022 A + v 0 \u2022 B + v 1 \u2022 C := by\n        ext i\n        fin_cases i <;> simp [Pi.add_apply, Pi.smul_apply, Pi.sub_apply] <;> ring\n  -- Set \u03b1, \u03b2, \u03b3\n  refine \u27e81 - v 0 - v 1, v 0, v 1, ?_, hX_expanded\u27e9\n  ring"
+    },
+    {
+      "id": "collinear_of_volume_convexHull_eq_zero",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If the volume of the convex hull of three points is zero, then they are collinear.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- If the volume of the convex hull of three points is zero, then they are collinear. -/) (proof := /-- Uses linear independence of rows, affine independence, nonempty interior, measure positivity. -/)]\nlemma collinear_of_volume_convexHull_eq_zero (A B C : Fin 2 \u2192 \u211d)\n    (hvol : MeasureTheory.volume (convexHull \u211d {A, B, C}) = 0) :\n    (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0 := by\n  by_contra h\n  set M := !![(B - A) 0, (B - A) 1; (C - A) 0, (C - A) 1] with hM\n  have hdet : M.det \u2260 0 := by\n    simpa [M, Matrix.det_fin_two_of] using h\n  have h_lin_rows : LinearIndependent \u211d (fun (i : Fin 2) => M i) :=\n    Matrix.linearIndependent_rows_of_det_ne_zero hdet\n  have h_lin : LinearIndependent \u211d ![B - A, C - A] := by\n    have h_eq : (fun (i : Fin 2) => M i) = ![B - A, C - A] := by\n      ext i j\n      fin_cases i <;> fin_cases j <;> rfl\n    rw [h_eq] at h_lin_rows\n    exact h_lin_rows\n  -- define an equivalence between Fin 2 and {x : Fin 3 // x \u2260 0}\n  let e : Fin 2 \u2243 {x : Fin 3 // x \u2260 0} :=\n    { toFun := \u03bb i => match i with\n        | 0 => \u27e81, by decide\u27e9\n        | 1 => \u27e82, by decide\u27e9\n      invFun := \u03bb x => if h : x.val = 1 then 0 else 1\n      left_inv := by decide\n      right_inv := by decide }\n  -- define the family of vectors needed for affine independence\n  let f : {x : Fin 3 // x \u2260 0} \u2192 (Fin 2 \u2192 \u211d) := \u03bb i => ![A, B, C] i.val -\u1d65 ![A, B, C] 0\n  have h_f_comp : f \u2218 e = ![B - A, C - A] := by\n    ext i j\n    fin_cases i <;> fin_cases j <;> rfl\n  have h_lin_f : LinearIndependent \u211d f := by\n    rw [\u2190 linearIndependent_equiv e, h_f_comp]\n    exact h_lin\n  have h_affine : AffineIndependent \u211d ![A, B, C] :=\n    (affineIndependent_iff_linearIndependent_vsub (k := \u211d) (V := Fin 2 \u2192 \u211d) (P := Fin 2 \u2192 \u211d) (p := ![A,B,C]) (i1 := 0)).2 h_lin_f\n  have h_card : Fintype.card (Fin 3) = Module.finrank \u211d (Fin 2 \u2192 \u211d) + 1 := by\n    simp\n  have h_range : Set.range ![A, B, C] = {A, B, C} := by\n    ext x; simp [or_comm, or_assoc, or_left_comm]\n  have h_span : affineSpan \u211d (Set.range ![A, B, C]) = \u22a4 := by\n    have := (AffineIndependent.affineSpan_eq_top_iff_card_eq_finrank_add_one h_affine).2 h_card\n    exact this\n  have h_interior_nonempty : (interior (convexHull \u211d {A, B, C})).Nonempty := by\n    rw [interior_convexHull_nonempty_iff_affineSpan_eq_top]\n    simpa [h_range] using h_span\n  have h_pos : 0 < MeasureTheory.volume (convexHull \u211d {A, B, C}) := by\n    apply MeasureTheory.Measure.measure_pos_of_nonempty_interior (\u03bc := volume)\n    exact h_interior_nonempty\n  rw [hvol] at h_pos\n  exact lt_irrefl 0 h_pos"
+    },
+    {
+      "id": "collinear_span_ne_top",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If two vectors v,w in \u211d\u00b2 satisfy v0*w1 - v1*w0 = 0, their span is not the whole space.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- If two vectors v,w in \u211d\u00b2 satisfy v0*w1 - v1*w0 = 0, their span is not the whole space. -/) (proof := /-- Use determinant / linear independence argument. -/)]\nlemma collinear_span_ne_top (A B C : Fin 2 \u2192 \u211d) (h : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0) :\n    Submodule.span \u211d {B - A, C - A} \u2260 \u22a4 := by\n  let v := B - A\n  let w := C - A\n  have hdet : v 0 * w 1 - v 1 * w 0 = 0 := h\n  -- Build a 2x2 matrix whose columns are v and w\n  let M : Matrix (Fin 2) (Fin 2) \u211d := fun i j => match i, j with\n    | 0, 0 => v 0\n    | 0, 1 => w 0\n    | 1, 0 => v 1\n    | 1, 1 => w 1\n  have hMdet : M.det = 0 := by\n    calc\n      M.det = M 0 0 * M 1 1 - M 0 1 * M 1 0 := by\n        rw [Matrix.det_fin_two]\n      _ = v 0 * w 1 - w 0 * v 1 := by\n        simp [M]\n      _ = 0 := by\n        simpa [mul_comm] using hdet\n  have hcol0 : M.col 0 = v := by\n    ext i; fin_cases i <;> simp [M, v, w]\n  have hcol1 : M.col 1 = w := by\n    ext i; fin_cases i <;> simp [M, v, w]\n  have h_lin_iff_det_ne_zero : LinearIndependent \u211d M.col \u2194 M.det \u2260 0 := by\n    have h1 : LinearIndependent \u211d M.col \u2194 IsUnit M := Matrix.linearIndependent_cols_iff_isUnit\n    have h2 : IsUnit M \u2194 IsUnit (M.det) := Matrix.isUnit_iff_isUnit_det (A := M)\n    have h3 : IsUnit (M.det : \u211d) \u2194 (M.det : \u211d) \u2260 0 := isUnit_iff_ne_zero\n    simpa [h1, h2, h3] using Iff.rfl\n  have h_not_lin : \u00ac LinearIndependent \u211d M.col := by\n    rw [h_lin_iff_det_ne_zero]\n    simpa using hMdet\n  by_contra h_eq\n  -- h_eq : Submodule.span \u211d {v, w} = \u22a4\n  have hspan_top : \u22a4 \u2264 Submodule.span \u211d (Set.range M.col) := by\n    have h_range : Set.range M.col = {v, w} := by\n      ext x; simp [Set.range, Fin.exists_fin_two, hcol0, hcol1, eq_comm, or_comm]\n    simpa [h_range] using h_eq.symm.le\n  have card_le : Fintype.card (Fin 2) \u2264 Module.finrank \u211d (Fin 2 \u2192 \u211d) := by\n    simp [Module.finrank_fin_fun (R := \u211d) (n := 2)]\n  have h_lin : LinearIndependent \u211d M.col :=\n    linearIndependent_of_top_le_span_of_card_le_finrank hspan_top card_le\n  exact h_not_lin h_lin"
+    },
+    {
+      "id": "containment_of_S_in_anticomplementary_nondegenerate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If A, B, C is a maximal-area triangle in S and they are non-collinear, and A, B, C themselves belong to S, then S is contained in the anticomplementary triangle of ABC.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- If A, B, C is a maximal-area triangle in S and they are non-collinear, and A, B, C themselves belong to S, then S is contained in the anticomplementary triangle of ABC. -/) (proof := /-- Use the helper lemmas. -/)]\nlemma containment_of_S_in_anticomplementary_nondegenerate (S : Finset (Fin 2 \u2192 \u211d)) (A B C : Fin 2 \u2192 \u211d)\n    (hA : A \u2208 S) (hB : B \u2208 S) (hC : C \u2208 S)\n    (h_noncollinear : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0)\n    (hmax : \u2200 X \u2208 S, \u2200 Y \u2208 S, \u2200 Z \u2208 S, MeasureTheory.volume (convexHull \u211d {X, Y, Z}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}))\n    (X : Fin 2 \u2192 \u211d) (hX : X \u2208 S) : X \u2208 anticomplementaryTriangle A B C := by\n  have hDpos : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0 := h_noncollinear\n  rcases barycentric_coords A B C X hDpos with \u27e8\u03b1, \u03b2, \u03b3, hsum, hX_eq\u27e9\n  have hdet_alpha : (B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0 = \u03b1 * ((B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0) := by\n    have hX0 : X 0 = \u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0 := by\n      calc\n        X 0 = (\u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C) 0 := by rw [hX_eq]\n        _ = \u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0 := by simp\n    have hX1 : X 1 = \u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1 := by\n      calc\n        X 1 = (\u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C) 1 := by rw [hX_eq]\n        _ = \u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1 := by simp\n    have hB_X0 : (B - X) 0 = (1 - \u03b2) * B 0 - \u03b1 * A 0 - \u03b3 * C 0 := by\n      calc\n        (B - X) 0 = (B 0 - X 0) := rfl\n        _ = B 0 - (\u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0) := by rw [hX0]\n        _ = (1 - \u03b2) * B 0 - \u03b1 * A 0 - \u03b3 * C 0 := by ring\n    have hB_X1 : (B - X) 1 = (1 - \u03b2) * B 1 - \u03b1 * A 1 - \u03b3 * C 1 := by\n      calc\n        (B - X) 1 = (B 1 - X 1) := rfl\n        _ = B 1 - (\u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1) := by rw [hX1]\n        _ = (1 - \u03b2) * B 1 - \u03b1 * A 1 - \u03b3 * C 1 := by ring\n    have hC_X0 : (C - X) 0 = (1 - \u03b3) * C 0 - \u03b1 * A 0 - \u03b2 * B 0 := by\n      calc\n        (C - X) 0 = (C 0 - X 0) := rfl\n        _ = C 0 - (\u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0) := by rw [hX0]\n        _ = (1 - \u03b3) * C 0 - \u03b1 * A 0 - \u03b2 * B 0 := by ring\n    have hC_X1 : (C - X) 1 = (1 - \u03b3) * C 1 - \u03b1 * A 1 - \u03b2 * B 1 := by\n      calc\n        (C - X) 1 = (C 1 - X 1) := rfl\n        _ = C 1 - (\u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1) := by rw [hX1]\n        _ = (1 - \u03b3) * C 1 - \u03b1 * A 1 - \u03b2 * B 1 := by ring\n    rw [hB_X0, hB_X1, hC_X0, hC_X1]\n    have h\u03b2 : \u03b2 = 1 - \u03b1 - \u03b3 := by linarith\n    rw [h\u03b2]\n    simp\n    ring\n  have hdet_beta : (C - X) 0 * (A - X) 1 - (C - X) 1 * (A - X) 0 = \u03b2 * ((B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0) := by\n    have hX0 : X 0 = \u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0 := by\n      calc\n        X 0 = (\u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C) 0 := by rw [hX_eq]\n        _ = \u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0 := by simp\n    have hX1 : X 1 = \u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1 := by\n      calc\n        X 1 = (\u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C) 1 := by rw [hX_eq]\n        _ = \u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1 := by simp\n    have hA_X0 : (A - X) 0 = (1 - \u03b1) * A 0 - \u03b2 * B 0 - \u03b3 * C 0 := by\n      calc\n        (A - X) 0 = (A 0 - X 0) := rfl\n        _ = A 0 - (\u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0) := by rw [hX0]\n        _ = (1 - \u03b1) * A 0 - \u03b2 * B 0 - \u03b3 * C 0 := by ring\n    have hA_X1 : (A - X) 1 = (1 - \u03b1) * A 1 - \u03b2 * B 1 - \u03b3 * C 1 := by\n      calc\n        (A - X) 1 = (A 1 - X 1) := rfl\n        _ = A 1 - (\u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1) := by rw [hX1]\n        _ = (1 - \u03b1) * A 1 - \u03b2 * B 1 - \u03b3 * C 1 := by ring\n    have hC_X0 : (C - X) 0 = (1 - \u03b3) * C 0 - \u03b1 * A 0 - \u03b2 * B 0 := by\n      calc\n        (C - X) 0 = (C 0 - X 0) := rfl\n        _ = C 0 - (\u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0) := by rw [hX0]\n        _ = (1 - \u03b3) * C 0 - \u03b1 * A 0 - \u03b2 * B 0 := by ring\n    have hC_X1 : (C - X) 1 = (1 - \u03b3) * C 1 - \u03b1 * A 1 - \u03b2 * B 1 := by\n      calc\n        (C - X) 1 = (C 1 - X 1) := rfl\n        _ = C 1 - (\u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1) := by rw [hX1]\n        _ = (1 - \u03b3) * C 1 - \u03b1 * A 1 - \u03b2 * B 1 := by ring\n    rw [hA_X0, hA_X1, hC_X0, hC_X1]\n    have h\u03b2 : \u03b2 = 1 - \u03b1 - \u03b3 := by linarith\n    rw [h\u03b2]\n    simp\n    ring\n  have hdet_gamma : (A - X) 0 * (B - X) 1 - (A - X) 1 * (B - X) 0 = \u03b3 * ((B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0) := by\n    have hX0 : X 0 = \u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0 := by\n      calc\n        X 0 = (\u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C) 0 := by rw [hX_eq]\n        _ = \u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0 := by simp\n    have hX1 : X 1 = \u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1 := by\n      calc\n        X 1 = (\u03b1 \u2022 A + \u03b2 \u2022 B + \u03b3 \u2022 C) 1 := by rw [hX_eq]\n        _ = \u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1 := by simp\n    have hA_X0 : (A - X) 0 = (1 - \u03b1) * A 0 - \u03b2 * B 0 - \u03b3 * C 0 := by\n      calc\n        (A - X) 0 = (A 0 - X 0) := rfl\n        _ = A 0 - (\u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0) := by rw [hX0]\n        _ = (1 - \u03b1) * A 0 - \u03b2 * B 0 - \u03b3 * C 0 := by ring\n    have hA_X1 : (A - X) 1 = (1 - \u03b1) * A 1 - \u03b2 * B 1 - \u03b3 * C 1 := by\n      calc\n        (A - X) 1 = (A 1 - X 1) := rfl\n        _ = A 1 - (\u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1) := by rw [hX1]\n        _ = (1 - \u03b1) * A 1 - \u03b2 * B 1 - \u03b3 * C 1 := by ring\n    have hB_X0 : (B - X) 0 = (1 - \u03b2) * B 0 - \u03b1 * A 0 - \u03b3 * C 0 := by\n      calc\n        (B - X) 0 = (B 0 - X 0) := rfl\n        _ = B 0 - (\u03b1 * A 0 + \u03b2 * B 0 + \u03b3 * C 0) := by rw [hX0]\n        _ = (1 - \u03b2) * B 0 - \u03b1 * A 0 - \u03b3 * C 0 := by ring\n    have hB_X1 : (B - X) 1 = (1 - \u03b2) * B 1 - \u03b1 * A 1 - \u03b3 * C 1 := by\n      calc\n        (B - X) 1 = (B 1 - X 1) := rfl\n        _ = B 1 - (\u03b1 * A 1 + \u03b2 * B 1 + \u03b3 * C 1) := by rw [hX1]\n        _ = (1 - \u03b2) * B 1 - \u03b1 * A 1 - \u03b3 * C 1 := by ring\n    rw [hA_X0, hA_X1, hB_X0, hB_X1]\n    have h\u03b3 : \u03b3 = 1 - \u03b1 - \u03b2 := by linarith\n    rw [h\u03b3]\n    simp\n    ring\n  have h_abs_alpha : |\u03b1| \u2264 1 := by\n    have hD_abs_pos : 0 < |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := abs_pos.mpr h_noncollinear\n    have hineq : |(B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| :=\n      det_ineq1 S A B C X hA hB hC hX hmax\n    rw [hdet_alpha] at hineq\n    rw [abs_mul] at hineq\n    nlinarith\n  have h_abs_beta : |\u03b2| \u2264 1 := by\n    have hD_abs_pos : 0 < |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := abs_pos.mpr h_noncollinear\n    have hineq : |(A - X) 0 * (C - X) 1 - (A - X) 1 * (C - X) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| :=\n      det_ineq2 S A B C X hA hB hC hX hmax\n    have hdet_beta' : (A - X) 0 * (C - X) 1 - (A - X) 1 * (C - X) 0 = - \u03b2 * ((B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0) := by\n      calc\n        (A - X) 0 * (C - X) 1 - (A - X) 1 * (C - X) 0 = -((C - X) 0 * (A - X) 1 - (C - X) 1 * (A - X) 0) := by ring\n        _ = -(\u03b2 * ((B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0)) := by rw [hdet_beta]\n        _ = -\u03b2 * ((B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0) := by ring\n    rw [hdet_beta'] at hineq\n    rw [abs_mul] at hineq\n    have h_neg_abs : |(-\u03b2)| = |\u03b2| := by simp\n    rw [h_neg_abs] at hineq\n    nlinarith\n  have h_abs_gamma : |\u03b3| \u2264 1 := by\n    have hD_abs_pos : 0 < |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := abs_pos.mpr h_noncollinear\n    have hineq : |(A - X) 0 * (B - X) 1 - (A - X) 1 * (B - X) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| :=\n      det_ineq3 S A B C X hA hB hC hX hmax\n    rw [hdet_gamma] at hineq\n    rw [abs_mul] at hineq\n    nlinarith\n  have h\u03b1_le_one : \u03b1 \u2264 1 := by\n    rcases abs_le.mp h_abs_alpha with \u27e8h_neg, h_pos\u27e9\n    exact h_pos\n  have h\u03b2_le_one : \u03b2 \u2264 1 := by\n    rcases abs_le.mp h_abs_beta with \u27e8h_neg, h_pos\u27e9\n    exact h_pos\n  have h\u03b3_le_one : \u03b3 \u2264 1 := by\n    rcases abs_le.mp h_abs_gamma with \u27e8h_neg, h_pos\u27e9\n    exact h_pos\n  apply (anticomplementary_condition A B C X hDpos).mpr\n  exact \u27e8\u03b1, \u03b2, \u03b3, hsum, hX_eq, h\u03b1_le_one, h\u03b2_le_one, h\u03b3_le_one\u27e9\n\n-- NEW: Lemma for collinear case: there exists a triangle of area 4 covering S"
+    },
+    {
+      "id": "det_ineq1",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Given a maximal-area triangle A,B,C in S, for any X in S we have |det(B-X, C-X)| \u2264 |det(B-A, C-A)|.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- Given a maximal-area triangle A,B,C in S, for any X in S we have |det(B-X, C-X)| \u2264 |det(B-A, C-A)|. -/) (proof := /-- Apply hmax to (X,B,C) and use volume_convexHull_three_points to rewrite both sides. Cancel the factor 1/2 and the volume of the standard triangle (nonzero finite) to get the inequality. -/)]\nlemma det_ineq1 (S : Finset (Fin 2 \u2192 \u211d)) (A B C X : Fin 2 \u2192 \u211d) (hA : A \u2208 S) (hB : B \u2208 S) (hC : C \u2208 S) (hX : X \u2208 S)\n    (hmax : \u2200 X' \u2208 S, \u2200 Y' \u2208 S, \u2200 Z' \u2208 S, MeasureTheory.volume (convexHull \u211d {X', Y', Z'}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C})) :\n    |(B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n  have hvol := hmax X hX B hB C hC\n  have volABC := volume_convexHull_three_points A B C\n  have volXBC := volume_convexHull_three_points X B C\n  rw [volABC, volXBC] at hvol\n  have h_mul : ENNReal.ofReal |(B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0| \u2264 ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n    have h_mul' := (ENNReal.mul_le_mul_left (by norm_num : (1/2 : ENNReal) \u2260 0) (by norm_num : (1/2 : ENNReal) \u2260 \u22a4)).mp hvol\n    exact h_mul'\n  have ha_nonneg : 0 \u2264 |(B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0| := abs_nonneg _\n  have hb_nonneg : 0 \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := abs_nonneg _\n  have h_real_or := (ENNReal.ofReal_le_ofReal_iff' (p := |(B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0|)\n    (q := |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0|)).mp h_mul\n  cases h_real_or with\n  | inl h => exact h\n  | inr h =>\n    -- h says |det1| \u2264 0, but |det1| \u2265 0, so |det1| = 0\n    have hzero : |(B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0| = 0 := by linarith\n    -- then we need to show 0 \u2264 |det2|, which holds by hb_nonneg\n    calc\n      |(B - X) 0 * (C - X) 1 - (B - X) 1 * (C - X) 0| = 0 := hzero\n      _ \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := hb_nonneg"
+    },
+    {
+      "id": "det_ineq2",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Similarly, |det(A-X, C-X)| \u2264 |det(B-A, C-A)|.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- Similarly, |det(A-X, C-X)| \u2264 |det(B-A, C-A)|. -/) (proof := /-- Apply hmax to (A,X,C) and use volume_convexHull_three_points. -/)]\nlemma det_ineq2 (S : Finset (Fin 2 \u2192 \u211d)) (A B C X : Fin 2 \u2192 \u211d) (hA : A \u2208 S) (hB : B \u2208 S) (hC : C \u2208 S) (hX : X \u2208 S)\n    (hmax : \u2200 X' \u2208 S, \u2200 Y' \u2208 S, \u2200 Z' \u2208 S, MeasureTheory.volume (convexHull \u211d {X', Y', Z'}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C})) :\n    |(A - X) 0 * (C - X) 1 - (A - X) 1 * (C - X) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n  -- apply maximality to A, X, C\n  have hmax' : MeasureTheory.volume (convexHull \u211d {A, X, C}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) :=\n    hmax A hA X hX C hC\n  have hvolA := volume_convexHull_three_points A X C\n  have hvolB := volume_convexHull_three_points A B C\n  have hineq : (1/2 : ENNReal) * ENNReal.ofReal |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| \u2264 (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n    calc\n      (1/2 : ENNReal) * ENNReal.ofReal |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| = MeasureTheory.volume (convexHull \u211d {A, X, C}) := by\n        symm; exact hvolA\n      _ \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := hmax'\n      _ = (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := hvolB\n  have hpos0 : (1/2 : ENNReal) \u2260 0 := by norm_num\n  have hposinf : (1/2 : ENNReal) \u2260 \u22a4 := by norm_num\n  have hdet_ineq' : ENNReal.ofReal |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| \u2264 ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| :=\n    ((ENNReal.mul_le_mul_left hpos0 hposinf).mp hineq)\n  have hdet_abs_ineq : |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n    have h := (ENNReal.ofReal_le_ofReal_iff').mp hdet_ineq'\n    rcases h with (h' | h')\n    \u00b7 exact h'\n    \u00b7 have hzero : |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| = 0 := by\n        have hnonneg : 0 \u2264 |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| := abs_nonneg _\n        linarith\n      have hpos' : 0 \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := abs_nonneg _\n      linarith\n  have hdet_eq : (A - X) 0 * (C - X) 1 - (A - X) 1 * (C - X) 0 = -((X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0) := by\n    simp [Pi.sub_apply]\n    ring\n  have h_abs_eq : |(A - X) 0 * (C - X) 1 - (A - X) 1 * (C - X) 0| = |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| := by\n    calc\n      |(A - X) 0 * (C - X) 1 - (A - X) 1 * (C - X) 0| = |-((X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0)| := by rw [hdet_eq]\n      _ = |(X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0| := by\n        simpa using abs_neg ((X - A) 0 * (C - A) 1 - (X - A) 1 * (C - A) 0)\n  rw [h_abs_eq]\n  exact hdet_abs_ineq"
+    },
+    {
+      "id": "det_ineq3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Similarly, |det(A-X, B-X)| \u2264 |det(B-A, C-A)|.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- Similarly, |det(A-X, B-X)| \u2264 |det(B-A, C-A)|. -/) (proof := /-- Apply hmax to (A,B,X) and use volume_convexHull_three_points. -/)]\nlemma det_ineq3 (S : Finset (Fin 2 \u2192 \u211d)) (A B C X : Fin 2 \u2192 \u211d) (hA : A \u2208 S) (hB : B \u2208 S) (hC : C \u2208 S) (hX : X \u2208 S)\n    (hmax : \u2200 X' \u2208 S, \u2200 Y' \u2208 S, \u2200 Z' \u2208 S, MeasureTheory.volume (convexHull \u211d {X', Y', Z'}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C})) :\n    |(A - X) 0 * (B - X) 1 - (A - X) 1 * (B - X) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n  -- Apply hmax to A, B, X\n  have hvol_ineq : MeasureTheory.volume (convexHull \u211d {A, B, X}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) :=\n    hmax A hA B hB X hX\n  -- rewrite using volume_convexHull_three_points\n  have hvolABX : MeasureTheory.volume (convexHull \u211d {A, B, X}) = (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| :=\n    volume_convexHull_three_points A B X\n  have hvolABC : MeasureTheory.volume (convexHull \u211d {A, B, C}) = (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| :=\n    volume_convexHull_three_points A B C\n  -- rewrite the inequality\n  have hineq_enn : (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| \u2264\n      (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n    -- using hvol_ineq and the rewrites\n    calc\n      (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0|\n          = MeasureTheory.volume (convexHull \u211d {A, B, X}) := by symm; exact hvolABX\n      _ \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := hvol_ineq\n      _ = (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := hvolABC\n  -- Cancel the factor (1/2)\n  have h_cancel : ENNReal.ofReal |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| \u2264\n      ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n    have h_half_ne_zero : (1/2 : ENNReal) \u2260 0 := by norm_num\n    have h_half_ne_top : (1/2 : ENNReal) \u2260 \u22a4 := by simp\n    have := (ENNReal.mul_le_mul_iff_right h_half_ne_zero h_half_ne_top).mp hineq_enn\n    exact this\n  -- Now use ENNReal.ofReal_le_ofReal_iff'\n  have h_det_abs_le : |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| \u2264 |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n    have h_nonneg : 0 \u2264 |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| := abs_nonneg _\n    have h_iff := ENNReal.ofReal_le_ofReal_iff'.mp h_cancel\n    rcases h_iff with (h | h)\n    \u00b7 exact h\n    \u00b7 -- h : |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| \u2264 0\n      have hzero : |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| = 0 := le_antisymm h h_nonneg\n      rw [hzero]\n      exact abs_nonneg _\n  -- Finally, relate the LHS of the target to the above inequality using the equality of determinants\n  have h_det_eq : |(A - X) 0 * (B - X) 1 - (A - X) 1 * (B - X) 0| = |(B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0| := by\n    have h_eq : (A - X) 0 * (B - X) 1 - (A - X) 1 * (B - X) 0 = (B - A) 0 * (X - A) 1 - (B - A) 1 * (X - A) 0 := by\n      simp [Pi.sub_apply, Pi.add_apply, Pi.neg_apply]\n      ring\n    simpa [Pi.sub_apply, Pi.add_apply, Pi.neg_apply] using congrArg (fun t : \u211d => |t|) h_eq\n  -- Combine\n  rw [h_det_eq]\n  exact h_det_abs_le"
+    },
+    {
+      "id": "exists_max_volume_triple",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Given a nonempty finite set S, there exists a triple of points in S with maximal volume.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- Given a nonempty finite set S, there exists a triple of points in S with maximal volume. -/) (proof := /-- Finite set, use Finset.max'. -/)]\nlemma exists_max_volume_triple (S : Finset (Fin 2 \u2192 \u211d)) (hS_nonempty : S.Nonempty) : \u2203 (A B C : Fin 2 \u2192 \u211d), A \u2208 S \u2227 B \u2208 S \u2227 C \u2208 S \u2227 \u2200 (X Y Z : Fin 2 \u2192 \u211d), X \u2208 S \u2192 Y \u2208 S \u2192 Z \u2208 S \u2192 MeasureTheory.volume (convexHull \u211d {X, Y, Z}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := by\n  have htriples_nonempty : (Finset.product S (Finset.product S S)).Nonempty := by\n    rcases hS_nonempty with \u27e8a, ha\u27e9\n    refine \u27e8(a, (a, a)), Finset.mem_product.mpr \u27e8ha, Finset.mem_product.mpr \u27e8ha, ha\u27e9\u27e9\u27e9\n  have hmax := Finset.exists_max_image (Finset.product S (Finset.product S S))\n    (\u03bb (p : (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d)) => MeasureTheory.volume (convexHull \u211d {p.1, p.2.1, p.2.2}))\n    htriples_nonempty\n  rcases hmax with \u27e8p, hp, hmax\u27e9\n  let A := p.1\n  let B := p.2.1\n  let C := p.2.2\n  have hA : A \u2208 S := by\n    rcases Finset.mem_product.mp hp with \u27e8hA, hBC\u27e9\n    exact hA\n  have hB : B \u2208 S := by\n    rcases Finset.mem_product.mp hp with \u27e8hA, hBC\u27e9\n    rcases Finset.mem_product.mp hBC with \u27e8hB, hC\u27e9\n    exact hB\n  have hC : C \u2208 S := by\n    rcases Finset.mem_product.mp hp with \u27e8hA, hBC\u27e9\n    rcases Finset.mem_product.mp hBC with \u27e8hB, hC\u27e9\n    exact hC\n  refine \u27e8A, B, C, hA, hB, hC, ?_\u27e9\n  intro X Y Z hX hY hZ\n  have hmemXYZ : ((X, (Y, Z)) : (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d)) \u2208 Finset.product S (Finset.product S S) := by\n    apply Finset.mem_product.mpr\n    refine \u27e8hX, Finset.mem_product.mpr \u27e8hY, hZ\u27e9\u27e9\n  have := hmax (X, (Y, Z)) hmemXYZ\n  -- this gives `volume ... \u2264 volume ...`? Let's inspect the type of hmax.\n  -- hmax : \u2200 (x' : (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d) \u00d7 (Fin 2 \u2192 \u211d)), x' \u2208 Finset.product S (Finset.product S S) \u2192 ... ?\n  -- Actually hmax from exists_max_image: `\u2200 x' \u2208 s, f x' \u2264 f x` where x is the maximizing element p.\n  -- So `hmax (X, (Y, Z)) hmemXYZ` is `f (X, (Y, Z)) \u2264 f p`. But `f` is the lambda we gave, so it's `volume (convexHull \u211d {X, Y, Z}) \u2264 volume (convexHull \u211d {p.1, p.2.1, p.2.2})`.\n  -- But we need `volume (convexHull \u211d {X, Y, Z}) \u2264 volume (convexHull \u211d {A, B, C})` and A = p.1, B = p.2.1, C = p.2.2.\n  -- So we can `simpa [A, B, C]`.\n  simpa [A, B, C]\n\n-- NEW helper lemmas for volume_convexHull_three_points"
+    },
+    {
+      "id": "exists_triangle_area_four_covering_collinear",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If all points of S are collinear, then there exists a triangle of area 4 that covers S.",
+      "is_main": false,
+      "col": 0,
+      "level": 2,
+      "lean": "@[blueprint (statement := /-- If all points of S are collinear, then there exists a triangle of area 4 that covers S. -/) (proof := /-- Pick two extremal points A,B, then construct C such that area(ABC)=4. -/)]\nlemma exists_triangle_area_four_covering_collinear (S : Finset (Fin 2 \u2192 \u211d)) (hcollinear : \u2200 X \u2208 S, \u2200 Y \u2208 S, \u2200 Z \u2208 S, (Y - X) 0 * (Z - X) 1 - (Y - X) 1 * (Z - X) 0 = 0) :\n    \u2203 (A B C : Fin 2 \u2192 \u211d), MeasureTheory.volume (convexHull \u211d {A, B, C}) = 4 \u2227 convexHull \u211d {A, B, C} \u2287 S := by\n  sorry_using [collinear_of_volume_convexHull_eq_zero]\n-- NEW"
+    },
+    {
+      "id": "linear_map_det_formula",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Determinant of the linear map sending e1 to B-A, e2 to C-A.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- Determinant of the linear map sending e1 to B-A, e2 to C-A. -/) (proof := /-- Use matrix_det_formula and LinearMap.det_toLin'. -/)]\nlemma linear_map_det_formula (A B C : Fin 2 \u2192 \u211d) :\n    LinearMap.det (Matrix.toLin' (Matrix.of (fun i j : Fin 2 => \n      match j with\n      | 0 => (B - A) i\n      | 1 => (C - A) i))) =\n    (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 := by\n  calc\n    LinearMap.det (Matrix.toLin' (Matrix.of (fun i j : Fin 2 => \n      match j with\n      | 0 => (B - A) i\n      | 1 => (C - A) i))) = Matrix.det (Matrix.of (fun i j : Fin 2 => \n      match j with\n      | 0 => (B - A) i\n      | 1 => (C - A) i)) := by\n      rw [LinearMap.det_toLin']\n    _ = (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 := by\n      rw [matrix_det_formula A B C]\n-- NEW"
+    },
+    {
+      "id": "matrix_det_formula",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Determinant of the matrix [[(B-A)0, (C-A)0], [(B-A)1, (C-A)1]] equals (B-A)0*(C-A)1 - (B-A)1*(C-A)0.",
+      "is_main": false,
+      "col": 0,
+      "level": 5,
+      "lean": "@[blueprint (statement := /-- Determinant of the matrix [[(B-A)0, (C-A)0], [(B-A)1, (C-A)1]] equals (B-A)0*(C-A)1 - (B-A)1*(C-A)0. -/) (proof := /-- Use Matrix.det_fin_two. -/)]\nlemma matrix_det_formula (A B C : Fin 2 \u2192 \u211d) :\n    (Matrix.of (fun i j : Fin 2 => \n      match j with\n      | 0 => (B - A) i\n      | 1 => (C - A) i)).det =\n    (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 := by\n  calc\n    (Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i)).det\n        = ((Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i)) 0 0) *\n          ((Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i)) 1 1) -\n          ((Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i)) 0 1) *\n          ((Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i)) 1 0) := by\n      simpa using Matrix.det_fin_two (Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i))\n    _ = ((B - A) 0) * ((C - A) 1) - ((C - A) 0) * ((B - A) 1) := by\n      simp [Matrix.of_apply]\n    _ = (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 := by ring\n-- NEW"
+    },
+    {
+      "id": "ne12_of_hdet",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The three vertices of the anticomplementary triangle are distinct when A,B,C are non-collinear.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- The three vertices of the anticomplementary triangle are distinct when A,B,C are non-collinear. -/) (proof := /-- If B+C-A = A+C-B, then B = A, which contradicts hdet. -/)]\nlemma ne12_of_hdet (A B C : Fin 2 \u2192 \u211d) (hdet : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0) : B + C - A \u2260 A + C - B := by\n  intro h\n  have hzero : B - A = 0 := by\n    ext i\n    have hval' : B i + C i - A i = A i + C i - B i := by\n      have hval := congrArg (fun f => f i) h\n      simpa [Pi.add_apply, Pi.sub_apply] using hval\n    have : B i - A i = 0 := by\n      linarith\n    simpa [Pi.sub_apply]\n  have hdet0 : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0 := by\n    rw [hzero]\n    simp\n  exact hdet hdet0\n-- NEW"
+    },
+    {
+      "id": "ne13_of_hdet",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Similar distinctness for second and third vertices.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- Similar distinctness for second and third vertices. -/) (proof := /-- If B+C-A = A+B-C, then C = A, which contradicts hdet. -/)]\nlemma ne13_of_hdet (A B C : Fin 2 \u2192 \u211d) (hdet : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0) : B + C - A \u2260 A + B - C := by\n  intro h_eq\n  have h_sub_eq_zero : (B + C - A) - (A + B - C) = 0 := by\n    rw [h_eq, sub_self]\n  have h_diff_eq_zero : (2 : \u211d) \u2022 (C - A) = 0 := by\n    calc\n      (2 : \u211d) \u2022 (C - A) = (B + C - A) - (A + B - C) := by\n        ext i\n        fin_cases i <;>\n          simp [Pi.add_apply, Pi.sub_apply, Pi.smul_apply] <;>\n          ring\n      _ = 0 := h_sub_eq_zero\n  have h2_ne_zero : (2 : \u211d) \u2260 0 := by norm_num\n  have hCA_zero : C - A = 0 := by\n    have h_cases := (smul_eq_zero (c := (2 : \u211d)) (x := C - A)).mp h_diff_eq_zero\n    rcases h_cases with (h2_zero | hCA)\n    \u00b7 exfalso; exact h2_ne_zero h2_zero\n    \u00b7 exact hCA\n  have hC_eq_A : C = A := by\n    apply sub_eq_zero.mp hCA_zero\n  have hdet_zero : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0 := by\n    simp [hC_eq_A]\n  exact hdet hdet_zero\n-- NEW"
+    },
+    {
+      "id": "ne23_of_hdet",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Similar distinctness for second and third vertices.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- Similar distinctness for second and third vertices. -/) (proof := /-- If A+C-B = A+B-C, then C = B, which contradicts hdet. -/)]\nlemma ne23_of_hdet (A B C : Fin 2 \u2192 \u211d) (hdet : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0) : A + C - B \u2260 A + B - C := by\n  intro h_eq\n  have h_eq2 : C = B := by\n    ext i\n    have h_eq_i : (A + C - B) i = (A + B - C) i := by simpa using congrArg (fun f => f i) h_eq\n    -- compute each side\n    simp [Pi.add_apply, Pi.sub_apply] at h_eq_i\n    linarith\n  have hdet0 : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0 := by\n    calc\n      (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = (B - A) 0 * (B - A) 1 - (B - A) 1 * (B - A) 0 := by\n        simp [h_eq2]\n      _ = 0 := by ring\n  exact hdet hdet0\n-- NEW"
+    },
+    {
+      "id": "putnam_2016_b3",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 30,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "theorem",
+      "statement": "Putnam 2016 B3 solution",
+      "is_main": true,
+      "col": 0,
+      "level": 0,
+      "lean": "@[blueprint (statement := /-- Putnam 2016 B3 solution -/) (proof := /-- Uses exists_max_volume_triple, containment_of_S_in_anticomplementary_nondegenerate, anticomplementary_volume, scale_to_exact_four, volume_convexHull_collinear, exists_triangle_area_four_covering_collinear, collinear_of_volume_convexHull_eq_zero, anticomplementaryTriangle -/)]\ntheorem putnam_2016_b3\n(S : Finset (Fin 2 \u2192 \u211d))\n(hS : \u2200 A \u2208 S, \u2200 B \u2208 S, \u2200 C \u2208 S, MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 1)\n: \u2203 A' B' C' : Fin 2 \u2192 \u211d, MeasureTheory.volume (convexHull \u211d {A', B', C'}) = 4 \u2227 convexHull \u211d {A', B', C'} \u2287 S := by\n  by_cases h_empty : S = \u2205\n  \u00b7 subst h_empty\n    have hcollinear : \u2200 X \u2208 (\u2205 : Finset (Fin 2 \u2192 \u211d)), \u2200 Y \u2208 (\u2205 : Finset (Fin 2 \u2192 \u211d)), \u2200 Z \u2208 (\u2205 : Finset (Fin 2 \u2192 \u211d)), (Y - X) 0 * (Z - X) 1 - (Y - X) 1 * (Z - X) 0 = 0 := by\n      intro X hX; exfalso; exact Finset.not_mem_empty X hX\n    exact exists_triangle_area_four_covering_collinear \u2205 hcollinear\n  \u00b7 have hS_nonempty : S.Nonempty := Finset.nonempty_iff_ne_empty.mpr h_empty\n    rcases exists_max_volume_triple S hS_nonempty with \u27e8A, B, C, hA, hB, hC, hmax\u27e9\n    have hvol_ABC : MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 1 := hS A hA B hB C hC\n    by_cases h_noncollinear : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0\n    \u00b7 -- non-collinear case\n      have hcover_anticompl : (S : Set (Fin 2 \u2192 \u211d)) \u2286 anticomplementaryTriangle A B C := by\n        intro X hX\n        have hmax' : \u2200 X \u2208 S, \u2200 Y \u2208 S, \u2200 Z \u2208 S, MeasureTheory.volume (convexHull \u211d {X, Y, Z}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := by\n          intro X' hX' Y' hY' Z' hZ'\n          exact hmax X' Y' Z' hX' hY' hZ'\n        exact containment_of_S_in_anticomplementary_nondegenerate S A B C hA hB hC h_noncollinear hmax' X hX\n      have hvol_anticompl : MeasureTheory.volume (anticomplementaryTriangle A B C) = 4 * MeasureTheory.volume (convexHull \u211d {A, B, C}) :=\n        anticomplementary_volume A B C\n      have hvol_anticompl_le4 : MeasureTheory.volume (anticomplementaryTriangle A B C) \u2264 4 := by\n        calc\n          MeasureTheory.volume (anticomplementaryTriangle A B C) = 4 * MeasureTheory.volume (convexHull \u211d {A, B, C}) := hvol_anticompl\n          _ \u2264 4 * 1 := mul_le_mul (le_refl (4 : ENNReal)) hvol_ABC (by positivity) (by positivity)\n          _ = (4 : ENNReal) := by norm_num\n      have hcover_anticompl_hull : convexHull \u211d {B + C - A, A + C - B, A + B - C} \u2287 S := by\n        simpa [anticomplementaryTriangle] using hcover_anticompl\n      rcases scale_to_exact_four S (B + C - A) (A + C - B) (A + B - C) hvol_anticompl_le4 hcover_anticompl_hull with \u27e8A', B', C', hvol_eq4, hcover'\u27e9\n      exact \u27e8A', B', C', hvol_eq4, hcover'\u27e9\n    \u00b7 -- collinear case\n      have hcollinear_all : \u2200 X \u2208 S, \u2200 Y \u2208 S, \u2200 Z \u2208 S, (Y - X) 0 * (Z - X) 1 - (Y - X) 1 * (Z - X) 0 = 0 := by\n        intro X hX Y hY Z hZ\n        have hmax_vol : MeasureTheory.volume (convexHull \u211d {X, Y, Z}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := hmax X Y Z hX hY hZ\n        have hvol_ABC_zero : MeasureTheory.volume (convexHull \u211d {A, B, C}) = 0 := by\n          apply volume_convexHull_collinear A B C\n          have hcoll : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0 := by\n            by_contra h; exact h_noncollinear h\n          exact hcoll\n        have hvol_XYZ_zero : MeasureTheory.volume (convexHull \u211d {X, Y, Z}) = 0 := by\n          have h_nonpos : MeasureTheory.volume (convexHull \u211d {X, Y, Z}) \u2264 0 := by\n            calc\n              MeasureTheory.volume (convexHull \u211d {X, Y, Z}) \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := hmax_vol\n              _ = 0 := hvol_ABC_zero\n          have h_nonneg : 0 \u2264 MeasureTheory.volume (convexHull \u211d {X, Y, Z}) := by positivity\n          exact le_antisymm h_nonpos h_nonneg\n        exact collinear_of_volume_convexHull_eq_zero X Y Z hvol_XYZ_zero\n      exact exists_triangle_area_four_covering_collinear S hcollinear_all"
+    },
+    {
+      "id": "scale_to_exact_four",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "For any triangle and any finite set S it covers, there exists a triangle of area exactly 4 that also covers S.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- For any triangle and any finite set S it covers, there exists a triangle of area exactly 4 that also covers S. -/) (proof := /-- Scale the given triangle about its centroid to achieve area 4. For degenerate triangles, use lemma for collinear case. -/)]\nlemma scale_to_exact_four (S : Finset (Fin 2 \u2192 \u211d)) (A B C : Fin 2 \u2192 \u211d) (hvol : MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 4) (hcover : convexHull \u211d {A, B, C} \u2287 S) :\n    \u2203 (A' B' C' : Fin 2 \u2192 \u211d), MeasureTheory.volume (convexHull \u211d {A', B', C'}) = 4 \u2227 convexHull \u211d {A', B', C'} \u2287 S := by\n  sorry_using [exists_triangle_area_four_covering_collinear, collinear_of_volume_convexHull_eq_zero]\n-- REVISED"
+    },
+    {
+      "id": "sum_three_eq",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Sum of a function over the three anticomplementary vertices.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Sum of a function over the three anticomplementary vertices. -/) (proof := /-- Use Finset.sum_insert and the distinctness lemmas. -/)]\nlemma sum_three_eq (A B C : Fin 2 \u2192 \u211d) (hdet : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0) (w : (Fin 2 \u2192 \u211d) \u2192 \u211d) : (\u2211 y \u2208 ({B + C - A, A + C - B, A + B - C} : Finset (Fin 2 \u2192 \u211d)), w y) = w (B + C - A) + w (A + C - B) + w (A + B - C) := by\n  have h12 : B + C - A \u2260 A + C - B := ne12_of_hdet A B C hdet\n  have h13 : B + C - A \u2260 A + B - C := ne13_of_hdet A B C hdet\n  have h23 : A + C - B \u2260 A + B - C := ne23_of_hdet A B C hdet\n  simp [Finset.sum_insert, h12, h13, h23, add_assoc]\n-- NEW"
+    },
+    {
+      "id": "sum_three_eq_smul",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Weighted sum of a function over the three anticomplementary vertices.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- Weighted sum of a function over the three anticomplementary vertices. -/) (proof := /-- Use Finset.sum_insert and the distinctness lemmas. -/)]\nlemma sum_three_eq_smul (A B C : Fin 2 \u2192 \u211d) (hdet : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 \u2260 0) (w : (Fin 2 \u2192 \u211d) \u2192 \u211d) : (\u2211 y \u2208 ({B + C - A, A + C - B, A + B - C} : Finset (Fin 2 \u2192 \u211d)), w y \u2022 y) = w (B + C - A) \u2022 (B + C - A) + w (A + C - B) \u2022 (A + C - B) + w (A + B - C) \u2022 (A + B - C) := by\n  have h12 : B + C - A \u2260 A + C - B := ne12_of_hdet A B C hdet\n  have h13 : B + C - A \u2260 A + B - C := ne13_of_hdet A B C hdet\n  have h23 : A + C - B \u2260 A + B - C := ne23_of_hdet A B C hdet\n  simp [h12, h13, h23, add_assoc]\n-- NEW"
+    },
+    {
+      "id": "vectorSpan_eq_span_of_collinear",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The vector span of {A,B,C} equals the span of {B-A, C-A}.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The vector span of {A,B,C} equals the span of {B-A, C-A}. -/) (proof := /-- Using vectorSpan_eq_span_vsub_set_right. -/)]\nlemma vectorSpan_eq_span_of_collinear (A B C : Fin 2 \u2192 \u211d) :\n    vectorSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) = Submodule.span \u211d {B - A, C - A} := by\n  have mem_span_diff (x y : Fin 2 \u2192 \u211d) (hx : x \u2208 ({A, B, C} : Set (Fin 2 \u2192 \u211d))) (hy : y \u2208 ({A, B, C} : Set (Fin 2 \u2192 \u211d))) : (x - y) \u2208 Submodule.span \u211d ({B - A, C - A} : Set (Fin 2 \u2192 \u211d)) := by\n    have hx' : x = A \u2228 x = B \u2228 x = C := by simpa using hx\n    have hy' : y = A \u2228 y = B \u2228 y = C := by simpa using hy\n    rcases hx' with (hx|hx|hx) <;> rcases hy' with (hy|hy|hy) <;> rw [hx, hy]\n    \u00b7 simp\n    \u00b7 -- A - B\n      have : A - B = (-1 : \u211d) \u2022 (B - A) := by simp\n      rw [this]\n      apply Submodule.smul_mem (Submodule.span \u211d ({B - A, C - A} : Set (Fin 2 \u2192 \u211d))) (-1)\n      apply Submodule.subset_span\n      simp\n    \u00b7 -- A - C\n      have : A - C = (-1 : \u211d) \u2022 (C - A) := by simp\n      rw [this]\n      apply Submodule.smul_mem (Submodule.span \u211d ({B - A, C - A} : Set (Fin 2 \u2192 \u211d))) (-1)\n      apply Submodule.subset_span\n      simp\n    \u00b7 -- B - A\n      apply Submodule.subset_span\n      simp\n    \u00b7 -- B - B\n      simp\n    \u00b7 -- B - C\n      have : B - C = (B - A) - (C - A) := by\n        simp\n      rw [this]\n      apply Submodule.sub_mem (Submodule.span \u211d ({B - A, C - A} : Set (Fin 2 \u2192 \u211d)))\n      \u00b7 apply Submodule.subset_span\n        simp\n      \u00b7 apply Submodule.subset_span\n        simp\n    \u00b7 -- C - A\n      apply Submodule.subset_span\n      simp\n    \u00b7 -- C - B\n      have : C - B = (C - A) - (B - A) := by\n        simp\n      rw [this]\n      apply Submodule.sub_mem (Submodule.span \u211d ({B - A, C - A} : Set (Fin 2 \u2192 \u211d)))\n      \u00b7 apply Submodule.subset_span\n        simp\n      \u00b7 apply Submodule.subset_span\n        simp\n    \u00b7 -- C - C\n      simp\n  rw [vectorSpan]\n  apply Submodule.span_eq_span\n  \u00b7 -- hs: (S -\u1d65 S) \u2286 span {B-A, C-A}\n    intro v hv\n    rcases (Set.mem_image2.1 hv) with \u27e8x, hx, y, hy, rfl\u27e9\n    exact mem_span_diff x y hx hy\n  \u00b7 -- ht: {B-A, C-A} \u2286 span (S -\u1d65 S)\n    have hsub1 : ({B - A, C - A} : Set (Fin 2 \u2192 \u211d)) \u2286 (({A, B, C} : Set (Fin 2 \u2192 \u211d)) -\u1d65 ({A, B, C} : Set (Fin 2 \u2192 \u211d))) := by\n      intro x hx\n      have hx' : x = B - A \u2228 x = C - A := by\n        simpa using hx\n      rcases hx' with (rfl|rfl)\n      \u00b7 refine Set.mem_image2_of_mem ?_ ?_\n        \u00b7 simp\n        \u00b7 simp\n      \u00b7 refine Set.mem_image2_of_mem ?_ ?_\n        \u00b7 simp\n        \u00b7 simp\n    exact hsub1.trans (Submodule.subset_span (s := (({A, B, C} : Set (Fin 2 \u2192 \u211d)) -\u1d65 ({A, B, C} : Set (Fin 2 \u2192 \u211d)))))"
+    },
+    {
+      "id": "volume_convexHull_collinear",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "If A, B, C are collinear, then the volume of their convex hull is zero.",
+      "is_main": false,
+      "col": 0,
+      "level": 1,
+      "lean": "@[blueprint (statement := /-- If A, B, C are collinear, then the volume of their convex hull is zero. -/) (proof := /-- Standard determinant formula for area. -/)]\nlemma volume_convexHull_collinear (A B C : Fin 2 \u2192 \u211d) (h : (B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0 = 0) : MeasureTheory.volume (convexHull \u211d {A, B, C}) = 0 := by\n  have hspan_ne_top : affineSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) \u2260 \u22a4 :=\n    affineSpan_ne_top_of_collinear A B C h\n  have h_volume_span : MeasureTheory.volume ((affineSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d))) = 0 := by\n    haveI : MeasureTheory.Measure.IsAddHaarMeasure (MeasureTheory.volume : Measure (Fin 2 \u2192 \u211d)) := by infer_instance\n    exact MeasureTheory.Measure.addHaar_affineSubspace (MeasureTheory.volume : Measure (Fin 2 \u2192 \u211d))\n      (affineSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d))) hspan_ne_top\n  have h_subset : convexHull \u211d {A, B, C} \u2286 (affineSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d)) :=\n    convexHull_subset_affineSpan {A, B, C}\n  have h_volume_convexHull_le : MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 MeasureTheory.volume ((affineSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d))) :=\n    MeasureTheory.measure_mono h_subset\n  have h_nonneg : 0 \u2264 MeasureTheory.volume (convexHull \u211d {A, B, C}) := zero_le _\n  have h_le0 : MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 0 := by\n    calc\n      MeasureTheory.volume (convexHull \u211d {A, B, C}) \u2264 MeasureTheory.volume ((affineSpan \u211d ({A, B, C} : Set (Fin 2 \u2192 \u211d)) : Set (Fin 2 \u2192 \u211d))) := h_volume_convexHull_le\n      _ = 0 := h_volume_span\n  exact le_antisymm h_le0 h_nonneg"
+    },
+    {
+      "id": "volume_convexHull_three_points",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "The volume of the convex hull of three points A,B,C equals (1/2) * ENNReal.ofReal |det(B-A, C-A)|.",
+      "is_main": false,
+      "col": 0,
+      "level": 3,
+      "lean": "@[blueprint (statement := /-- The volume of the convex hull of three points A,B,C equals (1/2) * ENNReal.ofReal |det(B-A, C-A)|. -/) (proof := /-- Use translation invariance and addHaar_image_linearMap with the linear map sending e\u2081 to B-A and e\u2082 to C-A. Then apply volume_standard_triangle. -/)]\nlemma volume_convexHull_three_points (A B C : Fin 2 \u2192 \u211d) : MeasureTheory.volume (convexHull \u211d {A, B, C}) = (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n  let e1 : Fin 2 \u2192 \u211d := Pi.single 0 1\n  let e2 : Fin 2 \u2192 \u211d := Pi.single 1 1\n  let M : (Fin 2 \u2192 \u211d) \u2192\u2097[\u211d] (Fin 2 \u2192 \u211d) :=\n    Matrix.toLin' (Matrix.of (fun i j : Fin 2 => \n      match j with\n      | 0 => (B - A) i\n      | 1 => (C - A) i))\n  have hM_e1 : M e1 = B - A := by\n    rw [Matrix.toLin'_apply]\n    ext i\n    have h : ((Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i)).mulVec (Pi.single 0 1)) i = (B - A) i := by\n      fin_cases i <;> simp\n    simpa [e1]\n  have hM_e2 : M e2 = C - A := by\n    rw [Matrix.toLin'_apply]\n    ext i\n    have h : ((Matrix.of (fun i j : Fin 2 => match j with | 0 => (B - A) i | 1 => (C - A) i)).mulVec (Pi.single 1 1)) i = (C - A) i := by\n      fin_cases i <;> simp\n    simpa [e2]\n  let T : (Fin 2 \u2192 \u211d) \u2192\u1d43[\u211d] (Fin 2 \u2192 \u211d) :=\n    AffineMap.mk' (fun x => M x + A) M 0 (by\n      intro p'\n      simp)\n  have h_image : T '' ({0, e1, e2} : Set (Fin 2 \u2192 \u211d)) = {A, B, C} := by\n    ext x; constructor\n    { rintro \u27e8y, hy, rfl\u27e9\n      simp at hy\n      rcases hy with (rfl|rfl|rfl)\n      \u00b7 simp [T]\n      \u00b7 simp [T, hM_e1]\n      \u00b7 simp [T, hM_e2] }\n    { intro hx\n      simp at hx\n      rcases hx with (rfl|rfl|rfl)\n      \u00b7 exact \u27e80, by simp, by simp [T]\u27e9\n      \u00b7 exact \u27e8e1, by simp, by simp [T, hM_e1]\u27e9\n      \u00b7 exact \u27e8e2, by simp, by simp [T, hM_e2]\u27e9 }\n  have hT_image : T '' (convexHull \u211d {0, e1, e2}) = convexHull \u211d {A, B, C} := by\n    calc\n      T '' (convexHull \u211d {0, e1, e2}) = convexHull \u211d (T '' {0, e1, e2}) := by\n        rw [AffineMap.image_convexHull T {0, e1, e2}]\n      _ = convexHull \u211d {A, B, C} := by rw [h_image]\n  have hS_finite : Set.Finite ({0, e1, e2} : Set (Fin 2 \u2192 \u211d)) := by\n    simp\n  have h_compact_S : IsCompact (convexHull \u211d {0, e1, e2}) :=\n    hS_finite.isCompact_convexHull\n  have h_cont_M : Continuous M :=\n    LinearMap.continuous_of_finiteDimensional M\n  have h_compact_MS : IsCompact (M '' (convexHull \u211d {0, e1, e2})) :=\n    h_compact_S.image h_cont_M\n  have h_meas_MS : MeasurableSet (M '' (convexHull \u211d {0, e1, e2})) :=\n    h_compact_MS.measurableSet\n  have h_T_S_eq : T '' (convexHull \u211d {0, e1, e2}) = (fun (y : Fin 2 \u2192 \u211d) => A + y) '' (M '' (convexHull \u211d {0, e1, e2})) := by\n    ext x; constructor\n    { rintro \u27e8y, hyS, rfl\u27e9\n      exact \u27e8M y, \u27e8y, hyS, rfl\u27e9, by simp [T, add_comm]\u27e9 }\n    { rintro \u27e8z, hz, rfl\u27e9\n      rcases hz with \u27e8y, hyS, rfl\u27e9\n      exact \u27e8y, hyS, by simp [T, add_comm]\u27e9 }\n  calc\n    MeasureTheory.volume (convexHull \u211d {A, B, C}) = MeasureTheory.volume (T '' (convexHull \u211d {0, e1, e2})) := by\n      rw [hT_image]\n    _ = MeasureTheory.volume ((fun (y : Fin 2 \u2192 \u211d) => A + y) '' (M '' (convexHull \u211d {0, e1, e2}))) := by rw [h_T_S_eq]\n    _ = MeasureTheory.volume (M '' (convexHull \u211d {0, e1, e2})) := by\n      rw [volume_translate A (M '' (convexHull \u211d {0, e1, e2})) h_meas_MS]\n    _ = ENNReal.ofReal |LinearMap.det M| * MeasureTheory.volume (convexHull \u211d {0, e1, e2}) := by\n      rw [MeasureTheory.Measure.addHaar_image_linearMap (\u03bc := volume) M (convexHull \u211d {0, e1, e2})]\n    _ = ENNReal.ofReal |LinearMap.det M| * (1/2 : ENNReal) := by rw [volume_standard_triangle]\n    _ = (1/2 : ENNReal) * ENNReal.ofReal |LinearMap.det M| := by ring\n    _ = (1/2 : ENNReal) * ENNReal.ofReal |(B - A) 0 * (C - A) 1 - (B - A) 1 * (C - A) 0| := by\n      rw [linear_map_det_formula A B C]\n-- REVISED"
+    },
+    {
+      "id": "volume_standard_triangle",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#3b82f6",
+      "status": "unsolved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Volume of the convex hull of the standard basis vectors (0, e1, e2) is 1/2.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- Volume of the convex hull of the standard basis vectors (0, e1, e2) is 1/2. -/) (proof := /-- Use symmetry of the unit square. -/)]\nlemma volume_standard_triangle : MeasureTheory.volume (convexHull \u211d {(0 : Fin 2 \u2192 \u211d), Pi.single 0 1, Pi.single 1 1}) = (1/2 : ENNReal) := by\n  sorry_using []\n-- NEW"
+    },
+    {
+      "id": "volume_translate",
+      "group": "file0",
+      "file_index": 0,
+      "file_name": "solution.lean",
+      "radius": 9.2,
+      "proof_length": 0,
+      "color": "#4ade80",
+      "status": "proved",
+      "link": null,
+      "type": "lemma",
+      "statement": "Translation invariance of Lebesgue measure on \u211d\u00b2.",
+      "is_main": false,
+      "col": 0,
+      "level": 4,
+      "lean": "@[blueprint (statement := /-- Translation invariance of Lebesgue measure on \u211d\u00b2. -/) (proof := /-- Use MeasurePreserving.add_left. -/)]\nlemma volume_translate (x : Fin 2 \u2192 \u211d) (s : Set (Fin 2 \u2192 \u211d)) (hs : MeasurableSet s) :\n    MeasureTheory.volume ((fun y => x + y) '' s) = MeasureTheory.volume s := by\n  have h_image_eq_preimage : (fun y => x + y) '' s = (fun y => -x + y)\u207b\u00b9' s := by\n    have hleft : Function.LeftInverse (fun y => -x + y) (fun y => x + y) := by\n      intro y; simp\n    have hright : Function.RightInverse (fun y => -x + y) (fun y => x + y) := by\n      intro y; simp\n    have h_eq_fun : image (fun y => x + y) = preimage (fun y => -x + y) :=\n      Set.image_eq_preimage_of_inverse hleft hright\n    calc\n      (fun y => x + y) '' s = (image (fun y => x + y)) s := rfl\n      _ = (preimage (fun y => -x + y)) s := by rw [h_eq_fun]\n      _ = (fun y => -x + y)\u207b\u00b9' s := rfl\n  rw [h_image_eq_preimage]\n  have hmap : Measure.map (fun y => -x + y) (volume : Measure (Fin 2 \u2192 \u211d)) = volume :=\n    map_add_left_eq_self volume (-x)\n  have hmeas : Measurable (fun y : Fin 2 \u2192 \u211d => -x + y) := by\n    exact measurable_const_add (-x)\n  rw [\u2190 Measure.map_apply hmeas hs]\n  rw [hmap]\n-- NEW"
+    }
+  ],
+  "edges": [
+    {
+      "source": "vectorSpan_eq_span_of_collinear",
+      "target": "affineSpan_ne_top_of_collinear",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "collinear_span_ne_top",
+      "target": "affineSpan_ne_top_of_collinear",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "anticomplementaryTriangle",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "barycentric_coords",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "aux_eq",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "aux_eq2",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne12_of_hdet",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne13_of_hdet",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne23_of_hdet",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_three_eq",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "sum_three_eq_smul",
+      "target": "anticomplementary_condition",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "anticomplementaryTriangle",
+      "target": "anticomplementary_volume",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "det_ineq1",
+      "target": "containment_of_S_in_anticomplementary_nondegenerate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "det_ineq2",
+      "target": "containment_of_S_in_anticomplementary_nondegenerate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "det_ineq3",
+      "target": "containment_of_S_in_anticomplementary_nondegenerate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "anticomplementary_condition",
+      "target": "containment_of_S_in_anticomplementary_nondegenerate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "barycentric_coords",
+      "target": "containment_of_S_in_anticomplementary_nondegenerate",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_convexHull_three_points",
+      "target": "det_ineq1",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_convexHull_three_points",
+      "target": "det_ineq2",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_convexHull_three_points",
+      "target": "det_ineq3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "collinear_of_volume_convexHull_eq_zero",
+      "target": "exists_triangle_area_four_covering_collinear",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "matrix_det_formula",
+      "target": "linear_map_det_formula",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_max_volume_triple",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "containment_of_S_in_anticomplementary_nondegenerate",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "anticomplementary_volume",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "scale_to_exact_four",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_convexHull_collinear",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_triangle_area_four_covering_collinear",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "collinear_of_volume_convexHull_eq_zero",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "anticomplementaryTriangle",
+      "target": "putnam_2016_b3",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "exists_triangle_area_four_covering_collinear",
+      "target": "scale_to_exact_four",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "collinear_of_volume_convexHull_eq_zero",
+      "target": "scale_to_exact_four",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne12_of_hdet",
+      "target": "sum_three_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne13_of_hdet",
+      "target": "sum_three_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne23_of_hdet",
+      "target": "sum_three_eq",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne12_of_hdet",
+      "target": "sum_three_eq_smul",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne13_of_hdet",
+      "target": "sum_three_eq_smul",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "ne23_of_hdet",
+      "target": "sum_three_eq_smul",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "affineSpan_ne_top_of_collinear",
+      "target": "volume_convexHull_collinear",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "linear_map_det_formula",
+      "target": "volume_convexHull_three_points",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_translate",
+      "target": "volume_convexHull_three_points",
+      "type": "local_value",
+      "color": "#4ade80"
+    },
+    {
+      "source": "volume_standard_triangle",
+      "target": "volume_convexHull_three_points",
+      "type": "local_value",
+      "color": "#4ade80"
+    }
+  ],
+  "colors": [
+    "#4ade80",
+    "#60a5fa",
+    "#fb923c",
+    "#a78bfa",
+    "#f472b6",
+    "#fbbf24",
+    "#34d399"
+  ],
+  "files": [
+    "solution.lean"
+  ]
+};
+
+        // Color helpers for legacy data without explicit colors
+        const defaultColors = ["#3b82f6", "#60a5fa", "#fb923c", "#a78bfa", "#f472b6", "#fbbf24", "#34d399"];
+
+        function getCssVar(name) {
+            return getComputedStyle(document.body).getPropertyValue(name).trim();
+        }
+
+        function getMainNodeColor() {
+            return getCssVar('--main-node-color');
+        }
+
+        function getMainEdgeColor() {
+            return getCssVar('--main-edge-color');
+        }
+
+        function getExternalNodeColor() {
+            return getCssVar('--external-node-color');
+        }
+
+        function getExternalEdgeColor() {
+            return getCssVar('--external-edge-color');
+        }
+
+        function getNodeColor(d) {
+            if (d.group === "external") return getExternalNodeColor();
+            if (d.color) return d.color;   // explicit per-node colour (all green; main theorem distinct)
+            if (d.group === "local") return getMainNodeColor();
+            // Extract file index from group like "file0", "file1"
+            const match = d.group && d.group.match(/^file(\d+)$/);
+            if (match) {
+                const idx = parseInt(match[1]);
+                return idx === 0 ? getMainNodeColor() : defaultColors[idx % defaultColors.length];
+            }
+            return getMainNodeColor();
+        }
+
+        function getEdgeColor(d) {
+            if (d.type === "external_type" || d.type === "external_value") return getExternalEdgeColor();
+            return getMainEdgeColor();
+        }
+
+        function updateColors() {
+            node.attr("fill", d => getNodeColor(d));
+            externalLinks.attr("stroke", d => getEdgeColor(d));
+            fileLinks.attr("stroke", d => getEdgeColor(d));
+        }
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        const g = svg.append("g");
+
+        // Arrowhead marker for directed (file) edges. fill=context-stroke makes
+        // the arrow inherit the edge's stroke colour, so it tracks the theme.
+        svg.append("defs").append("marker")
+            .attr("id", "arrow-file")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 9).attr("refY", 0)
+            .attr("markerWidth", 8).attr("markerHeight", 8)
+            .attr("markerUnits", "userSpaceOnUse")
+            .attr("orient", "auto")
+            .append("path").attr("d", "M0,-5L10,0L0,5")
+            .attr("fill", "context-stroke");
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        // Set initial zoom to fit the graph better
+        let currentZoomScale = 0.45;
+
+        function applyZoom(scale) {
+            currentZoomScale = scale;
+            const transform = d3.zoomIdentity
+                .translate(width / 2 * (1 - scale), height / 2 * (1 - scale))
+                .scale(scale);
+            svg.call(zoom.transform, transform);
+        }
+
+        applyZoom(currentZoomScale);
+
+        // Create force simulation with radial layout
+        // Push external nodes to outer ring, keep local nodes in center
+        let localSpacing = 175;  // Spacing for local nodes (adjustable)
+        const externalSpacing = 50;  // Fixed spacing for external nodes
+        let externalRadius = localSpacing + 300;  // Radius for external node ring (scales with spacing)
+
+        const linkForce = d3.forceLink(data.edges)
+            .id(d => d.id)
+            .distance(d => {
+                // Only apply spacing to local-to-local edges
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+        const chargeForce = d3.forceManyBody().strength(d => {
+            // Stronger charge for file nodes, weaker for external
+            return d.group === "external" ? -50 : -localSpacing * 2;
+        });
+
+        // Custom force to contain local nodes inside the external perimeter
+        function forceContain(radius, centerX, centerY, strength) {
+            let nodes;
+            function force(alpha) {
+                for (const d of nodes) {
+                    if (d.group === "external") continue;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxRadius = radius - 50; // Keep local nodes inside with margin
+                    if (dist > maxRadius) {
+                        const k = (dist - maxRadius) / dist * strength * alpha;
+                        d.vx -= dx * k;
+                        d.vy -= dy * k;
+                    }
+                }
+            }
+            force.initialize = function(_) { nodes = _; };
+            force.radius = function(_) { return arguments.length ? (radius = _, force) : radius; };
+            return force;
+        }
+
+        const fileCount = (data.files || []).length || 1;
+
+        // Set up layout forces based on number of files
+        let simulation;
+        let containForce = forceContain(externalRadius, width / 2, height / 2, 0.5);
+
+        if (fileCount === 1) {
+            // Single file: use centered radial layout (original behavior)
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+        } else {
+            // Multiple files: use clustering layout with separate positions
+            const filePositions = [];
+            for (let i = 0; i < fileCount; i++) {
+                const angle = (i * 2 * Math.PI / fileCount) - Math.PI / 2; // Start at top
+                const radius = 150; // Distance from center
+                filePositions.push({
+                    x: width / 2 + radius * Math.cos(angle),
+                    y: height / 2 + radius * Math.sin(angle)
+                });
+            }
+
+            const forceX = d3.forceX(d => {
+                if (d.group === "external") return width / 2;
+                return filePositions[d.file_index].x;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            const forceY = d3.forceY(d => {
+                if (d.group === "external") return height / 2;
+                return filePositions[d.file_index].y;
+            }).strength(d => d.group === "external" ? 0 : 0.1);
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", linkForce)
+                .force("charge", chargeForce)
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.radius + 5))
+                .force("contain", containForce)
+                .force("x", forceX)
+                .force("y", forceY)
+                .force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : null,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // --- Radial layout: each main theorem sits at the centre of its own concentric
+        // rings; a node's ring = its depth from that theorem. P1 has two theorems
+        // (left/right), so we lay out two ring systems side by side. ---
+        const localNodes = data.nodes.filter(n => n.group !== "external");
+        const numClusters = Math.max(1, ...localNodes.filter(n => n.col >= 0).map(n => n.col + 1));
+        const clusterMax = {};                       // deepest ring per cluster
+        localNodes.forEach(n => { if (n.col >= 0) clusterMax[n.col] = Math.max(clusterMax[n.col] || 0, n.level || 0); });
+        const maxRings = Math.max(0, ...Object.values(clusterMax));
+
+        // Even starting angle per (cluster, ring) so the rings open already filled.
+        const ringGroups = {};
+        localNodes.forEach(d => { const k = d.col + "|" + d.level; (ringGroups[k] = ringGroups[k] || []).push(d); });
+        Object.values(ringGroups).forEach(arr => arr.forEach((d, i) => { d._ang = 2 * Math.PI * (i + 0.5) / arr.length; }));
+
+        const ringSpacing = () => localSpacing * 0.6;
+        function clusterCentersX() {                 // pack ring systems left-to-right without overlap
+            const RING = ringSpacing();
+            const xs = [];
+            let x = 0;
+            for (let i = 0; i < numClusters; i++) {
+                if (i > 0) x += ((clusterMax[i - 1] || 0) + (clusterMax[i] || 0) + 2) * RING;
+                xs.push(x);
+            }
+            const mid = (xs[0] + xs[numClusters - 1]) / 2;
+            return xs.map(v => v - mid + width / 2);
+        }
+        function clusterTarget(d, centers, RING) {
+            if (d.col < 0) return { cx: width / 2, cy: height / 2 + (maxRings + 2) * RING, r: 0 };  // orphan, below
+            return { cx: centers[d.col], cy: height / 2, r: (d.level || 0) * RING };
+        }
+
+        function applyHierarchy() {                  // (re)install the radial forces at current spacing
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            simulation.force("center", null);        // centres are absolute; skip global recentre
+            simulation.force("contain", null);       // perimeter clamp would crush the outer rings
+            simulation.force("rings", function (alpha) {
+                for (const d of localNodes) {
+                    const t = clusterTarget(d, centers, RING);
+                    const dx = d.x - t.cx, dy = d.y - t.cy;
+                    const dist = Math.hypot(dx, dy) || 1e-6;
+                    const k = (t.r - dist) / dist * 0.8 * alpha;
+                    d.vx += dx * k; d.vy += dy * k;
+                }
+            });
+            simulation.force("radial", d3.forceRadial(   // keep any external nodes on their outer ring
+                d => d.group === "external" ? externalRadius : 0, width / 2, height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0));
+        }
+
+        // Seed positions on the rings so the first frame is already arranged.
+        (function seedRings() {
+            const RING = ringSpacing();
+            const centers = clusterCentersX();
+            localNodes.forEach(d => {
+                const t = clusterTarget(d, centers, RING);
+                d.x = t.cx + t.r * Math.cos(d._ang);
+                d.y = t.cy + t.r * Math.sin(d._ang);
+            });
+        })();
+
+        applyHierarchy();
+
+        // Pre-heat the simulation so it starts partially settled (smoother but still animated)
+        simulation.stop();
+        for (let i = 0; i < 100; i++) {
+            simulation.tick();
+        }
+
+        // Create links - render external (grey) edges first, then file edges (for proper layering)
+        const externalEdges = data.edges.filter(d => d.type === "external_type" || d.type === "external_value");
+        const fileEdges = data.edges.filter(d => d.type === "local_type" || d.type === "local_value");
+
+        const linkGroup = g.append("g");
+
+        // External links first (behind)
+        const externalLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(externalEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.4)
+            .attr("stroke-width", 0.5);
+
+        // File links second (on top)
+        const fileLinks = linkGroup.append("g")
+            .selectAll("line")
+            .data(fileEdges)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => getEdgeColor(d))
+            .attr("stroke-opacity", 0.8)
+            .attr("stroke-width", 1.2)
+            .attr("marker-end", "url(#arrow-file)");
+
+        // Combine for easier manipulation
+        const link = linkGroup.selectAll("line");
+
+        // Create nodes
+        const node = g.append("g")
+            .selectAll("circle")
+            .data(data.nodes)
+            .join("circle")
+            .attr("class", "node")
+            .attr("r", d => d.radius)
+            .attr("fill", d => getNodeColor(d))
+            .style("cursor", "pointer")
+            .call(drag(simulation));
+
+        // Tooltip
+        const tooltip = d3.select("#tooltip");
+
+        node.on("mouseover", function(event, d) {
+            const head = d.type ? `${d.type} ${d.id}` : d.id;
+            const stmt = d.statement ? `<div style="margin-top:5px; font-weight:400">${d.statement}</div>` : "";
+            tooltip.style("display", "block")
+                .html(`<strong>${head}</strong>${stmt}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 10) + "px");
+
+            // Start with URL highlight if present
+            clearHighlight();
+            applyUrlHighlight();
+
+            // Add hover highlight on top
+            const connectedNodes = new Set();
+            connectedNodes.add(d.id);
+
+            link.each(function(l) {
+                if (l.source.id === d.id || l.target.id === d.id) {
+                    connectedNodes.add(l.source.id);
+                    connectedNodes.add(l.target.id);
+                    // Use muted highlight for external edges
+                    const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                    if (isExternalEdge) {
+                        d3.select(this).classed("highlighted-external", true);
+                    } else {
+                        d3.select(this).classed("highlighted", true);
+                    }
+                }
+            });
+
+            node.classed("highlighted", n => connectedNodes.has(n.id));
+        })
+        .on("mouseout", function() {
+            tooltip.style("display", "none");
+            clearHighlight();
+            applyUrlHighlight();
+        });
+
+        // Update positions on simulation tick
+        const isFileEdge = d => d.type === "local_type" || d.type === "local_value";
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                // Stop file edges short of the target node so the arrowhead shows.
+                .attr("x2", d => {
+                    if (!isFileEdge(d)) return d.target.x;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.x - dx / dist * (d.target.radius + 6);
+                })
+                .attr("y2", d => {
+                    if (!isFileEdge(d)) return d.target.y;
+                    const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    return d.target.y - dy / dist * (d.target.radius + 6);
+                });
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        });
+
+        // Restart simulation with moderate alpha for visible but smooth settling
+        simulation.alpha(0.3).restart();
+
+        // URL hash management
+        function updateHash() {
+            const params = new URLSearchParams();
+            params.set('spacing', d3.select("#spacingSlider").property('value'));
+            params.set('external', d3.select("#showExternal").property('checked') ? '1' : '0');
+            params.set('theme', d3.select("#themeSelect").property('value'));
+            // Preserve highlight params (comma-separated)
+            if (urlHighlightNodeIds.length > 0) {
+                params.set('highlight', urlHighlightNodeIds.join(','));
+                if (urlHighlightLocalOnly) {
+                    params.set('local', 'true');
+                }
+                if (!urlHighlightEdges) {
+                    params.set('edges', 'false');
+                }
+            }
+            // Preserve embed param
+            if (isEmbedMode) {
+                params.set('embed', 'true');
+            }
+            // Preserve anchor
+            if (anchorNodeId) {
+                params.set('anchor', anchorNodeId);
+            }
+            // Preserve zoom
+            if (currentZoomScale !== 0.45) {
+                params.set('zoom', currentZoomScale.toFixed(2));
+            }
+            window.location.hash = params.toString();
+        }
+
+        // Track persistent URL-based highlight (can be multiple nodes)
+        let urlHighlightNodeIds = [];
+        let urlHighlightLocalOnly = false;
+        let urlHighlightEdges = true;
+        let isEmbedMode = false;
+        let anchorNodeId = null;
+
+        function applyAnchorTop(anchorId) {
+            const anchorNode = data.nodes.find(n => n.id === anchorId);
+            if (!anchorNode) {
+                console.warn('Anchor node not found:', anchorId);
+                return;
+            }
+
+            // Fix anchor at top center
+            anchorNode.fx = width / 2;
+            anchorNode.fy = 80;
+
+            // Stronger repulsion from anchor node to push others away
+            simulation.force("charge", d3.forceManyBody().strength(d => {
+                if (d.id === anchorId) return -2000;
+                if (d.group === "external") return -50;
+                return -localSpacing * 2;
+            }));
+
+            simulation.alpha(0.5).restart();
+        }
+
+        function highlightNodes(nodeIds, { localOnly = false, edges = true } = {}) {
+            const targetNodeIds = new Set(nodeIds.filter(id => data.nodes.find(n => n.id === id)));
+            if (targetNodeIds.size === 0) return;
+
+            if (edges) {
+                link.each(function(l) {
+                    if (targetNodeIds.has(l.source.id) || targetNodeIds.has(l.target.id)) {
+                        // If localOnly, skip edges to external nodes
+                        if (localOnly) {
+                            const sourceExternal = l.source.group === "external";
+                            const targetExternal = l.target.group === "external";
+                            if (sourceExternal || targetExternal) return;
+                        }
+                        // Use muted highlight for external edges
+                        const isExternalEdge = l.type === "external_type" || l.type === "external_value";
+                        if (isExternalEdge) {
+                            d3.select(this).classed("highlighted-external", true);
+                        } else {
+                            d3.select(this).classed("highlighted", true);
+                        }
+                    }
+                });
+            }
+
+            // Highlight all target nodes (with filled style)
+            node.classed("url-highlighted", n => targetNodeIds.has(n.id));
+        }
+
+        function applyUrlHighlight() {
+            if (urlHighlightNodeIds.length > 0) {
+                highlightNodes(urlHighlightNodeIds, {
+                    localOnly: urlHighlightLocalOnly,
+                    edges: urlHighlightEdges
+                });
+            }
+        }
+
+        function clearHighlight() {
+            link.classed("highlighted", false);
+            link.classed("highlighted-external", false);
+            node.classed("highlighted", false);
+            node.classed("url-highlighted", false);
+        }
+
+        function restoreFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) return;
+
+            const params = new URLSearchParams(hash);
+
+            // Restore spacing
+            if (params.has('spacing')) {
+                const spacing = +params.get('spacing');
+                d3.select("#spacingSlider").property('value', spacing);
+                localSpacing = spacing;
+                externalRadius = spacing + 300;
+
+                linkForce.distance(d => {
+                    const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                    return isLocalEdge ? localSpacing : externalSpacing;
+                });
+
+                chargeForce.strength(d => {
+                    return d.group === "external" ? -50 : -spacing * 2;
+                });
+
+                simulation.force("radial", d3.forceRadial(
+                    d => d.group === "external" ? externalRadius : 0,
+                    width / 2,
+                    height / 2
+                ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+                applyHierarchy();
+                simulation.alpha(0.3).restart();
+            }
+
+            // Restore external nodes visibility
+            if (params.has('external')) {
+                const showExternal = params.get('external') === '1';
+                d3.select("#showExternal").property('checked', showExternal);
+
+                node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+                link.style("display", l => {
+                    if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                        return "none";
+                    }
+                    return "block";
+                });
+            }
+
+            // Restore theme
+            if (params.has('theme')) {
+                const theme = params.get('theme');
+                d3.select("#themeSelect").property('value', theme);
+                document.body.classList.toggle('dark-mode', theme === 'dark');
+                // Need to update colors after mode change
+                setTimeout(updateColors, 50);
+            }
+
+            // Restore highlight (comma-separated list)
+            if (params.has('highlight')) {
+                urlHighlightNodeIds = params.get('highlight').split(',').map(s => s.trim()).filter(Boolean);
+                urlHighlightLocalOnly = params.get('local') === 'true';
+                urlHighlightEdges = params.get('edges') !== 'false';
+                applyUrlHighlight();
+            }
+
+            // Restore embed mode
+            if (params.get('embed') === 'true') {
+                isEmbedMode = true;
+                // Hide controls, nav overlay, and navigation panel
+                d3.select(".controls").style("display", "none");
+                d3.select(".nav-overlay").style("display", "none");
+                d3.select(".navigation-panel").style("display", "none");
+            }
+
+            // Restore zoom
+            if (params.has('zoom')) {
+                const zoomScale = parseFloat(params.get('zoom'));
+                if (!isNaN(zoomScale) && zoomScale >= 0.1 && zoomScale <= 10) {
+                    applyZoom(zoomScale);
+                }
+            }
+
+            // Restore anchor (pins node at top)
+            if (params.has('anchor')) {
+                anchorNodeId = params.get('anchor');
+                applyAnchorTop(anchorNodeId);
+            }
+        }
+
+        // Restore state from URL on load
+        restoreFromHash();
+
+        // Listen for manual URL hash changes
+        window.addEventListener('hashchange', function() {
+            // Reset state before restoring
+            clearHighlight();
+            urlHighlightNodeIds = [];
+            urlHighlightLocalOnly = false;
+            urlHighlightEdges = true;
+            // Reset anchor state
+            anchorNodeId = null;
+            // Unfix any fixed nodes
+            data.nodes.forEach(n => { n.fx = null; n.fy = null; });
+            // Restore embed mode elements if switching out of embed
+            if (isEmbedMode) {
+                d3.select(".controls").style("display", null);
+                d3.select(".nav-overlay").style("display", null);
+                d3.select(".navigation-panel").style("display", null);
+                isEmbedMode = false;
+            }
+            restoreFromHash();
+        });
+
+        // Controls
+        d3.select("#themeSelect").on("change", function() {
+            const isDark = this.value === 'dark';
+            document.body.classList.toggle('dark-mode', isDark);
+            updateColors();
+            updateHash();
+        });
+
+        d3.select("#showExternal").on("change", function() {
+            const showExternal = this.checked;
+            node.style("display", d => d.group === "external" && !showExternal ? "none" : "block");
+            link.style("display", l => {
+                if (!showExternal && (l.source.group === "external" || l.target.group === "external")) {
+                    return "none";
+                }
+                return "block";
+            });
+            updateHash();
+        });
+
+        d3.select("#spacingSlider").on("input", function() {
+            const spacing = +this.value;
+            localSpacing = spacing;
+            externalRadius = spacing + 300;
+
+            // Update link distance (only for local edges)
+            linkForce.distance(d => {
+                const isLocalEdge = d.type === "local_type" || d.type === "local_value";
+                return isLocalEdge ? localSpacing : externalSpacing;
+            });
+
+            // Update charge strength for file nodes
+            chargeForce.strength(d => {
+                return d.group === "external" ? -50 : -spacing * 2;
+            });
+
+            // Update radial force for external nodes
+            simulation.force("radial", d3.forceRadial(
+                d => d.group === "external" ? externalRadius : 0,
+                width / 2,
+                height / 2
+            ).strength(d => d.group === "external" ? 0.8 : 0.05));
+
+            // Update containment force radius
+            containForce.radius(externalRadius);
+
+            // Re-apply the hierarchy bands/columns at the new spacing
+            applyHierarchy();
+
+            // Restart simulation with new parameters
+            simulation.alpha(0.3).restart();
+
+            // Update URL hash
+            updateHash();
+        });
+
+        // Drag behavior with click-to-open-link support
+        function drag(simulation) {
+            let dragStartX, dragStartY;
+            const clickThreshold = 5; // pixels - if moved less than this, treat as click
+
+            function dragstarted(event) {
+                dragStartX = event.x;
+                dragStartY = event.y;
+                if (!event.active) simulation.alphaTarget(0.1).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0.02);
+
+                // Check if this was a click (minimal movement)
+                const dx = event.x - dragStartX;
+                const dy = event.y - dragStartY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < clickThreshold) {
+                    sendNodeCode(event.subject);
+                }
+
+                // Gradually release the node for smoother settling
+                setTimeout(() => {
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }, 100);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // --- Clicking a node posts its exact Lean source to the parent page,
+        // which shows it in the persistent code box beneath the embedded graph. ---
+        function sendNodeCode(d) {
+            if (!d) return;
+            try {
+                window.parent.postMessage({
+                    type: 'gx-node',
+                    name: d.id || '',
+                    kind: d.type || '',
+                    status: d.status || '',
+                    lean: d.lean || '',
+                    statement: d.statement || ''
+                }, '*');
+            } catch (e) { /* not embedded */ }
+        }
+
+        // Preserve theme and settings when clicking navigation links
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a.nav-item');
+            if (link && window.location.hash) {
+                e.preventDefault();
+                window.location.href = link.href + window.location.hash;
+            }
+        });
+    </script>
+</body>
+
+</html>

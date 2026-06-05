@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Goedel-Architect: Blueprint Generation and Refinement for Formal Theorem Proving.">
+  <title>Goedel-Architect: Blueprint Generation and Refinement for Formal Theorem Proving</title>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css?v=1779945651">
+  <style>
+    html, body{ overflow-x:hidden; }
+    .legend-dot{ display:inline-block; width:11px; height:11px; border-radius:50%; margin:0 5px 0 14px; vertical-align:middle; }
+    /* full-bleed: break out of the centered container to span the viewport */
+    .blueprint-fullwidth{ margin-left:calc(50% - 50vw); margin-right:calc(50% - 50vw); padding:0 1.5rem; }
+    .blueprint-frame{ border-radius:14px; overflow:hidden; border:1px solid #e5e7eb; background:#fff;
+      box-shadow:0 4px 6px -1px rgba(0,0,0,0.08), 0 10px 20px -3px rgba(0,0,0,0.10), 0 -2px 0 0 rgba(0,0,0,0.02); }
+    .blueprint-frame iframe{ display:block; width:100%; height:72vh; min-height:600px; border:0; }
+  </style>
+  <script src="./static/js/lean4-highlighter-standalone.js?v=1779945651"></script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <script>
+    window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']], processEscapes: true } };
+  </script>
+</head>
+<body>
+
+<nav class="navbar" role="navigation" aria-label="main navigation">
+  <div class="navbar-brand">
+    <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </a>
+  </div>
+  <div class="navbar-menu" id="navMenu">
+    <div class="navbar-start" style="flex-grow: 1; justify-content: center;">
+      <a class="navbar-item" href="#introduction">Introduction</a>
+      <a class="navbar-item" href="#blueprint">Blueprints</a>
+      <a class="navbar-item" href="#framework">Framework</a>
+      <a class="navbar-item" href="#scaling">Scaling</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-fullhd">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">
+            <span style="display:block;font-size:0.85em;font-weight:800;letter-spacing:0.02em;color:#4f46e5;margin-bottom:0.15em;">Goedel-Architect</span>
+            <span style="font-size:0.62em;">Streamlining Formal Theorem Proving with Blueprint Generation and Refinement</span>
+          </h1>
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">Jui-Hui Chung<sup>1,*</sup>,</span>
+            <span class="author-block">Ziyang Cai<sup>1,*</sup>,</span>
+            <span class="author-block">Zihao Li<sup>1</sup>,</span>
+            <span class="author-block">Qishuo Yin<sup>1</sup>,</span>
+            <span class="author-block">Rohit Agarwal<sup>1</sup>,</span>
+            <span class="author-block">Simon Park<sup>1</sup>,</span>
+            <span class="author-block">Rodrigo Porto<sup>1</sup>,</span>
+            <span class="author-block">Narutatsu Ri<sup>1</sup>,</span>
+            <span class="author-block">Ziran Yang<sup>1</sup>,</span>
+            <br>
+            <span class="author-block">Shange Tang<sup>1</sup>,</span>
+            <span class="author-block">Xingyu Dang<sup>1</sup>,</span>
+            <span class="author-block">Hongzhou Lin<sup>2</sup>,</span>
+            <span class="author-block">Mengdi Wang<sup>1</sup>,</span>
+            <span class="author-block">Danqi Chen<sup>1</sup>,</span>
+            <span class="author-block">Chi Jin<sup>1</sup>,</span>
+            <span class="author-block">Liam H Fowl<sup>1,*,&dagger;</sup>,</span>
+            <span class="author-block">Sanjeev Arora<sup>1,&dagger;</sup></span>
+          </div>
+          <div class="is-size-6 publication-authors" style="margin-top:0.5rem;">
+            <span class="author-block"><sup>1</sup>Princeton Language and Intelligence</span>&nbsp;&nbsp;&nbsp;
+            <span class="author-block"><sup>2</sup>Amazon</span>
+          </div>
+          <div class="is-size-6 publication-authors" style="margin-top:0.3rem;">
+            <span class="author-block"><sup>*</sup>Equal contribution</span>&nbsp;&nbsp;&nbsp;
+            <span class="author-block"><sup>&dagger;</sup>Joint last authors</span>
+          </div>
+          <div class="is-size-6 publication-authors" style="margin-top:0.3rem;">
+            <span class="author-block">Correspondence to:
+              <a href="mailto:jc1220@princeton.edu">jc1220@princeton.edu</a>,
+              <a href="mailto:zc5794@princeton.edu">zc5794@princeton.edu</a>,
+              <a href="mailto:lf2728@princeton.edu">lf2728@princeton.edu</a></span>
+          </div>
+          <div class="column has-text-centered" style="margin-top:1rem;">
+            <div class="publication-links">
+              <span class="link-block">
+                <a href="https://arxiv.org/abs/2606.06468" target="_blank" rel="noopener" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-file-pdf"></i></span>
+                  <span>Paper</span>
+                </a>
+              </span>
+              <span class="link-block">
+                <a class="external-link button is-normal is-rounded is-dark" style="opacity:0.55;cursor:default;pointer-events:none;">
+                  <span class="icon"><i class="fab fa-github"></i></span>
+                  <span>Code (to appear)</span>
+                </a>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="introduction">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Introduction</h2>
+
+        <div class="content has-text-justified">
+          <p>
+            We introduce Goedel-Architect, an agentic framework for formal theorem proving in Lean&nbsp;4 centered on blueprint generation and refinement. A blueprint is a dependency graph of definitions and lemmas that builds up to the main theorem. First, Goedel-Architect generates a blueprint of formally stated definitions and lemmas, along with declared dependencies. This blueprint is optionally guided by a natural language proof. Then, a tool-equipped Lean prover component closes each open lemma node in parallel using relevant dependencies. Failed lemmas in turn drive refinement of the global blueprint. This contrasts with mainstream approaches based on recursive lemma decomposition, which can loop inefficiently on dead ends.
+          </p>
+          <p>
+            Using the open-weight DeepSeek-V4-Flash (284B-A13B) as the backbone, Goedel-Architect attains 99.2% at pass@1 on MiniF2F-test and 88.8% at pass@4 (597/672) on PutnamBench. This pass@4 run on PutnamBench cost $985.67 in API calls, including all unsuccessful attempts, or about $1.65 per problem solved. With an optional Gemini&nbsp;3.1&nbsp;Pro natural-language proof seeding the initial blueprint, while all subsequent formal proving is carried out by DeepSeek-V4-Flash, we additionally close the remaining two MiniF2F-test problems (reaching 100%) and solve 4/6 on IMO 2025, 11/12 on Putnam 2025, and 3/6 on USAMO 2026.
+          </p>
+        </div>
+
+        <figure class="image" style="margin:2.25rem 0 0;">
+          <img src="benchmarks_bar.png?v=1779778646" alt="Goedel-Architect vs. prior systems across four formal theorem-proving benchmarks" style="width:100%;height:auto;">
+          <figcaption class="is-size-7" style="color:#64748b;margin-top:0.75rem;text-align:center;">
+            Goedel-Architect (orange) against prior systems on four formal theorem-proving benchmarks. Bars show the percentage of problems solved; the number above each bar is the count solved. <sup>*</sup>On IMO&nbsp;2025 we did not attempt P2, a geometry problem that typically requires a dedicated non-Lean geometry engine.
+          </figcaption>
+        </figure>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="blueprint">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Blueprints</h2>
+        <div class="content has-text-justified">
+          <p>
+            Each solved problem is an interactive dependency-graph <em>blueprint</em>: the main theorem sits at the center of its rings, surrounded by every definition and lemma it relies on. Switch between problems from IMO&nbsp;2025, Putnam&nbsp;2025, USAMO&nbsp;2026, and selected problems from PutnamBench using the panel on the right, scrub the refinement iterations along the bottom, and hover any node to read its statement. Click a node to see its exact Lean&nbsp;4 source below.
+          </p>
+        </div>
+        <p class="is-size-7" style="color:#64748b;margin-bottom:1.25rem;">
+          <span class="legend-dot" style="background:#4ade80"></span>solved
+          <span class="legend-dot" style="background:#3b82f6"></span>unsolved
+          <span class="legend-dot" style="background:#ef4444"></span>formally negated
+        </p>
+      </div>
+    </div>
+  </div>
+  <div class="container is-max-fullhd">
+    <div class="blueprint-frame">
+      <iframe src="blueprints/imo-2025-P1/" title="Goedel-Architect blueprint" loading="lazy"></iframe>
+    </div>
+  </div>
+  <div class="container is-max-fullhd" style="margin-top:1.25rem;">
+    <div id="pt-code-panel" style="border:1px solid #e0e0e0;border-radius:8px;background:#fff;min-height:100px;overflow:hidden;">
+      <div id="pt-code-header" style="padding:0.6rem 1.25rem;border-bottom:1px solid #e0e0e0;background:#fff;">
+        <span style="font-weight:600;color:#333;" id="pt-code-title">Click a node above to view its code</span>
+        <span style="float:right;font-size:0.8rem;color:#888;" id="pt-code-status"></span>
+      </div>
+      <div id="pt-code-body" style="max-height:380px;overflow-y:auto;">
+        <pre style="margin:0;padding:1rem 1.25rem;background:#fff;color:#1e293b;font-family:'SF Mono',Monaco,'Cascadia Code',Consolas,monospace;font-size:0.82rem;line-height:1.55;white-space:pre-wrap;"><code id="pt-code-content" class="language-lean">-- Select a node in the blueprint above to see its Lean 4 code here.</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="framework">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Framework</h2>
+        <div class="content has-text-justified">
+          <p>
+            Goedel-Architect is an agentic pipeline that proves theorems in Lean&nbsp;4 by building and refining a <em>blueprint</em>: a dependency graph whose nodes are formally stated definitions and lemmas building up to the target theorem. Blueprint generation takes only the formal statement of the target theorem and emits a directed acyclic graph. For harder problems this step can optionally be guided by a natural-language proof.
+          </p>
+          <p>
+            Theorem proving then dispatches each lemma to a Lean prover in parallel; every prover sees only its own lemma and the dependencies that lemma declared, presented as available facts, and may call the Lean compiler and a Mathlib retrieval tool repeatedly until it closes the goal or exhausts its budget. Each node ends up marked <span style="color:#16a34a;font-weight:600;">solved</span>, <span style="color:#2563eb;font-weight:600;">unsolved</span>, or <span style="color:#dc2626;font-weight:600;">formally negated</span>. If any lemma is left unproved, blueprint refinement rewrites the graph around the failures: it reads each prover's diagnosis together with any disproof, then decomposes hard lemmas into intermediate helper lemmas, rewires dependencies so a lemma can reach the facts it needs, and repairs or drops lemmas whose statements were shown to be false. Lemmas that an earlier pass already proved are preserved with their signatures intact, so the proving budget spent on them is not discarded, and the revised blueprint is sent through another proving pass. This loop continues until every node is solved and the blueprint assembles into a complete Lean proof, or the iteration budget is reached.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="container is-max-desktop" style="margin-top:1.5rem;">
+    <figure class="image">
+      <img src="pipeline_fig1.png?v=1779777352" alt="Overview of the Goedel-Architect pipeline" style="width:100%;height:auto;">
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="scaling">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Scaling</h2>
+        <div class="content has-text-justified">
+          <p>
+            What matters in practice is how many problems a system can close for a given amount of compute. On a shared random subset of 200 PutnamBench problems, all run on the same open-weight DeepSeek-V4-Flash backbone, we chart the fraction of problems solved as a function of the per-problem token budget, charging each problem the cumulative tokens spent on it up to the moment it is first proved. At every budget, Goedel-Architect's blueprint loop solves more than either baseline: direct inference, which simply samples full proofs, never clears 7%, and a tool-integrated agent, which proves each theorem in one shot with compiler and retrieval tools, plateaus near 55%. Decomposing a problem into a blueprint and refining it carries Goedel-Architect to roughly 80% on the same budget, and seeding the initial blueprint with a natural-language proof sketch recovers a further set of hard problems, lifting the curve to 92.5%.
+          </p>
+        </div>
+        <figure class="image" style="margin:1.75rem auto 0;max-width:560px;">
+          <img src="scaling.png?v=1779777064" alt="Per-problem token budget versus problems solved on PutnamBench" style="width:100%;height:auto;">
+          <figcaption class="is-size-7" style="color:#64748b;margin-top:0.75rem;text-align:center;">
+            Per-problem token budget versus problems solved on a shared random subset of 200 PutnamBench problems, all using the same open-weight DeepSeek-V4-Flash backbone. Each curve gives the percentage of problems solved once a problem is charged the cumulative tokens spent before its first proof.
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content has-text-centered">
+          <p style="font-size:0.75rem;color:#94a3b8;">
+            Website template adapted from <a href="https://github.com/nerfies/nerfies.github.io" style="color:#94a3b8;">Nerfies</a>. The interactive blueprint graphs adapt the visualization from <a href="https://axiommath.github.io/Putnam2025/A1/" style="color:#94a3b8;">AxiomMath</a>; the page layout and Lean code styling follow <a href="https://goedelcodeprover.github.io/" style="color:#94a3b8;">Goedel-Code-Prover</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.navbar-burger').forEach(el => {
+    el.addEventListener('click', () => {
+      el.classList.toggle('is-active');
+      document.getElementById('navMenu')?.classList.toggle('is-active');
+    });
+  });
+  document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+    anchor.addEventListener('click', function(e) {
+      e.preventDefault();
+      const id = this.getAttribute('href').slice(1);
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  // Persistent Lean-code box: the embedded graph (iframe) posts the clicked node here.
+  (function () {
+    var titleEl  = document.getElementById('pt-code-title');
+    var statusEl = document.getElementById('pt-code-status');
+    var codeEl   = document.getElementById('pt-code-content');
+    var bodyEl   = document.getElementById('pt-code-body');
+    var PH_TITLE = 'Click a node above to view its code';
+    var PH_CODE  = '-- Select a node in the blueprint above to see its Lean 4 code here.';
+    var STATUS = {
+      proved:   '<span class="legend-dot" style="background:#4ade80;margin-left:0;"></span>Solved',
+      unsolved: '<span class="legend-dot" style="background:#3b82f6;margin-left:0;"></span>Unsolved',
+      negated:  '<span class="legend-dot" style="background:#ef4444;margin-left:0;"></span>Formally negated'
+    };
+    function reset() { titleEl.textContent = PH_TITLE; statusEl.innerHTML = ''; codeEl.textContent = PH_CODE; }
+    window.addEventListener('message', function (e) {
+      var d = e.data;
+      if (!d || d.type !== 'gx-node') return;
+      titleEl.textContent = (d.kind ? d.kind + ' ' : '') + d.name;
+      statusEl.innerHTML = STATUS[d.status] || '';
+      codeEl.textContent = d.lean || PH_CODE;
+      if (window.Lean4Highlighter) Lean4Highlighter.highlightAll(bodyEl);
+    });
+    var frame = document.querySelector('.blueprint-frame iframe');
+    if (frame) frame.addEventListener('load', reset);   // reset when the graph switches problem/iteration
+  })();
+</script>
+</body>
+</html>
